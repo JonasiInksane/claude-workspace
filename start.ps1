@@ -7,6 +7,7 @@
   [1..n]  Start Claude in one of the projects in projects\.
   [C]     Continue the most recent conversation (claude -c) in a target you pick.
   [O]     Build the navigator and open index.html in your browser.
+  [A]     Open the workspace app (dashboard, projects, agents, images) in its own window.
   [Q]     Quit.
 
   With Windows Terminal (wt.exe) Claude opens in a new tab and this menu stays open.
@@ -169,6 +170,25 @@ function Open-Navigator {
   }
 }
 
+# ------------------------------------------------------------------ app
+
+# Starts the workspace app in the background (tools\workspace-app\start-app.ps1); it opens its
+# own window, so this menu stays usable.
+function Open-App {
+  $starter = Join-Path $Root 'tools\workspace-app\start-app.ps1'
+  if (-not (Test-Path -LiteralPath $starter)) {
+    Write-Host 'tools\workspace-app\start-app.ps1 was not found.' -ForegroundColor Red
+    return
+  }
+  $global:LASTEXITCODE = 0
+  & $starter
+  if ($LASTEXITCODE -eq 0) {
+    Write-Host 'Opening the workspace app in its own window.' -ForegroundColor Green
+  } else {
+    Write-Host 'The workspace app did not start (see the dialog, or %TEMP%\claude-workspace\app.log).' -ForegroundColor Yellow
+  }
+}
+
 # ------------------------------------------------------------------ menu
 
 function Show-Menu($Projects) {
@@ -187,6 +207,7 @@ function Show-Menu($Projects) {
   }
   Write-Host '  [C]  Continue the last conversation (claude -c) in a target'
   Write-Host '  [O]  Open the navigator (index.html)'
+  Write-Host '  [A]  Open the workspace app (projects, agents, images)'
   Write-Host '  [Q]  Quit'
   Write-Host ''
 }
@@ -235,6 +256,8 @@ while ($running) {
     if ($target) { Start-ClaudeIn $target.Path $target.Name $true }
   } elseif ($choice -match '^[Oo]$') {
     Open-Navigator
+  } elseif ($choice -match '^[Aa]$') {
+    Open-App
   } elseif ($choice -match '^[Qq]$') {
     $running = $false
   } elseif ($choice) {

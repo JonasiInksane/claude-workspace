@@ -8,6 +8,9 @@
 This folder is a hub, not an app. It holds the user's context, knowledge, inbox, reports,
 pipelines, a library of global skills and agents, project templates, and the user's repos
 under `projects/`. Everything is plain Markdown or JSON. `index.html` is a generated navigator.
+The user's control panel is the workspace app (`Workspace App.cmd`, code in
+`tools/workspace-app/`): it starts Claude and project agents and saves uploaded images to
+`inbox/attachments/`. Its tools are the same CLI tools listed below.
 
 The four `context/` files imported above are always loaded. Everything else is read on demand:
 check `knowledge/INDEX.md`, grep, then open only what the task needs.
@@ -24,6 +27,7 @@ check `knowledge/INDEX.md`, grep, then open only what the task needs.
 | A deliverable (status, audit, plan, research, playtest) | `reports/YYYY-MM-DD_slug/report.md` | `node tools/register-report.mjs --folder reports/<id> ...` |
 | Raw material (links, screenshots, PDFs, notes) | `inbox/` | `/inbox-triage` files it later |
 | Code | `projects/<name>/` | `/new-project`; each project is its own git repo |
+| A specialist agent for one project (own memory, own images) | `projects/<name>/.claude/agents/<agent>.md` | `node tools/new-agent.mjs <project> <agent> --role "..."`; start it with `node tools/agent-session.mjs <project> <agent>` |
 
 When a task ends, file what was learned using this table. Offer `/capture-lesson` for lessons.
 
@@ -67,6 +71,7 @@ When a task ends, file what was learned using this table. Offer `/capture-lesson
 - **Navigator.** A PostToolUse hook rebuilds `index.html` after edits outside `projects/` and
   `inbox/`. If it looks stale, run `node tools/build-index.mjs`.
 - **Self-check.** After structural changes run `node tools/check-workspace.mjs` and fix errors.
+  After changing a tool, run its tests: `node --test "tools/**/*.test.mjs"`.
 
 ## Skills
 
@@ -96,3 +101,7 @@ Auto memory is off on purpose for sessions started here (`"autoMemoryEnabled": f
 `knowledge/` is this workspace's memory: versioned, greppable and visible in the navigator.
 Save lessons there and preferences in `context/`. The reasoning is in
 `knowledge/decisions/2026-10-20-workspace-structure.md`.
+
+Project agents are the exception: each keeps its own memory in
+`projects/<name>/.claude/agent-memory/<agent>/`, which only works in project sessions
+(`knowledge/claude-code/agent-memory.md`, `knowledge/decisions/2026-10-21-project-agents.md`).

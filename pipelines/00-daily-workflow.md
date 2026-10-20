@@ -34,8 +34,10 @@ produce ends up. Pipelines 01-03 cover the project work in the middle.
 ## 1. Start
 
 - Double-click **`Start Workspace.cmd`** (it runs `start.ps1`). The menu offers `[W]` the hub,
-  a number for each project, `[C]` continue the last conversation there (`claude -c`), and
-  `[O]` the navigator. By hand: `claude` in the workspace root, or `cd projects\<name>; claude`.
+  a number for each project, `[C]` continue the last conversation there (`claude -c`), `[O]`
+  the navigator, and `[A]` the workspace app (also `Workspace App.cmd` or the Claude Workspace
+  shortcut: projects, agents and images in one window). By hand: `claude` in the workspace
+  root, or `cd projects\<name>; claude`.
 - First time in a folder, Claude Code asks whether you trust it. Accept only for folders you
   know. Allow rules from a committed `.claude/settings.json` apply only after you trust it.
 - In the hub, a SessionStart hook gives Claude a status block: date, inbox items, active reports
@@ -54,7 +56,8 @@ produce ends up. Pipelines 01-03 cover the project work in the middle.
 ## 2. Capture
 
 - Drop anything into `inbox/`: a `.md` with links or ideas, PDFs, design notes, playtest notes.
-  Screenshots go in `inbox/attachments/YYYY-MM-DD/`.
+  Screenshots go in `inbox/attachments/_hub/YYYY-MM-DD/`; reference images for one project agent
+  go straight into `inbox/attachments/<project>/<agent>/YYYY-MM-DD/` (not triaged).
 - In the hub, run `/inbox-triage`. Claude proposes a filing plan as a table and **waits**.
   After your OK it files each item (knowledge, a project, or a report) and moves the original
   to `inbox/_processed/YYYY-MM-DD/`. Nothing is deleted.
@@ -113,7 +116,8 @@ produce ends up. Pipelines 01-03 cover the project work in the middle.
 
 | It is... | Put it in | How |
 |---|---|---|
-| Raw material: links, screenshots, PDFs, notes | `inbox/` (images in `inbox/attachments/YYYY-MM-DD/`) | `/inbox-triage` later |
+| Raw material: links, screenshots, PDFs, notes | `inbox/` (images in `inbox/attachments/_hub/YYYY-MM-DD/`) | `/inbox-triage` later |
+| Reference images for one project agent | `inbox/attachments/<project>/<agent>/YYYY-MM-DD/` | The workspace app's Images view; not triaged |
 | Who you are, preferences, goals, stack | `context/*.md` (always loaded, under 40 lines each) | Edit by hand |
 | A lesson, gotcha or how-to | `knowledge/<area>/<name>.md` + `knowledge/INDEX.md` | `/capture-lesson` |
 | A decision and why | `knowledge/decisions/YYYY-MM-DD-topic.md` | `/capture-lesson` |

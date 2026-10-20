@@ -359,6 +359,7 @@ if ($Mode -eq 'Check') {
   Add-NextStep "Set up (installs the library, builds the navigator): $SetupCmd -Mode Install"
 }
 Add-NextStep 'Start: double-click "Start Workspace.cmd" and pick [W] for the hub.'
+Add-NextStep 'Workspace app (projects, agents, images): double-click "Workspace App.cmd". Desktop shortcut: node tools/workspace-app/make-shortcut.mjs'
 Add-NextStep 'First start in a folder: accept the trust dialog so the project settings (permissions) apply.'
 Add-NextStep 'Fill in context\identity.md, preferences.md, goals.md and stack.md.'
 

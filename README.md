@@ -6,7 +6,9 @@ know about you (`context/`), what you have learned (`knowledge/`), things to pro
 skills and agents (`library/`), project templates (`templates/`) and your repos (`projects/`).
 
 Everything is plain Markdown and JSON. Double-click `index.html` to browse it all in a
-navigator with a dashboard (setup builds it; see "The navigator" below).
+navigator with a dashboard (setup builds it; see "The navigator" below). For day-to-day
+control there is also a small **workspace app** (`Workspace App.cmd`): start Claude in
+projects, manage project agents, and drop or paste images (see "The workspace app" below).
 
 ## Folder map
 
@@ -16,7 +18,8 @@ claude-workspace/
 ├── README.md             you are here
 ├── Setup.ps1, setup.sh   first-time setup (Windows / Git Bash, macOS, Linux)
 ├── Start Workspace.cmd   double-click launcher: opens the start.ps1 menu
-├── start.ps1             menu: start Claude in the hub or a project, continue a chat, open the navigator
+├── start.ps1             menu: start Claude in the hub or a project, continue a chat, open the navigator or the app
+├── Workspace App.cmd     double-click: opens the workspace app (tools/workspace-app/) in its own window
 ├── index.html            generated navigator (gitignored)
 ├── .mcp.json             MCP servers for the hub (empty on purpose)
 ├── .env.example          names of environment variables, never values
@@ -29,7 +32,8 @@ claude-workspace/
 ├── library/              global skills and agents, installed to ~/.claude
 ├── templates/            starter files for new Next.js and game projects
 ├── projects/             your repos, each with its own git history (gitignored here)
-└── tools/                Node scripts: navigator, installer, checks, reports, new projects
+└── tools/                Node scripts: navigator, installer, checks, reports, new projects and agents,
+                          and the workspace app (tools/workspace-app/)
 ```
 
 ## First-time setup
@@ -64,7 +68,8 @@ node tools/check-workspace.mjs
 ## Daily use
 
 Start each day with **`Start Workspace.cmd`**: `[W]` opens Claude in the hub, a number opens
-it in a project, `[O]` opens the navigator.
+it in a project, `[O]` opens the navigator, `[A]` opens the workspace app. Or double-click the
+**Claude Workspace** shortcut (or `Workspace App.cmd`) to go straight to the app.
 
 The loop:
 
@@ -73,7 +78,8 @@ drop it in inbox/  ->  /inbox-triage  ->  work in a project  ->  /project-report
 ```
 
 1. **Collect.** Drop links, screenshots, PDFs and notes into `inbox/`
-   (screenshots go in `inbox/attachments/YYYY-MM-DD/`).
+   (screenshots go in `inbox/attachments/_hub/YYYY-MM-DD/`; images for one project agent go in
+   `inbox/attachments/<project>/<agent>/YYYY-MM-DD/`, see [inbox/README.md](inbox/README.md)).
 2. **Triage.** In the hub, run `/inbox-triage`. Claude proposes where each item goes and
    waits for your OK, then files it and moves the original to `inbox/_processed/`.
 3. **Work.** Start Claude inside the project (`cd projects/my-app; claude`, or pick it in the
@@ -141,6 +147,32 @@ The sidebar shows every file in the workspace.
 You rarely need to run it yourself: a hook rebuilds `index.html` whenever Claude edits a file
 outside `projects/` and `inbox/`. Run it after you add or move files by hand.
 
+## The workspace app
+
+Double-click **`Workspace App.cmd`** (or the **Claude Workspace** desktop shortcut). The app
+opens in its own window. It has three views:
+
+- **Dashboard:** what is waiting in the inbox, agent images, active reports and projects.
+- **Projects:** one card per project with **Start Claude**, **Continue**, **Folder** and
+  your editor. Each project lists its **agents**:
+  - **Start** opens a terminal tab where that agent sees only its own memory and images.
+  - **Memory** shows what it has learned.
+  - **+ New agent** creates one.
+- **Images:** choose where images go (the hub, a project's shared folder, or one agent). Then
+  drag and drop, paste a screenshot with **Ctrl+V**, or choose files. Images are saved in a
+  dated folder and never overwritten. **Copy path** gives you the full path to paste into Claude.
+
+The app runs in the background and stops by itself a few minutes after you close its window.
+It only listens on this PC (`127.0.0.1`), and only a browser with its sign-in link (new for
+every run; the app opens it for you) can use it. Details
+and the safety rules are in [tools/workspace-app/README.md](tools/workspace-app/README.md).
+
+```powershell
+node tools/workspace-app/make-shortcut.mjs                # desktop shortcut "Claude Workspace"
+node tools/workspace-app/make-shortcut.mjs --start-menu   # also in the Start menu (pin it from there)
+node tools/workspace-app/make-shortcut.mjs --remove       # remove the shortcut(s) that start this workspace's app
+```
+
 ## Tools
 
 | Command | What it does |
@@ -150,6 +182,11 @@ outside `projects/` and `inbox/`. Run it after you add or move files by hand.
 | `node tools/install-library.mjs [--dry-run]` | Copies `library/` skills and agents to `~/.claude` (backs up a same-named file before replacing it; never deletes) |
 | `node tools/register-report.mjs --folder reports/<id> ...` | Adds or updates a report in `reports/reports.json` |
 | `node tools/new-project.mjs <name> --type nextjs\|game [--from <url>]` | Creates or clones a project |
+| `node tools/new-agent.mjs <project> <agent> [--role "..."] [--description "..."] [--tools "..."]` | Adds a project agent with its own memory folder and inbox image folder |
+| `node tools/agent-session.mjs <project> <agent> [--print]` | Starts Claude as that agent, seeing only its own memory and images |
+| `node tools/workspace-app/server.mjs [--no-open]` | Runs the workspace app (what `Workspace App.cmd` starts, hidden) |
+| `node tools/workspace-app/make-shortcut.mjs [--start-menu] [--remove]` | Creates or removes the "Claude Workspace" shortcut |
+| `node --test "tools/**/*.test.mjs"` | Runs the tool tests |
 
 ## Good to know
 
@@ -157,6 +194,8 @@ outside `projects/` and `inbox/`. Run it after you add or move files by hand.
   (`"autoMemoryEnabled": false` in `.claude/settings.json`). `knowledge/` is the memory
   instead: you can read it, edit it, grep it and version it. Project sessions use the
   project's own settings, so auto memory (on by default) is on there unless a setting turns it off.
+  Project agents each keep their own memory in `projects/<name>/.claude/agent-memory/<agent>/`
+  ([agent memory note](knowledge/claude-code/agent-memory.md)).
 - **What Claude loaded.** In a session, `/context` shows which memory files loaded,
   `/hooks` lists the hooks, and `/status` shows which settings files are in use.
 - **Secrets.** Never commit tokens. `.env` files are gitignored, Claude is denied reading

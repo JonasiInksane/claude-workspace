@@ -146,6 +146,8 @@
   .badge.t-godot { color: var(--blue); background: var(--blue-soft); border-color: transparent; }
   .badge.t-unity { color: var(--violet); background: var(--violet-soft); border-color: transparent; }
   .badge.t-web-game { color: var(--green); background: var(--green-soft); border-color: transparent; }
+  .badge.t-expo { color: var(--blue); background: var(--blue-soft); border-color: transparent; }
+  .badge.t-monorepo { color: var(--accent); background: var(--accent-soft); border-color: transparent; white-space: normal; }
   .chip {
     display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 2px 8px; border-radius: 6px;
     border: 1px solid var(--border); background: var(--bg); color: var(--text); text-decoration: none; max-width: 100%;
@@ -647,7 +649,7 @@ function renderFile(n) {
 }
 
 // ---------- Dashboard
-const TYPE_LABEL = { nextjs: 'Next.js', godot: 'Godot', unity: 'Unity', 'web-game': 'Web game', other: 'Other' };
+const TYPE_LABEL = { nextjs: 'Next.js', expo: 'Expo', godot: 'Godot', unity: 'Unity', 'web-game': 'Web game', monorepo: 'Monorepo', other: 'Other' };
 const byDateDesc = (a, b) => String(b.updated || '').localeCompare(String(a.updated || ''));
 function empty(title, body) { return '<div class="empty"><strong>' + esc(title) + '</strong>' + body + '</div>'; }
 function block(id, title, count, moreHref, moreLabel, inner) {
@@ -745,7 +747,9 @@ function projectTile(p, linkName) {
     : '<a class="pname" href="' + esc(hrefOf(p.path)) + '">' + esc(p.name) + '</a>';
   return '<div class="tile">' +
     '<div class="tile-top">' + name +
-    '<span class="badge t-' + esc(p.type) + '">' + esc(TYPE_LABEL[p.type] || p.type) + '</span></div>' +
+    '<span class="badge t-' + esc(p.type) + '"' +
+      (p.parts && p.parts.length ? ' title="' + esc(p.parts.map(x => x.path + ': ' + (TYPE_LABEL[x.type] || x.type)).join(', ')) + '"' : '') +
+      '>' + esc(p.label || TYPE_LABEL[p.type] || p.type) + '</span></div>' +
     (p.hasClaudeMd
       ? '<span class="yes">✓ CLAUDE.md</span>'
       : '<span class="no">✗ No CLAUDE.md yet. Run <code>/onboard-project</code> in it.</span>') +

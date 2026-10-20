@@ -7,7 +7,9 @@
       "Bash(node tools/check-workspace.mjs *)",
       "PowerShell(node tools/check-workspace.mjs *)",
       "Bash(node tools/register-report.mjs *)",
-      "PowerShell(node tools/register-report.mjs *)"
+      "PowerShell(node tools/register-report.mjs *)",
+      "Bash(node tools/lib/project-type.mjs *)",
+      "PowerShell(node tools/lib/project-type.mjs *)"
     ],
     "deny": [
       "Read(.env)",

@@ -8,6 +8,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve, dirname, basename, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { detectProjectType, typeLabel } from './lib/project-type.mjs';
 
 function isDirPath(p) { try { return statSync(p).isDirectory(); } catch { return false; } }
 
@@ -227,28 +228,8 @@ function localTarget(t) {
 // SPEC C8 project detection.
 function detectProject(dirAbs) {
   const has = p => existsSync(join(dirAbs, p));
-  let deps = {};
-  let raw = '';
-  if (has('package.json')) {
-    try {
-      raw = readText(join(dirAbs, 'package.json')).replace(/^\uFEFF/, '');
-      const pkg = JSON.parse(raw);
-      const obj = v => (v && typeof v === 'object' ? v : {});
-      deps = { ...obj(pkg.dependencies), ...obj(pkg.devDependencies) };
-    } catch { deps = null; } // unparsable: fall back to a text search, like build-index
-  }
-  const hasDep = name => (deps
-    ? Object.prototype.hasOwnProperty.call(deps, name)
-    : new RegExp('"' + name.replace('.', '\\.') + '"\\s*:').test(raw));
-  let entries = [];
-  try { entries = readdirSync(dirAbs); } catch { /* ignore */ }
-  let type = 'other';
-  if (entries.some(n => /^next\.config\./i.test(n)) || hasDep('next')) type = 'nextjs';
-  else if (has('project.godot')) type = 'godot';
-  else if (has('ProjectSettings/ProjectVersion.txt')) type = 'unity';
-  else if (['phaser', 'three', 'pixi.js', 'kaplay', 'excalibur'].some(hasDep)) type = 'web-game';
   const hasClaudeMd = has('CLAUDE.md') || has('.claude/CLAUDE.md');
-  return { type, hasClaudeMd };
+  return { label: typeLabel(detectProjectType(dirAbs)), hasClaudeMd };
 }
 
 // ---------------------------------------------------------------- runner
@@ -612,7 +593,7 @@ check('projects', r => {
   r.count = projectNames.length;
   r.note = projectNames.map(n => {
     const p = detectProject(join(root, 'projects', n));
-    return `${n} [${p.type}${p.hasClaudeMd ? '' : ', no CLAUDE.md'}]`;
+    return `${n} [${p.label}${p.hasClaudeMd ? '' : ', no CLAUDE.md'}]`;
   }).join(', ');
 });
 

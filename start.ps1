@@ -21,36 +21,15 @@ $SetupCmd = 'powershell -NoProfile -ExecutionPolicy Bypass -File .\Setup.ps1'
 
 # ------------------------------------------------------------------ project detection (SPEC C8)
 
+# The rules live in tools\lib\project-type.mjs (shared with the Node tools and the hook),
+# so this asks Node for the label. Without Node it shows "unknown".
 function Get-ProjectType([string]$Dir) {
-  $deps = @{}
-  $pkgPath = Join-Path $Dir 'package.json'
-  if (Test-Path -LiteralPath $pkgPath -PathType Leaf) {
-    $text = ''
-    try { $text = [IO.File]::ReadAllText($pkgPath) } catch { $text = '' }
-    $parsed = $false
-    try {
-      $pkg = $text | ConvertFrom-Json
-      foreach ($section in @('dependencies', 'devDependencies')) {
-        $s = $pkg.$section
-        if ($s) { foreach ($p in $s.PSObject.Properties) { $deps[$p.Name] = $true } }
-      }
-      $parsed = $true
-    } catch { $parsed = $false }
-    if (-not $parsed) {
-      # Fallback for package.json files that ConvertFrom-Json (PS 5.1) cannot read.
-      foreach ($m in [regex]::Matches($text, '"(next|phaser|three|pixi\.js|kaplay|excalibur)"\s*:')) {
-        $deps[$m.Groups[1].Value] = $true
-      }
-    }
-  }
-  $nextConfig = Get-ChildItem -LiteralPath $Dir -Filter 'next.config.*' -File -ErrorAction SilentlyContinue
-  if ($nextConfig -or $deps.ContainsKey('next')) { return 'nextjs' }
-  if (Test-Path -LiteralPath (Join-Path $Dir 'project.godot')) { return 'godot' }
-  if (Test-Path -LiteralPath (Join-Path $Dir 'ProjectSettings\ProjectVersion.txt')) { return 'unity' }
-  foreach ($d in @('phaser', 'three', 'pixi.js', 'kaplay', 'excalibur')) {
-    if ($deps.ContainsKey($d)) { return 'web-game' }
-  }
-  return 'other'
+  if (-not (Get-Command node -ErrorAction SilentlyContinue)) { return 'unknown' }
+  try {
+    $label = & node (Join-Path $Root 'tools\lib\project-type.mjs') $Dir 2>$null
+    if ($LASTEXITCODE -eq 0 -and $label) { return ([string]$label).Trim() }
+  } catch { }
+  return 'unknown'
 }
 
 function Get-Projects {
@@ -204,7 +183,7 @@ function Show-Menu($Projects) {
     $p = $Projects[$i]
     $md = 'CLAUDE.md'
     if (-not $p.HasClaudeMd) { $md = 'no CLAUDE.md (run /onboard-project)' }
-    Write-Host ('  {0,-4} {1,-24} {2,-9} {3}' -f "[$($i + 1)]", $p.Name, $p.Type, $md)
+    Write-Host ('  {0,-4} {1,-24} {2,-26} {3}' -f "[$($i + 1)]", $p.Name, $p.Type, $md)
   }
   Write-Host '  [C]  Continue the last conversation (claude -c) in a target'
   Write-Host '  [O]  Open the navigator (index.html)'

@@ -13,7 +13,6 @@ const REMINDER = 'Check knowledge/INDEX.md before starting a task; file new less
 const FALLBACK = 'Workspace status unavailable (session-start hook error).\n' + REMINDER + '\n';
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const INBOX_IGNORE = new Set(['readme.md', '.gitkeep', '_processed', 'thumbs.db', 'desktop.ini']);
-const GAME_LIBS = new Set(['phaser', 'three', 'pixi.js', 'kaplay', 'excalibur']);
 const MAX_INBOX_NAMES = 10;
 const MAX_REPORTS = 5;
 const MAX_PROJECTS = 10;
@@ -100,31 +99,13 @@ function reportLines() {
   return lines;
 }
 
-// Project detection, same rules as the rest of the workspace (SPEC C8).
-function depsOf(pkg) {
-  const out = {};
-  if (!pkg || typeof pkg !== 'object') return out;
-  for (const key of ['dependencies', 'devDependencies']) {
-    const d = pkg[key];
-    if (d && typeof d === 'object' && !Array.isArray(d)) Object.assign(out, d);
-  }
-  return out;
-}
-
-function detectType(dir) {
-  let names = [];
-  try { names = readdirSync(dir); } catch { /* unreadable folder */ }
-  let pkg = null;
-  if (names.includes('package.json')) {
-    try { pkg = readJson(join(dir, 'package.json')); } catch { /* invalid package.json */ }
-  }
-  const deps = depsOf(pkg);
-  if (names.some(n => /^next\.config\./i.test(n)) || Object.hasOwn(deps, 'next')) return 'nextjs';
-  if (existsSync(join(dir, 'project.godot'))) return 'godot';
-  if (existsSync(join(dir, 'ProjectSettings', 'ProjectVersion.txt'))) return 'unity';
-  if (Object.keys(deps).some(k => GAME_LIBS.has(k))) return 'web-game';
-  return 'other';
-}
+// Project detection is shared with the rest of the workspace (SPEC C8, tools/lib/project-type.mjs).
+// Loaded dynamically so a broken or missing module can't stop this hook from printing.
+let detectType = () => 'type unknown';
+try {
+  const m = await import('../lib/project-type.mjs');
+  detectType = dir => m.typeLabel(m.detectProjectType(dir));
+} catch { /* keep the fallback */ }
 
 function hasClaudeMd(dir) {
   return existsSync(join(dir, 'CLAUDE.md')) || existsSync(join(dir, '.claude', 'CLAUDE.md'));

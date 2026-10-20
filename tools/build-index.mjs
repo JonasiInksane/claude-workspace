@@ -4,6 +4,7 @@
 import { readdirSync, readFileSync, statSync, writeFileSync, existsSync, renameSync, unlinkSync } from 'node:fs';
 import { join, relative, extname, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { detectProjectType, typeLabel } from './lib/project-type.mjs';
 
 const toolsDir = dirname(fileURLToPath(import.meta.url));
 const root = join(toolsDir, '..');
@@ -22,7 +23,6 @@ const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
 const MAX_BYTES = 200_000;
 // Inside projects/<name>/ only these files (plus .claude/**) are listed; source code is not indexed.
 const PROJECT_FILES = new Set(['README.md', 'CLAUDE.md']);
-const GAME_LIBS = ['phaser', 'three', 'pixi.js', 'kaplay', 'excalibur'];
 
 const toPosix = p => p.replaceAll('\\', '/');
 const relPath = full => toPosix(relative(root, full));
@@ -182,27 +182,11 @@ function loadReports() {
 // ---------- Projects (C8)
 function detectProject(dir) {
   const has = p => existsSync(join(dir, p));
-  const names = safeReaddir(dir).map(e => e.name);
-  let deps = {};
-  let raw = '';
-  if (has('package.json')) {
-    raw = readText(join(dir, 'package.json')) || '';
-    try {
-      const pkg = JSON.parse(raw);
-      const obj = v => (v && typeof v === 'object' ? v : {});
-      deps = { ...obj(pkg.dependencies), ...obj(pkg.devDependencies) };
-    } catch { deps = null; } // unparsable: fall back to a text search below
-  }
-  const hasDep = name => deps
-    ? Object.prototype.hasOwnProperty.call(deps, name)
-    : new RegExp('"' + name.replace('.', '\\.') + '"\\s*:').test(raw);
-  let type = 'other';
-  if (names.some(n => /^next\.config\./i.test(n)) || hasDep('next')) type = 'nextjs';
-  else if (has('project.godot')) type = 'godot';
-  else if (has(join('ProjectSettings', 'ProjectVersion.txt'))) type = 'unity';
-  else if (GAME_LIBS.some(hasDep)) type = 'web-game';
+  const detected = detectProjectType(dir);
   return {
-    type,
+    type: detected.type,
+    label: typeLabel(detected),
+    parts: detected.parts,
     hasClaudeMd: has('CLAUDE.md') || has(join('.claude', 'CLAUDE.md')),
     hasReadme: has('README.md'),
   };

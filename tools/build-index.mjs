@@ -5,6 +5,8 @@ import { readdirSync, readFileSync, statSync, writeFileSync, existsSync, renameS
 import { join, relative, extname, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { detectProjectType, typeLabel } from './lib/project-type.mjs';
+import { listAgents } from './lib/agents.mjs';
+import { scanInbox } from './lib/inbox.mjs';
 
 const toolsDir = dirname(fileURLToPath(import.meta.url));
 const root = join(toolsDir, '..');
@@ -196,7 +198,14 @@ function loadProjects() {
   return safeReaddir(base)
     .filter(e => !e.name.startsWith('.') && !SKIP.has(e.name))
     .filter(e => e.isDirectory() || (e.isSymbolicLink() && safeStat(join(base, e.name))?.isDirectory()))
-    .map(e => ({ name: e.name, path: 'projects/' + e.name, ...detectProject(join(base, e.name)) }))
+    .map(e => ({
+      name: e.name,
+      path: 'projects/' + e.name,
+      ...detectProject(join(base, e.name)),
+      agents: listAgents(root, e.name).map(a => ({
+        name: a.name, description: a.description, isolated: a.isolated, valid: a.valid,
+      })),
+    }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -266,43 +275,30 @@ function loadKnowledge() {
 }
 
 // ---------- Inbox (C4): every file, including binaries.
-// Same rules as tools/hooks/session-start.mjs: README.md, dotfiles (.gitkeep), OS clutter and
-// _processed/ folders are not inbox items. Files in inbox/_processed/ are only counted.
+// tools/lib/inbox.mjs decides what waits for triage (shared with the session-start hook).
+// Agent image libraries (inbox/attachments/<project>/<agent>/) are listed separately.
 function loadInbox() {
-  const base = join(root, 'inbox');
-  const out = { exists: existsSync(base), items: [], processed: 0 };
-  const countProcessed = dir => {
-    for (const e of safeReaddir(dir)) {
-      if (e.name.startsWith('.') || CLUTTER.has(e.name.toLowerCase())) continue;
-      if (e.isDirectory()) countProcessed(join(dir, e.name));
-      else out.processed++;
-    }
-  };
-  const visit = dir => {
-    for (const e of safeReaddir(dir)) {
-      const lower = e.name.toLowerCase();
-      if (SKIP.has(e.name) || e.name.startsWith('.') || CLUTTER.has(lower) || lower === 'readme.md') continue;
-      const full = join(dir, e.name);
-      if (e.isDirectory()) {
-        if (lower === '_processed') { if (dir === base) countProcessed(full); continue; }
-        visit(full);
-        continue;
-      }
-      const rel = toPosix(relative(base, full));
-      const st = safeStat(full);
-      if (!st || !st.isFile()) continue;
-      out.items.push({
-        name: e.name,
-        path: relPath(full),
-        folder: rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '',
-        size: st.size,
-        mtime: st.mtime.toISOString(),
-        isImage: isImage(e.name),
-      });
-    }
-  };
-  if (out.exists) visit(base);
-  out.items.sort((a, b) => b.mtime.localeCompare(a.mtime));
+  const out = { exists: false, items: [], libraries: [], processed: 0, error: '' };
+  let ib;
+  try { ib = scanInbox(root); } catch (e) { out.error = String(e.message || e); return out; }
+  out.exists = ib.exists;
+  out.processed = ib.processed;
+  if (ib.truncated) out.error = 'Only part of inbox/ was scanned (too deep or too many files); run node tools/check-workspace.mjs.';
+  out.items = ib.items.map(it => {
+    const name = it.parts[it.parts.length - 1];
+    return {
+      name,
+      path: it.path,
+      folder: it.parts.slice(0, -1).join('/'),
+      size: it.size,
+      mtime: new Date(it.mtimeMs).toISOString(),
+      isImage: isImage(name),
+    };
+  });
+  out.libraries = ib.libraries.map(l => ({
+    project: l.project, agent: l.agent, files: l.files, known: l.known, path: l.path,
+    latest: new Date(l.latestMs).toISOString(),
+  }));
   return out;
 }
 

@@ -4,11 +4,14 @@
 //
 // Checks: strict JSON, skill and agent frontmatter, knowledge notes + INDEX.md, the reports
 // registry, relative Markdown links, CLAUDE.md @imports, hook script paths, .env.example,
-// absolute user paths, file sizes, and lists the projects with their detected type.
+// absolute user paths, file sizes, lists the projects with their detected type and agents, and
+// checks the inbox's agent image folders.
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve, dirname, basename, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { detectProjectType, typeLabel } from './lib/project-type.mjs';
+import { duplicateNames, listAgents } from './lib/agents.mjs';
+import { scanInbox } from './lib/inbox.mjs';
 
 function isDirPath(p) { try { return statSync(p).isDirectory(); } catch { return false; } }
 
@@ -588,18 +591,54 @@ check('sizes', r => {
   }
 });
 
-// 12. Projects with their detected type (C8). Informational.
+// 12. Projects with their detected type (C8) and project agents. Informational, plus a warning
+// when a project with agents turns auto memory off (that also turns agent memory off).
 check('projects', r => {
   r.count = projectNames.length;
   r.note = projectNames.map(n => {
     const p = detectProject(join(root, 'projects', n));
-    return `${n} [${p.label}${p.hasClaudeMd ? '' : ', no CLAUDE.md'}]`;
+    const agents = listAgents(root, n);
+    if (agents.length) {
+      for (const s of ['settings.json', 'settings.local.json']) {
+        let json = null;
+        try { json = JSON.parse(readText(join(root, 'projects', n, '.claude', s)).replace(/^﻿/, '')); } catch { continue; }
+        if (json && json.autoMemoryEnabled === false) {
+          r.warnings.push(`projects/${n}/.claude/${s}: autoMemoryEnabled is false, so its agents have no memory as subagents (agent-session.mjs still turns it on)`);
+        }
+      }
+      for (const a of agents.filter(x => !x.isolated)) {
+        r.warnings.push(`projects/${n}: agent "${a.name}" has no "memory: project" (or local), so it has no memory of its own`);
+      }
+      for (const a of agents.filter(x => !x.valid)) {
+        r.warnings.push(`projects/${n}: agent name "${a.name}" is not kebab-case or is reserved; agent-session.mjs and the app skip it`);
+      }
+      for (const d of duplicateNames(agents)) {
+        const where = d.files.map(f => relative(root, f).split('\\').join('/')).join(', ');
+        r.errors.push(`projects/${n}: agent name "${d.name}" is used by ${where} (Claude Code loads only one; they would share one memory folder)`);
+      }
+    }
+    const agentNote = agents.length ? `, agents: ${agents.map(a => a.name).join(' ')}` : '';
+    return `${n} [${p.label}${p.hasClaudeMd ? '' : ', no CLAUDE.md'}${agentNote}]`;
   }).join(', ');
+});
+
+// 13. Inbox: triage items and agent image libraries (tools/lib/inbox.mjs). Warns about image
+// folders whose agent no longer exists and loose files directly in attachments/<project>/.
+check('inbox', r => {
+  const ib = scanInbox(root);
+  r.count = ib.items.length;
+  r.unit = 'items';
+  if (ib.libraries.length) r.note = `${ib.libraries.length} agent image folder${ib.libraries.length === 1 ? '' : 's'}`;
+  for (const l of ib.libraries) {
+    if (!l.agent) r.warnings.push(`${l.path}/: files directly in a project folder; move them into <agent>/ or _shared/`);
+    else if (!l.known) r.warnings.push(`${l.path}/: projects/${l.project} has no agent "${l.agent}" (renamed or removed?)`);
+  }
+  if (ib.truncated) r.warnings.push('inbox/ is too deep or too large; only part of it was scanned');
 });
 
 // ---------------------------------------------------------------- output
 
-const SINGULAR = { files: 'file', notes: 'note', entries: 'entry', keys: 'key' };
+const SINGULAR = { files: 'file', notes: 'note', entries: 'entry', keys: 'key', items: 'item' };
 let errors = 0;
 let warnings = 0;
 for (const r of results) {

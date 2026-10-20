@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Claude Workspace</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="side">
+      <div class="brand">
+        <img src="/icon.svg" alt="">
+        <div>
+          <h1>Claude Workspace</h1>
+          <p id="rootPath"></p>
+        </div>
+      </div>
+      <nav aria-label="Views">
+        <button data-view="home">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+          Dashboard
+        </button>
+        <button data-view="projects">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6H9l2 2h8.5A1.5 1.5 0 0 1 21 9.5v8A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5z"/></svg>
+          Projects <span class="count" id="countProjects"></span>
+        </button>
+        <button data-view="images">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg>
+          Images
+        </button>
+      </nav>
+      <div class="side-actions">
+        <span class="label">Hub</span>
+        <button class="btn primary" id="startHub">Start Claude in the hub</button>
+        <button class="btn" id="continueHub">Continue last hub session</button>
+        <button class="btn ghost" id="openNavigator">Open navigator</button>
+      </div>
+      <div class="side-foot">
+        <span id="toolsInfo"></span>
+        <button class="icon-btn" id="refresh" title="Refresh">Refresh</button>
+      </div>
+    </aside>
+    <main>
+      <section class="view" id="view-home" hidden></section>
+      <section class="view" id="view-projects" hidden></section>
+      <section class="view" id="view-images" hidden></section>
+    </main>
+  </div>
+  <div id="toasts" aria-live="polite"></div>
+  <dialog id="dialog"></dialog>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+# --- Inbox: private drop zone. Keep only the folder structure, README and .gitkeep files.
+inbox/**
+!inbox/**/
+!inbox/README.md
+!inbox/**/.gitkeep
+
+# --- Projects are their own git repos. Keep only the README.
+projects/*
+!projects/README.md
+
+# --- Secrets. .env.example (names only) stays tracked.
+.env
+.env.*
+!.env.example
+
+# --- Claude Code personal/local files
+**/.claude/settings.local.json
+CLAUDE.local.md
+.claude/worktrees/
+
+# --- Generated navigator (rebuilt by tools/build-index.mjs; it embeds inbox file names)
+/index.html
+/index.html.*.tmp
+
+# --- Node
+node_modules/
+npm-debug.log*
+
+# --- OS clutter
+Thumbs.db
+desktop.ini
+.DS_Store

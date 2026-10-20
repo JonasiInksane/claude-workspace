@@ -1,0 +1,844 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Workspace</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js" integrity="sha384-/TQbtLCAerC3jgaim+N78RZSDYV7ryeoBCVqTuzRrFec2akfBkHS7ACQ3PQhvMVi" crossorigin="anonymous"></script>
+<style>
+  :root {
+    --bg: #faf9f6; --panel: #f1efe8; --text: #1f1e1b; --muted: #6b675e;
+    --border: #e0ddd3; --accent: #c2410c; --accent-soft: #fbe7dc; --code-bg: #ece9e0;
+    --hover: #e7e4da;
+    --green: #2f7a4b; --green-soft: #e2f0e6; --blue: #2c5f9e; --blue-soft: #e2ebf6;
+    --violet: #6a4aa8; --violet-soft: #ece6f6; --shadow: 0 1px 2px rgba(31, 30, 27, .06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1b1a18; --panel: #232220; --text: #ebe8e1; --muted: #9c978c;
+      --border: #34322e; --accent: #f08a5d; --accent-soft: #3a2a22; --code-bg: #2b2a27;
+      --hover: #2e2c29;
+      --green: #7cc79a; --green-soft: #1e3127; --blue: #8ab4ea; --blue-soft: #1e2a3a;
+      --violet: #b9a2ef; --violet-soft: #2b2440; --shadow: none;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1b1a18; --panel: #232220; --text: #ebe8e1; --muted: #9c978c;
+    --border: #34322e; --accent: #f08a5d; --accent-soft: #3a2a22; --code-bg: #2b2a27;
+    --hover: #2e2c29;
+    --green: #7cc79a; --green-soft: #1e3127; --blue: #8ab4ea; --blue-soft: #1e2a3a;
+    --violet: #b9a2ef; --violet-soft: #2b2440; --shadow: none;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: grid; grid-template-columns: 290px 1fr; height: 100vh; height: 100dvh;
+  }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .mono, code, .sname, .hint { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+
+  /* ---------- Sidebar */
+  aside {
+    background: var(--panel); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; min-height: 0;
+  }
+  .brand { padding: 18px 16px 10px; }
+  .brand a { color: inherit; text-decoration: none; }
+  .brand h1 { font-size: 16px; margin: 0; letter-spacing: .2px; }
+  .brand a:hover h1 { color: var(--accent); }
+  .brand p { margin: 2px 0 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+  .search { padding: 0 12px 10px; }
+  .search input {
+    width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font: inherit; font-size: 14px;
+  }
+  .sections { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 12px 10px; }
+  .sections button {
+    border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; font-family: inherit;
+  }
+  .sections button:hover { border-color: var(--accent); }
+  .sections button.home-chip { color: var(--accent); border-color: var(--accent); }
+  #nav { overflow: auto; padding: 4px 6px 20px; flex: 1; }
+  #nav ul { list-style: none; margin: 0; padding-left: 14px; }
+  #nav > ul { padding-left: 0; }
+  #nav li > .row {
+    display: flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 6px;
+    cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px;
+  }
+  #nav .row:hover { background: var(--hover); }
+  #nav .row.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  #nav .icon { width: 16px; text-align: center; flex: none; color: var(--muted); font-size: 12px; }
+  #nav li.collapsed > ul { display: none; }
+  #nav .dim { color: var(--muted); }
+  .footer { padding: 10px 14px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .footer button { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 6px; padding: 2px 8px; cursor: pointer; font-size: 11px; font-family: inherit; }
+
+  /* ---------- Main + top bar */
+  main { overflow: auto; min-width: 0; }
+  .topbar {
+    position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--border);
+    padding: 10px 32px; display: flex; align-items: center; gap: 12px; z-index: 1;
+  }
+  .crumbs { flex: 1; min-width: 0; font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .crumbs a { color: var(--muted); text-decoration: none; cursor: pointer; }
+  .crumbs a:hover { color: var(--accent); }
+  .actions a, .actions button {
+    font-size: 12px; color: var(--text); text-decoration: none; border: 1px solid var(--border);
+    background: var(--panel); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-family: inherit; white-space: nowrap;
+  }
+  .actions a:hover, .actions button:hover { border-color: var(--accent); }
+  .actions { display: flex; gap: 6px; flex: none; }
+  .menu-btn { display: none; font: inherit; font-size: 15px; line-height: 1; padding: 5px 9px; border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 6px; cursor: pointer; flex: none; }
+
+  /* ---------- Documents (markdown, files, folders) */
+  #view { padding: 24px 32px 80px; max-width: 880px; overflow-wrap: break-word; }
+  #view.home { max-width: 1080px; }
+  .doc h1 { font-size: 28px; line-height: 1.25; margin: 8px 0 16px; }
+  .doc h2 { font-size: 21px; margin: 32px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  .doc h3 { font-size: 17px; margin: 24px 0 8px; }
+  .doc a { color: var(--accent); }
+  .doc code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: .9em; }
+  .doc pre { background: var(--code-bg); padding: 14px 16px; border-radius: 8px; overflow: auto; line-height: 1.45; }
+  .doc pre code { background: none; padding: 0; font-size: 13px; }
+  .doc table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; display: block; overflow-x: auto; }
+  .doc th, .doc td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
+  .doc th { background: var(--panel); }
+  .doc blockquote { margin: 12px 0; padding: 4px 16px; border-left: 3px solid var(--accent); color: var(--muted); background: var(--panel); border-radius: 0 6px 6px 0; }
+  .doc img { max-width: 100%; height: auto; }
+  .front { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  .front div { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-size: 13px; max-width: 100%; }
+  .front b { color: var(--muted); font-weight: 600; margin-right: 6px; }
+  .meta-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; color: var(--muted); font-size: 13px; margin: -8px 0 16px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr)); gap: 10px; margin-top: 16px; }
+  .card { display: block; border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--panel); color: inherit; text-decoration: none; min-width: 0; }
+  .doc a.card { color: inherit; }
+  .card:hover { border-color: var(--accent); }
+  .card .t { font-weight: 600; overflow-wrap: anywhere; }
+  .card .d { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .card img { display: block; width: 100%; height: 110px; object-fit: cover; border-radius: 6px; margin-bottom: 8px; background: var(--code-bg); }
+  .media { margin: 0 0 16px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); text-align: center; }
+  .media img { max-width: 100%; max-height: 75vh; height: auto; border-radius: 6px; vertical-align: middle; }
+  .preview { display: block; width: 100%; height: 70vh; border: 1px solid var(--border); border-radius: 10px; background: #fff; margin-top: 12px; }
+  .muted { color: var(--muted); }
+
+  /* ---------- Shared bits */
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 13px; line-height: 1.3;
+    padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel);
+    color: var(--text); text-decoration: none; cursor: pointer; white-space: nowrap;
+  }
+  .doc a.btn { color: var(--text); }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.primary, .doc a.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+  .btn.primary:hover { filter: brightness(1.08); color: var(--bg); }
+  .btn[aria-disabled="true"] { opacity: .5; pointer-events: none; }
+  .badge {
+    display: inline-flex; align-items: center; font-size: 11px; font-weight: 600; letter-spacing: .02em;
+    padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted);
+    background: var(--bg); white-space: nowrap; line-height: 1.6;
+  }
+  .badge.s-active { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+  .badge.s-done { color: var(--green); background: var(--green-soft); border-color: transparent; }
+  .badge.t-nextjs { color: var(--text); }
+  .badge.t-godot { color: var(--blue); background: var(--blue-soft); border-color: transparent; }
+  .badge.t-unity { color: var(--violet); background: var(--violet-soft); border-color: transparent; }
+  .badge.t-web-game { color: var(--green); background: var(--green-soft); border-color: transparent; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 2px 8px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--text); text-decoration: none; max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  a.chip:hover { border-color: var(--accent); color: var(--accent); }
+  .chip.missing { color: var(--muted); text-decoration: line-through; }
+
+  /* ---------- Dashboard */
+  .home a { color: inherit; }
+  .hero { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px; }
+  .hero-text { min-width: 0; }
+  .eyebrow { margin: 0; font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+  .hero h1 { font-size: 28px; line-height: 1.2; margin: 4px 0 4px; letter-spacing: -.01em; }
+  .sub { margin: 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+  .quick { display: flex; flex-wrap: wrap; gap: 8px; }
+  .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 20px; }
+  .stat {
+    text-align: left; font: inherit; color: var(--text); cursor: pointer; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; min-width: 0; box-shadow: var(--shadow);
+  }
+  .stat:hover { border-color: var(--accent); }
+  .stat b { display: block; font-size: 24px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+  .stat span { display: block; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .block { margin-top: 34px; scroll-margin-top: 64px; }
+  .block-head { display: flex; align-items: center; gap: 10px; padding-bottom: 8px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
+  .block-head h2 { font-size: 17px; margin: 0; letter-spacing: .01em; }
+  .count { font-size: 12px; line-height: 1.6; padding: 0 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel); color: var(--muted); font-variant-numeric: tabular-nums; }
+  .home a.more { margin-left: auto; font-size: 13px; color: var(--muted); text-decoration: none; white-space: nowrap; }
+  .home a.more:hover { color: var(--accent); }
+  .foot { margin: 10px 2px 0; font-size: 13px; color: var(--muted); }
+  .home .foot a { color: var(--accent); text-underline-offset: 3px; }
+  .empty { border: 1px dashed var(--border); border-radius: 12px; padding: 22px 18px; text-align: center; color: var(--muted); font-size: 14px; }
+  .empty strong { display: block; color: var(--text); font-size: 15px; margin-bottom: 4px; }
+  .home code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: .9em; }
+  .warn { border: 1px solid var(--accent); background: var(--accent-soft); color: var(--text); border-radius: 10px; padding: 10px 14px; font-size: 14px; margin-bottom: 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 12px; }
+  .tile {
+    display: flex; flex-direction: column; gap: 8px; min-width: 0; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow);
+  }
+  .tile-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .tile h3 { margin: 0; font-size: 16px; line-height: 1.35; overflow-wrap: anywhere; }
+  .home .tile h3 a { text-decoration: none; }
+  .home .tile h3 a:hover { color: var(--accent); }
+  .tile .summary { margin: 0; font-size: 14px; color: var(--muted); }
+  .tile-foot { margin-top: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .tile-foot .date { margin-right: 4px; }
+  .pname { font-weight: 650; font-size: 16px; text-decoration: none; overflow-wrap: anywhere; margin-right: auto; }
+  .home a.pname:hover { color: var(--accent); }
+  .yes { color: var(--green); font-size: 13px; }
+  .no { color: var(--muted); font-size: 13px; }
+  .rows { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--panel); box-shadow: var(--shadow); }
+  .rows li + li { border-top: 1px solid var(--border); }
+  .row-link { display: flex; align-items: center; gap: 12px; padding: 10px 14px; text-decoration: none; min-width: 0; }
+  .row-link:hover { background: var(--hover); }
+  .thumb {
+    width: 44px; height: 44px; flex: none; border-radius: 8px; overflow: hidden; background: var(--code-bg);
+    border: 1px solid var(--border); display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700; letter-spacing: .04em; color: var(--muted); text-transform: uppercase;
+  }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .row-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row-sub { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row-side { flex: none; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .row-tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 3px; }
+  .sgroup h3 { margin: 0; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .sgroup .note { margin: -4px 0 2px; font-size: 12px; color: var(--muted); }
+  .slist { display: flex; flex-direction: column; gap: 2px; margin: 0 -8px; }
+  .skill { display: block; padding: 7px 8px; border-radius: 8px; text-decoration: none; min-width: 0; }
+  .skill:hover { background: var(--hover); }
+  .sline { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+  .sname { font-size: 13px; font-weight: 700; color: var(--accent); overflow-wrap: anywhere; }
+  .hint { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+  .sdesc { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13px; color: var(--muted); margin-top: 1px; }
+
+  @media (max-width: 760px) {
+    body { grid-template-columns: 1fr; }
+    aside { position: fixed; inset: 0 25% 0 0; z-index: 5; transform: translateX(-100%); transition: transform .2s; }
+    body.menu-open aside { transform: none; box-shadow: 0 0 40px rgba(0,0,0,.3); }
+    .menu-btn { display: inline-block; }
+    .topbar { padding: 10px 16px; gap: 8px; }
+    #view { padding: 16px 16px 60px; }
+    .hero h1 { font-size: 23px; }
+    .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .preview { height: 60vh; }
+  }
+  @media (max-width: 480px) {
+    .actions .long { display: none; }
+    .row-side { display: none; }
+  }
+</style>
+</head>
+<body>
+<aside>
+  <div class="brand"><a href="#home" title="Dashboard"><h1 id="brandName">Claude Workspace</h1></a><p id="rootPath"></p></div>
+  <div class="search"><input id="q" type="search" placeholder="Filter files…  ( / )" autocomplete="off" aria-label="Filter files"></div>
+  <div class="sections" id="sections"></div>
+  <nav id="nav" aria-label="Files"></nav>
+  <div class="footer"><span id="built"></span><button id="theme" title="Toggle theme">◐ theme</button></div>
+</aside>
+<main>
+  <div class="topbar">
+    <button class="menu-btn" id="menu" aria-label="Menu">☰</button>
+    <div class="crumbs" id="crumbs"></div>
+    <div class="actions">
+      <button id="copy">Copy path</button>
+      <a id="vscode" href="#"><span class="long">Open in </span>VS Code</a>
+    </div>
+  </div>
+  <article id="view"></article>
+</main>
+<script>
+const DATA = /*__DATA__*/null;
+const byPath = new Map();
+(function index(nodes, parent) {
+  for (const n of nodes) { n.parent = parent; byPath.set(n.path, n); if (n.children) index(n.children, n); }
+})(DATA.tree, null);
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const ICON = { dir: '▸', md: '¶', json: '{}', ps1: '›_', mjs: 'js', js: 'js', html: '<>', htm: '<>', img: '▣' };
+const IMG_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']);
+const extOf = name => { const i = name.lastIndexOf('.'); return i > 0 ? name.slice(i + 1).toLowerCase() : ''; };
+const isImg = name => IMG_EXT.has(extOf(name));
+const isHtml = name => extOf(name) === 'html' || extOf(name) === 'htm';
+// Paths are workspace-relative; index.html sits in the workspace root, so they double as relative URLs.
+const encPath = p => p.split('/').map(encodeURIComponent).join('/');
+const hrefOf = p => '#' + encPath(p);
+const isWin = /^([A-Za-z]:\/|\/\/[^/])/.test(DATA.root); // drive letter or UNC share
+const nativePath = p => (isWin ? p.replace(/\//g, '\\') : p);
+const absOf = p => (p ? DATA.root + '/' + p : DATA.root);
+const pad = n => String(n).padStart(2, '0');
+function ymd(iso) {
+  const d = new Date(iso);
+  return isNaN(d) ? '' : d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+}
+function fmtSize(n) {
+  if (n == null) return '';
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' KB';
+  return (n / 1048576).toFixed(1) + ' MB';
+}
+function currentPath() {
+  const h = location.hash.slice(1);
+  try { return decodeURIComponent(h); } catch (e) { return h; }
+}
+function go(path) { location.hash = encPath(path); document.body.classList.remove('menu-open'); }
+
+$('brandName').textContent = DATA.name;
+$('rootPath').textContent = nativePath(DATA.root);
+$('built').textContent = 'Built ' + new Date(DATA.built).toLocaleString();
+
+// Theme toggle (remembered per browser, best effort)
+function applyTheme(t) { if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); }
+try { applyTheme(localStorage.getItem('ws-theme')); } catch (e) {}
+$('theme').onclick = () => {
+  const cur = document.documentElement.getAttribute('data-theme') ||
+    (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  const next = cur === 'dark' ? 'light' : 'dark';
+  applyTheme(next);
+  try { localStorage.setItem('ws-theme', next); } catch (e) {}
+};
+
+function copyText(text, btn) {
+  if (!btn.dataset.label) btn.dataset.label = btn.textContent;
+  const done = () => { btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = btn.dataset.label; }, 1200); };
+  const fallback = () => {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) {}
+    ta.remove();
+    if (ok) done(); else window.prompt('Copy this:', text);
+  };
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, fallback);
+  else fallback();
+}
+
+// Section chips: dashboard + top-level folders
+(function sections() {
+  const home = document.createElement('button');
+  home.textContent = 'Home'; home.className = 'home-chip'; home.onclick = () => go('home');
+  $('sections').appendChild(home);
+  for (const n of DATA.tree.filter(n => n.type === 'dir')) {
+    const b = document.createElement('button');
+    b.textContent = n.name;
+    b.onclick = () => go(n.path);
+    $('sections').appendChild(b);
+  }
+})();
+
+// ---------- Sidebar tree
+function iconFor(n) {
+  if (n.type === 'dir') return ICON.dir;
+  if (isImg(n.name)) return ICON.img;
+  return ICON[extOf(n.name)] || '·';
+}
+function renderTree(nodes, filter) {
+  const ul = document.createElement('ul');
+  for (const n of nodes) {
+    if (filter && !matches(n, filter)) continue;
+    const li = document.createElement('li');
+    const row = document.createElement('div');
+    row.className = 'row'; row.dataset.path = n.path;
+    const dim = n.type === 'file' && n.content == null && !isImg(n.name) && !isHtml(n.name);
+    row.innerHTML = '<span class="icon">' + esc(iconFor(n)) + '</span><span' + (dim ? ' class="dim"' : '') + '>' + esc(n.name) + '</span>';
+    li.appendChild(row);
+    if (n.type === 'dir') {
+      if (!filter && n.path.startsWith('projects/')) li.classList.add('collapsed');
+      if (!filter && n.path.split('/').length > 2) li.classList.add('collapsed');
+      row.onclick = () => {
+        if (li.classList.contains('collapsed') || currentPath() !== n.path) { li.classList.remove('collapsed'); go(n.path); }
+        else li.classList.add('collapsed');
+      };
+      li.appendChild(renderTree(n.children, filter));
+    } else {
+      row.onclick = () => go(n.path);
+    }
+    ul.appendChild(li);
+  }
+  return ul;
+}
+function matches(n, f) {
+  if (n.path.toLowerCase().includes(f)) return true;
+  if (n.content && n.content.toLowerCase().includes(f)) return true;
+  return n.children ? n.children.some(c => matches(c, f)) : false;
+}
+function drawNav() {
+  const f = $('q').value.trim().toLowerCase();
+  $('nav').innerHTML = '';
+  $('nav').appendChild(renderTree(DATA.tree, f));
+  highlight();
+}
+$('q').addEventListener('input', drawNav);
+document.addEventListener('keydown', e => {
+  if (e.key === '/' && document.activeElement !== $('q')) { e.preventDefault(); $('q').focus(); }
+  if (e.key === 'Escape') { $('q').value = ''; drawNav(); $('q').blur(); document.body.classList.remove('menu-open'); }
+});
+$('menu').onclick = () => document.body.classList.toggle('menu-open');
+// On phones, tapping the page closes the open sidebar.
+document.querySelector('main').addEventListener('click', e => {
+  if (!e.target.closest('#menu')) document.body.classList.remove('menu-open');
+});
+
+function highlight() {
+  const cur = currentPath();
+  document.querySelectorAll('#nav .row').forEach(r => r.classList.toggle('active', r.dataset.path === cur));
+  const active = document.querySelector('#nav .row.active');
+  let li = active && active.parentElement.parentElement.closest('li');
+  while (li) { li.classList.remove('collapsed'); li = li.parentElement.closest('li'); }
+  if (active) active.scrollIntoView({ block: 'nearest' });
+}
+
+// ---------- Markdown
+// Frontmatter: key: value, quoted values, [a, b], "- item" lists and | / > blocks (enough for skills and notes).
+function unquote(v) {
+  v = v.trim();
+  if (v.length > 1 && ((v[0] === '"' && v.endsWith('"')) || (v[0] === "'" && v.endsWith("'")))) return v.slice(1, -1);
+  return v.replace(/\s+#.*$/, '');
+}
+function splitFront(src) {
+  const m = src.match(/^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/);
+  if (!m) return { meta: null, body: src };
+  const meta = [];
+  const lines = m[1].split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const km = lines[i].match(/^([A-Za-z0-9_.-]+)\s*:(?:\s+(.*))?$/);
+    if (!km) continue;
+    const raw = (km[2] || '').trim();
+    let val;
+    if (/^[|>][+-]?$/.test(raw)) {
+      const block = [];
+      while (i + 1 < lines.length && (/^\s+\S/.test(lines[i + 1]) || lines[i + 1].trim() === '')) block.push(lines[++i].trim());
+      val = block.join(' ').replace(/\s+/g, ' ').trim();
+    } else if (raw === '' || raw[0] === '#') {
+      const items = [];
+      while (i + 1 < lines.length && /^\s*-\s+/.test(lines[i + 1])) items.push(unquote(lines[++i].replace(/^\s*-\s+/, '')));
+      val = items.join(', ');
+    } else if (/^\[.*\]$/.test(raw)) {
+      val = raw.slice(1, -1).split(',').map(unquote).filter(Boolean).join(', ');
+    } else {
+      val = unquote(raw);
+      while (i + 1 < lines.length && /^\s+\S/.test(lines[i + 1]) && !/^\s*-\s/.test(lines[i + 1])) val += ' ' + lines[++i].trim();
+    }
+    meta.push([km[1], val]);
+  }
+  return { meta, body: src.slice(m[0].length) };
+}
+// Workspace files are trusted-ish, but inbox items may come from the web: strip active content before rendering.
+// The cleaned nodes are moved into the page as DOM nodes. They are never turned back into an HTML string,
+// because re-parsing serialized HTML can revive markup the cleaner removed (mutation XSS).
+const STRIP = 'script,iframe,frame,frameset,object,embed,link,meta,base,form,style,template,noscript,noembed,' +
+  'noframes,xmp,plaintext,animate,set,use,math';
+function cleanFragment(frag) {
+  frag.querySelectorAll(STRIP).forEach(el => el.remove());
+  frag.querySelectorAll('*').forEach(el => {
+    for (const a of Array.from(el.attributes)) {
+      const name = a.name.toLowerCase();
+      const val = a.value.replace(/[\s\u0000-\u001f]+/g, '').toLowerCase();
+      if (name.startsWith('on') || name === 'srcdoc' ||
+          (/^(href|src|xlink:href|action|formaction|poster|background)$/.test(name) && /^(javascript:|vbscript:|data:text\/html)/.test(val))) {
+        el.removeAttribute(a.name);
+      }
+    }
+  });
+  return frag;
+}
+// Raw HTML in markdown is shown as text, so placeholders like <name> or <npm | pnpm> stay visible.
+if (window.marked) marked.use({ renderer: { html(h) { return esc(typeof h === 'string' ? h : (h && h.text) || ''); } } });
+// Render markdown source into element el (marked when loaded, otherwise plain text in a <pre>).
+function mdInto(el, src) {
+  if (!window.marked) { el.innerHTML = '<pre>' + esc(src) + '</pre>'; return; }
+  const t = document.createElement('template');
+  t.innerHTML = marked.parse(src);
+  el.textContent = '';
+  el.appendChild(cleanFragment(t.content));
+}
+// renderFile() returns HTML strings; markdown bodies are queued here and filled in by fillMarkdown().
+let mdQueue = [];
+function fillMarkdown(view) {
+  view.querySelectorAll('.md-body[data-md]').forEach(el => {
+    mdInto(el, mdQueue[Number(el.dataset.md)] || '');
+    el.removeAttribute('data-md');
+    wireMarkdown(el, el.dataset.base);
+  });
+  mdQueue = [];
+}
+function resolve(base, href) {
+  const parts = base.split('/'); parts.pop();
+  for (let seg of href.split('/')) {
+    try { seg = decodeURIComponent(seg); } catch (e) {}
+    if (seg === '..') parts.pop(); else if (seg && seg !== '.') parts.push(seg);
+  }
+  return parts.join('/');
+}
+const slug = s => s.toLowerCase().trim().replace(/[^\w\- ]+/g, '').replace(/\s+/g, '-');
+// Fix links/images inside rendered markdown: base = path of the markdown file.
+function wireMarkdown(el, base) {
+  el.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(h => { if (!h.id) h.id = slug(h.textContent); });
+  el.querySelectorAll('img[src]').forEach(img => {
+    const src = img.getAttribute('src');
+    if (/^([a-z][a-z0-9+.-]*:|\/|#)/i.test(src)) return;
+    img.setAttribute('src', encPath(resolve(base, src.split(/[?#]/)[0])));
+  });
+  el.querySelectorAll('a[href]').forEach(a => {
+    const href = a.getAttribute('href');
+    if (href.startsWith('#')) {
+      const id = href.slice(1);
+      a.onclick = e => {
+        e.preventDefault();
+        let t = null;
+        try { t = document.getElementById(decodeURIComponent(id)); } catch (err) {}
+        t = t || document.getElementById(slug(id));
+        if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      };
+      return;
+    }
+    if (/^([a-z][a-z0-9+.-]*:|\/)/i.test(href)) { if (/^https?:/i.test(href)) { a.target = '_blank'; a.rel = 'noopener'; } return; }
+    const target = resolve(base, href.split(/[?#]/)[0].replace(/\/$/, ''));
+    if (byPath.has(target)) { a.setAttribute('href', hrefOf(target)); }
+    else { a.setAttribute('href', encPath(target)); a.target = '_blank'; a.rel = 'noopener'; }
+  });
+}
+
+function crumbs(path) {
+  const parts = path ? path.split('/') : [];
+  let acc = '';
+  const html = ['<a href="#home">workspace</a>'];
+  for (const p of parts) { acc = acc ? acc + '/' + p : p; html.push('<a href="' + esc(hrefOf(acc)) + '">' + esc(p) + '</a>'); }
+  $('crumbs').innerHTML = html.join(' / ');
+}
+function setActions(path) {
+  const abs = absOf(path);
+  // encodeURI keeps '#' and '?', which would cut the path short in the vscode:// URL.
+  $('vscode').href = 'vscode://file/' + encodeURI(abs).replace(/#/g, '%23').replace(/\?/g, '%3F');
+  $('copy').onclick = () => copyText(nativePath(abs), $('copy'));
+}
+
+function describe(n) {
+  if (n.type === 'file' && isImg(n.name)) return 'Image · ' + fmtSize(n.size);
+  if (n.type === 'file' && isHtml(n.name)) return 'HTML page · open in a new tab';
+  // short description: frontmatter description or first paragraph line
+  const readme = n.type === 'dir' ? n.children.find(c => /^(README|SKILL)\.md$/i.test(c.name)) : n;
+  const src = readme && readme.content;
+  if (!src) return n.type === 'dir' ? n.children.length + ' items' : fmtSize(n.size);
+  const { meta, body } = splitFront(src);
+  const d = meta && meta.find(([k]) => k === 'description');
+  if (d) return d[1];
+  const line = body.split(/\r?\n/).find(l => l.trim() && !l.startsWith('#') && !l.startsWith('```') && !l.startsWith('|'));
+  return line ? line.replace(/[*`_]/g, '').slice(0, 140) : '';
+}
+
+// ---------- Views
+function show() {
+  const path = currentPath();
+  document.body.classList.remove('menu-open');
+  if (!path || path === 'home') { renderHome(); return; }
+  const n = byPath.get(path);
+  crumbs(path);
+  setActions(path);
+  const view = $('view');
+  view.className = 'doc';
+  if (!n) {
+    view.innerHTML = '<h1>Not found</h1><p class="muted">' + esc(path) + '</p><p><a href="#home">Back to the dashboard</a></p>';
+    document.title = 'Not found · ' + DATA.name;
+    highlight();
+    return;
+  }
+  document.title = n.name + ' · ' + DATA.name;
+  mdQueue = [];
+  let html = '';
+  if (n.type === 'dir') {
+    let readme = n.children.find(c => /^README\.md$/i.test(c.name)) || n.children.find(c => /^SKILL\.md$/i.test(c.name));
+    if (readme && readme.content == null) readme = null;
+    if (readme) html += renderFile(readme);
+    else html += '<h1>' + esc(n.name) + '/</h1>';
+    // projects/<name>: show the detected project and say why source files are missing from the tree.
+    const proj = DATA.projects.find(p => p.path === n.path);
+    if (proj) {
+      html += '<div class="grid" style="margin-top:16px">' + projectTile(proj, false) + '</div>' +
+        '<p class="muted">Only README.md, CLAUDE.md and .claude/ are listed here; source files are not indexed. Use "Open in VS Code" for the rest.</p>';
+    }
+    const items = n.children.filter(c => c !== readme);
+    if (items.length) {
+      html += '<h2>Contents</h2><div class="cards">' + items.map(c =>
+        '<a class="card" href="' + esc(hrefOf(c.path)) + '">' +
+        (c.type === 'file' && isImg(c.name) ? '<img src="' + esc(encPath(c.path)) + '" alt="" loading="lazy">' : '') +
+        '<div class="t">' + (c.type === 'dir' ? '▸ ' : '') + esc(c.name) + '</div><div class="d">' + esc(describe(c)) + '</div></a>'
+      ).join('') + '</div>';
+    } else if (!readme && !proj) {
+      html += '<p class="muted">This folder is empty.</p>';
+    }
+  } else {
+    html = renderFile(n);
+  }
+  view.innerHTML = html;
+  fillMarkdown(view);
+  view.querySelectorAll('[data-copy]').forEach(b => { b.onclick = () => copyText(b.dataset.copy, b); });
+  view.querySelectorAll('[data-preview]').forEach(b => {
+    b.onclick = () => {
+      const f = document.createElement('iframe');
+      f.className = 'preview';
+      f.setAttribute('sandbox', b.dataset.sandbox);
+      f.title = 'Preview';
+      f.src = b.dataset.preview;
+      b.closest('p').after(f);
+      b.remove();
+    };
+  });
+  highlight();
+  document.querySelector('main').scrollTop = 0;
+}
+
+function metaLine(n, extra) {
+  return '<div class="meta-line"><span>' + esc(fmtSize(n.size)) + '</span>' +
+    (n.mtime ? '<span>Modified ' + esc(ymd(n.mtime)) + '</span>' : '') + (extra || '') + '</div>';
+}
+function renderFile(n) {
+  const rel = esc(encPath(n.path));
+  if (isImg(n.name)) {
+    // An SVG from the inbox could carry scripts: offer a download instead of opening it as a page.
+    const untrustedSvg = n.path.startsWith('inbox/') && extOf(n.name) === 'svg';
+    const link = untrustedSvg
+      ? '<a href="' + rel + '" download>Download original</a>'
+      : '<a href="' + rel + '" target="_blank" rel="noopener">Open original ↗</a>';
+    return '<h1>' + esc(n.name) + '</h1>' +
+      metaLine(n, link) +
+      '<figure class="media"><img src="' + rel + '" alt="' + esc(n.name) + '"></figure>';
+  }
+  if (isHtml(n.name)) {
+    // Inbox files may come from the web: preview them without scripts.
+    // They get no "Open" link either: opened as a page, they could read other workspace files.
+    const fromInbox = n.path.startsWith('inbox/');
+    const sandbox = fromInbox ? '' : 'allow-scripts allow-popups';
+    return '<h1>' + esc(n.name) + '</h1>' + metaLine(n) +
+      '<p style="display:flex;flex-wrap:wrap;gap:8px">' +
+      (fromInbox ? '' : '<a class="btn primary" href="' + rel + '" target="_blank" rel="noopener">Open ↗</a>') +
+      '<button class="btn" data-preview="' + rel + '" data-sandbox="' + sandbox + '">Preview here</button></p>';
+  }
+  if (n.secret) {
+    return '<h1>' + esc(n.name) + '</h1>' + metaLine(n) +
+      '<p class="muted">This file can hold secrets, so its contents are never copied into this page. Use "Open in VS Code" to edit it.</p>';
+  }
+  if (n.content == null) {
+    return '<h1>' + esc(n.name) + '</h1>' + metaLine(n) +
+      '<p class="muted">Binary or large file, so it isn\'t embedded. <a href="' + rel + '" target="_blank" rel="noopener">Open it</a> or use "Open in VS Code".</p>';
+  }
+  if (extOf(n.name) === 'md') {
+    const { meta, body } = splitFront(n.content);
+    let h = '';
+    if (meta && meta.length) h += '<div class="front">' + meta.map(([k, v]) => '<div><b>' + esc(k) + '</b>' + esc(v) + '</div>').join('') + '</div>';
+    mdQueue.push(body);
+    return h + '<div class="md-body" data-base="' + esc(n.path) + '" data-md="' + (mdQueue.length - 1) + '"></div>';
+  }
+  return '<h1>' + esc(n.name) + '</h1><pre><code>' + esc(n.content) + '</code></pre>';
+}
+
+// ---------- Dashboard
+const TYPE_LABEL = { nextjs: 'Next.js', godot: 'Godot', unity: 'Unity', 'web-game': 'Web game', other: 'Other' };
+const byDateDesc = (a, b) => String(b.updated || '').localeCompare(String(a.updated || ''));
+function empty(title, body) { return '<div class="empty"><strong>' + esc(title) + '</strong>' + body + '</div>'; }
+function block(id, title, count, moreHref, moreLabel, inner) {
+  return '<section class="block" id="' + id + '"><div class="block-head"><h2>' + esc(title) + '</h2>' +
+    (count == null ? '' : '<span class="count">' + count + '</span>') +
+    (moreHref ? '<a class="more" href="' + esc(moreHref) + '">' + esc(moreLabel) + ' →</a>' : '') +
+    '</div>' + inner + '</section>';
+}
+const folderLink = p => (byPath.has(p) ? hrefOf(p) : null);
+
+function homeHeader(stats) {
+  const quick = [['Pipelines', 'pipelines'], ['Knowledge', 'knowledge'], ['Inbox', 'inbox'], ['Reports', 'reports']]
+    .map(([label, p]) => byPath.has(p)
+      ? '<a class="btn" href="' + esc(hrefOf(p)) + '">' + label + '</a>'
+      : '<span class="btn" aria-disabled="true" title="' + esc(p) + '/ does not exist yet">' + label + '</span>').join('');
+  const folder = DATA.root.split('/').pop();
+  return '<header class="hero"><div class="hero-text"><p class="eyebrow">Dashboard</p><h1>' + esc(DATA.name) + '</h1>' +
+    '<p class="sub"><span class="mono">' + esc(folder) + '</span> · built ' + esc(new Date(DATA.built).toLocaleString()) + '</p></div>' +
+    '<div class="quick" role="navigation" aria-label="Quick links">' + quick + '</div></header>' +
+    '<div class="stats">' + stats.map(([n, label, target]) =>
+      '<button class="stat" data-scroll="' + target + '"><b>' + n + '</b><span>' + esc(label) + '</span></button>').join('') + '</div>';
+}
+
+function inboxSection() {
+  const ib = DATA.inbox;
+  const LIMIT = 12;
+  let inner;
+  if (!ib.items.length) {
+    inner = empty('Inbox zero', 'Drop screenshots, links and notes into <code>inbox/</code>, then run <code>/inbox-triage</code>.');
+  } else {
+    inner = '<ul class="rows">' + ib.items.slice(0, LIMIT).map(it => {
+      const thumb = it.isImage
+        ? '<img src="' + esc(encPath(it.path)) + '" alt="" loading="lazy">'
+        : esc((extOf(it.name) || 'file').slice(0, 4));
+      const where = it.folder ? it.folder + ' · ' : '';
+      return '<li><a class="row-link" href="' + esc(hrefOf(it.path)) + '"><span class="thumb">' + thumb + '</span>' +
+        '<span class="row-main"><span class="row-title">' + esc(it.name) + '</span>' +
+        '<span class="row-sub">' + esc(where + fmtSize(it.size)) + '</span></span>' +
+        '<span class="row-side">' + esc(ymd(it.mtime)) + '</span></a></li>';
+    }).join('') + '</ul>';
+    if (ib.items.length > LIMIT) inner += '<p class="foot">' + (ib.items.length - LIMIT) + ' more in <a href="' + esc(hrefOf('inbox')) + '">inbox/</a>.</p>';
+    else inner += '<p class="foot">File these with <code>/inbox-triage</code>.</p>';
+  }
+  if (ib.processed) {
+    const p = folderLink('inbox/_processed');
+    inner += '<p class="foot">' + ib.processed + ' processed item' + (ib.processed === 1 ? '' : 's') + ' archived in ' +
+      (p ? '<a href="' + esc(p) + '">inbox/_processed</a>' : 'inbox/_processed') + '.</p>';
+  }
+  return block('sec-inbox', 'Inbox', ib.items.length, folderLink('inbox'), 'Open folder', inner);
+}
+
+function stepChip(s) {
+  const label = esc(s.name);
+  if (!s.exists) return '<span class="chip missing" title="Missing: ' + esc(s.path) + '">' + label + '</span>';
+  if (isHtml(s.path)) return '<a class="chip" href="' + esc(encPath(s.path)) + '" target="_blank" rel="noopener" title="Open ' + esc(s.path) + '">' + label + ' ↗</a>';
+  return '<a class="chip" href="' + esc(hrefOf(s.path)) + '" title="' + esc(s.path) + '">' + label + '</a>';
+}
+function reportCard(r) {
+  const folderHref = r.folder && byPath.has(r.folder) ? hrefOf(r.folder) : (r.steps[0] && r.steps[0].exists ? hrefOf(r.steps[0].path) : null);
+  const title = folderHref ? '<a href="' + esc(folderHref) + '">' + esc(r.title) + '</a>' : esc(r.title);
+  const project = r.project
+    ? (byPath.has('projects/' + r.project) ? '<a class="chip" href="' + esc(hrefOf('projects/' + r.project)) + '">' + esc(r.project) + '</a>' : '<span class="chip">' + esc(r.project) + '</span>')
+    : '';
+  return '<div class="tile">' +
+    '<div class="tile-top"><span class="badge s-' + esc(r.status) + '">' + esc(r.status) + '</span><span class="badge">' + esc(r.type) + '</span>' + project + '</div>' +
+    '<h3>' + title + '</h3>' +
+    (r.summary ? '<p class="summary">' + esc(r.summary) + '</p>' : '') +
+    '<div class="tile-foot"><span class="date">Updated ' + esc(r.updated || '?') + '</span>' + r.steps.map(stepChip).join('') + '</div>' +
+    '</div>';
+}
+function reportsSection() {
+  const R = DATA.reports;
+  const all = R.reports || [];
+  const active = all.filter(r => r.status === 'active').sort(byDateDesc);
+  const recent = all.filter(r => r.status !== 'active' && r.status !== 'archived').sort(byDateDesc).slice(0, 6);
+  const archived = all.filter(r => r.status === 'archived').length;
+  let inner = R.error ? '<div class="warn">' + esc(R.error) + '</div>' : '';
+  if (!active.length && !recent.length) {
+    inner += empty('No reports yet', 'Run <code>/project-report &lt;project&gt;</code>, or register a folder with <code>node tools/register-report.mjs --folder reports/&lt;id&gt; --title "..."</code>.');
+  } else {
+    if (active.length) inner += '<div class="grid">' + active.map(reportCard).join('') + '</div>';
+    if (recent.length) {
+      inner += (active.length ? '<p class="foot" style="margin:18px 2px 10px">Recently finished</p>' : '') +
+        '<div class="grid">' + recent.map(reportCard).join('') + '</div>';
+    }
+  }
+  if (archived) inner += '<p class="foot">' + archived + ' archived report' + (archived === 1 ? '' : 's') + ' not shown.</p>';
+  return block('sec-reports', 'Reports', active.length ? active.length + ' active' : all.length, folderLink('reports'), 'All reports', inner);
+}
+
+// One project card (C8 type, CLAUDE.md yes/no, start command). Used on the dashboard and in projects/<name>.
+function projectTile(p, linkName) {
+  const cmd = 'cd "' + nativePath(absOf(p.path)) + '"; claude';
+  const name = linkName === false ? '<span class="pname">' + esc(p.name) + '</span>'
+    : '<a class="pname" href="' + esc(hrefOf(p.path)) + '">' + esc(p.name) + '</a>';
+  return '<div class="tile">' +
+    '<div class="tile-top">' + name +
+    '<span class="badge t-' + esc(p.type) + '">' + esc(TYPE_LABEL[p.type] || p.type) + '</span></div>' +
+    (p.hasClaudeMd
+      ? '<span class="yes">✓ CLAUDE.md</span>'
+      : '<span class="no">✗ No CLAUDE.md yet. Run <code>/onboard-project</code> in it.</span>') +
+    '<div class="tile-foot"><button class="btn" data-copy="' + esc(cmd) + '" title="' + esc(cmd) + '">Copy start command</button></div>' +
+    '</div>';
+}
+function projectsSection() {
+  const P = DATA.projects;
+  let inner;
+  if (!P.length) {
+    inner = empty('No projects yet', 'Create one with <code>/new-project &lt;name&gt; nextjs</code> (or <code>game</code>), or clone a repo into <code>projects/</code>.');
+  } else {
+    inner = '<div class="grid">' + P.map(p => projectTile(p)).join('') + '</div>';
+  }
+  return block('sec-projects', 'Projects', P.length, folderLink('projects'), 'Open folder', inner);
+}
+
+function knowledgeSection() {
+  const notes = DATA.knowledge.map(n => Object.assign({ date: n.updated || ymd(n.mtime) }, n))
+    .sort((a, b) => b.date.localeCompare(a.date) || String(b.mtime).localeCompare(String(a.mtime)));
+  let inner;
+  if (!notes.length) {
+    inner = empty('No notes yet', 'Save what you learn with <code>/capture-lesson</code>. Notes go in <code>knowledge/&lt;area&gt;/</code>.');
+  } else {
+    inner = '<ul class="rows">' + notes.slice(0, 6).map(n =>
+      '<li><a class="row-link" href="' + esc(hrefOf(n.path)) + '"><span class="row-main">' +
+      '<span class="row-title">' + esc(n.title) + '</span>' +
+      (n.summary ? '<span class="row-sub">' + esc(n.summary) + '</span>' : '') +
+      '<span class="row-tags">' + (n.area ? '<span class="badge">' + esc(n.area) + '</span>' : '') +
+      n.tags.filter(t => t !== n.area).slice(0, 4).map(t => '<span class="badge" style="font-weight:500">#' + esc(t) + '</span>').join('') + '</span>' +
+      '</span><span class="row-side" title="' + (n.updated ? 'updated (frontmatter)' : 'file modified') + '">' + esc(n.date) + '</span></a></li>'
+    ).join('') + '</ul>';
+  }
+  const more = byPath.has('knowledge/INDEX.md') ? hrefOf('knowledge/INDEX.md') : folderLink('knowledge');
+  return block('sec-knowledge', 'Knowledge', notes.length, more, 'Index', inner);
+}
+
+function skillItem(s, isAgent) {
+  const name = isAgent ? s.name : '/' + s.name;
+  const meta = isAgent ? [s.model, s.tools].filter(Boolean).join(' · ') : s.argumentHint;
+  return '<a class="skill" href="' + esc(hrefOf(s.path)) + '"><span class="sline"><span class="sname">' + esc(name) + '</span>' +
+    (meta ? '<span class="hint">' + esc(meta) + '</span>' : '') +
+    (s.manual ? '<span class="badge" title="disable-model-invocation: only runs when you type it">manual</span>' : '') +
+    '</span>' + (s.description ? '<span class="sdesc">' + esc(s.description) + '</span>' : '') + '</a>';
+}
+function skillGroup(title, note, list, isAgent) {
+  return '<div class="tile sgroup"><h3>' + esc(title) + ' <span class="count">' + list.length + '</span></h3>' +
+    '<p class="note">' + note + '</p>' +
+    (list.length ? '<div class="slist">' + list.map(s => skillItem(s, isAgent)).join('') + '</div>' : '<p class="muted" style="margin:0;font-size:13px">None yet.</p>') +
+    '</div>';
+}
+function skillsSection() {
+  const S = DATA.skills;
+  const total = S.hub.length + S.library.length + S.agents.length + S.hubAgents.length;
+  let inner;
+  if (!total) {
+    inner = empty('No skills found', 'Hub skills live in <code>.claude/skills/</code>; global ones in <code>library/</code>.');
+  } else {
+    inner = '<div class="grid">' +
+      skillGroup('Workspace skills', 'In <code>.claude/skills/</code>. Available when you start Claude in this folder.', S.hub, false) +
+      skillGroup('Library skills', 'Global. Install with <code>node tools/install-library.mjs</code>.', S.library, false) +
+      skillGroup('Agents', 'Global, from <code>library/agents/</code>.', S.agents, true) +
+      (S.hubAgents.length ? skillGroup('Workspace agents', 'In <code>.claude/agents/</code>.', S.hubAgents, true) : '') +
+      '</div>';
+  }
+  return block('sec-skills', 'Skills & agents', total, folderLink('library'), 'Library', inner);
+}
+
+function renderHome() {
+  crumbs('');
+  setActions('');
+  document.title = DATA.name;
+  const activeReports = (DATA.reports.reports || []).filter(r => r.status === 'active').length;
+  const stats = [
+    [DATA.inbox.items.length, 'in inbox', 'sec-inbox'],
+    [activeReports, 'active reports', 'sec-reports'],
+    [DATA.projects.length, DATA.projects.length === 1 ? 'project' : 'projects', 'sec-projects'],
+    [DATA.knowledge.length, 'knowledge notes', 'sec-knowledge'],
+  ];
+  const view = $('view');
+  view.className = 'home';
+  view.innerHTML = homeHeader(stats) + inboxSection() + reportsSection() + projectsSection() + knowledgeSection() + skillsSection();
+  view.querySelectorAll('[data-copy]').forEach(b => { b.onclick = () => copyText(b.dataset.copy, b); });
+  view.querySelectorAll('[data-scroll]').forEach(b => {
+    b.onclick = () => { const t = $(b.dataset.scroll); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+  });
+  highlight();
+  document.querySelector('main').scrollTop = 0;
+}
+
+window.addEventListener('hashchange', show);
+drawNav();
+show();
+</script>
+</body>
+</html>

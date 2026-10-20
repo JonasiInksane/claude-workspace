@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "reports": [
+    {
+      "id": "2026-10-20_workspace-setup",
+      "title": "Workspace setup",
+      "project": null,
+      "type": "status",
+      "status": "done",
+      "created": "2026-10-20",
+      "updated": "2026-10-20",
+      "folder": "reports/2026-10-20_workspace-setup",
+      "summary": "Workspace v2 is in place: context, knowledge, inbox, reports, hooks and Node tools. Next: fill in context/identity.md and run Setup.ps1.",
+      "steps": [
+        {
+          "name": "Report",
+          "path": "reports/2026-10-20_workspace-setup/report.md"
+        }
+      ]
+    }
+  ]
+}

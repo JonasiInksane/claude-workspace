@@ -1,0 +1,60 @@
+# Line endings: git decides what is text; scripts keep the endings their shell needs.
+* text=auto
+# Godot: its docs recommend LF for all text files, because Git for Windows' default
+# core.autocrlf=true otherwise marks Godot files as modified. For a Godot project, replace
+# the line above with:
+# * text=auto eol=lf
+*.sh text eol=lf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# ---------------------------------------------------------------------------
+# Git LFS for binary assets (textures, audio, models, fonts, video).
+# Large binaries bloat a normal git history and can't be diffed. Git LFS stores them
+# outside the history. The lines below are OFF until you enable LFS:
+#
+#   1. git lfs version        (Git for Windows usually includes Git LFS)
+#   2. git lfs install        (once per machine)
+#   3. Remove the "# " in front of the lines for the file types you use.
+#   4. git add .gitattributes
+#      git commit -m "Track binary assets with Git LFS"
+#      Do this BEFORE the first commit that adds those assets.
+#   5. Check with: git lfs ls-files
+#
+# Everyone who clones the repo needs Git LFS installed too.
+# ---------------------------------------------------------------------------
+
+# Images
+# *.png filter=lfs diff=lfs merge=lfs -text
+# *.jpg filter=lfs diff=lfs merge=lfs -text
+# *.jpeg filter=lfs diff=lfs merge=lfs -text
+# *.psd filter=lfs diff=lfs merge=lfs -text
+# *.tga filter=lfs diff=lfs merge=lfs -text
+# *.tif filter=lfs diff=lfs merge=lfs -text
+# *.exr filter=lfs diff=lfs merge=lfs -text
+# *.hdr filter=lfs diff=lfs merge=lfs -text
+
+# Audio
+# *.wav filter=lfs diff=lfs merge=lfs -text
+# *.ogg filter=lfs diff=lfs merge=lfs -text
+# *.mp3 filter=lfs diff=lfs merge=lfs -text
+# *.flac filter=lfs diff=lfs merge=lfs -text
+
+# 3D models and source files
+# *.fbx filter=lfs diff=lfs merge=lfs -text
+# *.glb filter=lfs diff=lfs merge=lfs -text
+# *.blend filter=lfs diff=lfs merge=lfs -text
+
+# Fonts
+# *.ttf filter=lfs diff=lfs merge=lfs -text
+# *.otf filter=lfs diff=lfs merge=lfs -text
+
+# Video
+# *.mp4 filter=lfs diff=lfs merge=lfs -text
+# *.webm filter=lfs diff=lfs merge=lfs -text
+# *.mov filter=lfs diff=lfs merge=lfs -text
+
+# Godot binary resources and scenes (text .tscn/.tres files stay in normal git)
+# *.res filter=lfs diff=lfs merge=lfs -text
+# *.scn filter=lfs diff=lfs merge=lfs -text

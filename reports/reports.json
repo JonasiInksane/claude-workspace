@@ -17,6 +17,23 @@
           "path": "reports/2026-10-20_workspace-setup/report.md"
         }
       ]
+    },
+    {
+      "id": "2026-10-20_tattoogenda-audit",
+      "title": "Tattoogenda web app audit",
+      "project": "tattoogenda",
+      "type": "audit",
+      "status": "active",
+      "created": "2026-10-20",
+      "updated": "2026-10-20",
+      "folder": "reports/2026-10-20_tattoogenda-audit",
+      "summary": "2 critical and 18 high issues found in apps/web and its server endpoints, with a 4-phase fix plan",
+      "steps": [
+        {
+          "name": "Report",
+          "path": "reports/2026-10-20_tattoogenda-audit/report.md"
+        }
+      ]
     }
   ]
 }

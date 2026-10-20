@@ -8,13 +8,19 @@
 > One project's goal, milestone and scope go in the "Current focus" section of that
 > project's own CLAUDE.md.
 
+## Overall
+- Build Tattoogenda into a finished, release-ready product with clean, maintainable code:
+  small focused modules, safe tenant boundaries, tests on the risky flows.
+
 ## Now (this week)
-- TODO (e.g. get the Next.js app's sign-in page working end to end)
-- TODO (e.g. fill in context/identity.md and run Setup.ps1)
+- Finish the full audit of the Tattoogenda web app and turn it into a ranked fix plan.
+- Pick the first refactor slices from that plan and start the highest-risk one.
+- TODO: fill in context/identity.md
 
 ## This month
-- TODO (e.g. pick a game engine: build the same tiny prototype in Godot and Phaser, then decide)
-- TODO (e.g. deploy the Next.js app to a preview URL)
+- Work through the audit's high-severity fixes, one small reviewed slice at a time.
+- Keep the Expo app moving toward feature parity with the web app.
+- TODO (e.g. a target date for a release-approved web rebuild)
 
 ## Someday
 - TODO (e.g. ship a small game on itch.io)

@@ -9,6 +9,12 @@ AGENTS.md (an import). Once a CLAUDE.md exists, Claude Code stops reading AGENTS
 
 <One paragraph: genre, core loop, target feel, target platform.>
 
+## Current focus
+Update this whenever the focus changes. Claude uses it to decide what matters and what to skip.
+- Goal: <what this project is for right now, e.g. a vertical slice: one level, fully playable>
+- Milestone: <the next concrete deliverable and roughly when, e.g. combat feels good by Dec 1>
+- Out of scope for now: <things not to work on or suggest, e.g. multiplayer, save system, menus>
+
 ## Stack
 - Engine: <Phaser 3 | Three.js | Godot 4.x | Unity 6 | ...>
 - Language: <TypeScript | GDScript | C#>

@@ -1,0 +1,22 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "navigator",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "--yes",
+        "http-server@14.1.1",
+        "-p",
+        "4321",
+        "-a",
+        "127.0.0.1",
+        "-d",
+        "false",
+        "-c-",
+        "-s"
+      ],
+      "port": 4321
+    }
+  ]
+}

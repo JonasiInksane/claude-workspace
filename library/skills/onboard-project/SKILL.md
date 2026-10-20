@@ -80,6 +80,7 @@ starting over. Never copy over a file that exists.
 # <Project>
 <One paragraph: what it is, who uses it.>
 
+## Current focus     (goal, next milestone, out of scope: ASK the user, never invent these)
 ## Stack
 ## Commands          (exact commands in the forms allowed in settings; what must pass before "done")
 ## Architecture      (folder map, one line each)

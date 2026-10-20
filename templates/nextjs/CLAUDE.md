@@ -9,6 +9,12 @@ AGENTS.md (an import). Once a CLAUDE.md exists, Claude Code stops reading AGENTS
 
 <One paragraph: what this app does, and who uses it.>
 
+## Current focus
+Update this whenever the focus changes. Claude uses it to decide what matters and what to skip.
+- Goal: <what this project is for right now, e.g. a public beta for 20 testers>
+- Milestone: <the next concrete deliverable and roughly when, e.g. sign-in plus dashboard by Nov 15>
+- Out of scope for now: <things not to work on or suggest, e.g. payments, mobile layout>
+
 ## Stack
 - Next.js <16.x> with the <App Router (`src/app/`) | Pages Router>, React <19.x>, TypeScript
 - Package manager: <npm | pnpm | yarn | bun> (lockfile `<package-lock.json>`). Use only this one.

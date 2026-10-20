@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(node tools/build-index.mjs *)",
+      "PowerShell(node tools/build-index.mjs *)",
+      "Bash(node tools/check-workspace.mjs *)",
+      "PowerShell(node tools/check-workspace.mjs *)",
+      "Bash(node tools/register-report.mjs *)",
+      "PowerShell(node tools/register-report.mjs *)"
+    ],
+    "deny": [
+      "Read(.env)",
+      "Read(.env.local)",
+      "Read(.env.*.local)",
+      "Read(.env.production)",
+      "Read(.env.development)",
+      "Read(.env.test)",
+      "Read(.env.preview)",
+      "Read(.npmrc)",
+      "Read(.sentryclirc)"
+    ]
+  },
+  "autoMemoryEnabled": false,
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/tools/hooks/session-start.mjs"
+            ],
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/tools/hooks/after-edit.mjs"
+            ],
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -7,6 +7,7 @@ Starter Claude Code files for new or cloned projects. Each folder is copied as-i
 |---|---|---|
 | `nextjs/` | Next.js apps | [nextjs/README.md](nextjs/README.md) |
 | `game/` | Games: web (Phaser, Three.js, ...), Godot or Unity | [game/README.md](game/README.md) |
+| `agent/` | One project agent (not a project type; used by `tools/new-agent.mjs`) | [agent/README.md](agent/README.md) |
 
 ## How they are used
 

@@ -1,7 +1,7 @@
 ---
 title: Skills and subagents
 tags: [claude-code, skills, subagents, frontmatter]
-updated: 2026-10-20
+updated: 2026-10-21
 claude_code_version: 2.1.304
 ---
 
@@ -105,7 +105,7 @@ Priority: managed > `--agents` JSON > project > user > plugin. The body is the s
 | `disallowedTools` | Tools to remove |
 | `model` | `sonnet`, `opus`, `haiku`, `fable`, `inherit`, or a full model ID |
 | `permissionMode`, `maxTurns`, `effort`, `skills`, `mcpServers`, `hooks` | Optional |
-| `memory` | `user`, `project` or `local` |
+| `memory` | `user`, `project` or `local`. Folders, `--agent` behaviour and isolation: [agent memory](agent-memory.md) |
 | `isolation: worktree`, `background`, `color`, `initialPrompt`, `omitClaudeMd` | Optional |
 
 ```markdown

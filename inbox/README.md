@@ -9,6 +9,7 @@ The drop zone. Put anything here that you want Claude to look at later, then run
 |---|---|
 | `inbox/` | Anything: a `.md` file with links or ideas, PDFs, design notes, playtest notes |
 | `inbox/attachments/_hub/YYYY-MM-DD/` | Screenshots and images that belong to no project yet (triaged like any item) |
+| `inbox/attachments/_flows/<flow>/` | Reference images for one flow ([flows/README.md](../flows/README.md)). Not triaged |
 | `inbox/attachments/<project>/<agent>/YYYY-MM-DD/` | Reference images for one project agent. Not triaged (see below) |
 | `inbox/attachments/<project>/_shared/YYYY-MM-DD/` | Reference images for every agent of a project. Not triaged |
 | `inbox/handoffs/` | Session handoff notes written by `/write-handoff` |

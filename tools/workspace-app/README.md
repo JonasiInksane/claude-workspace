@@ -1,9 +1,11 @@
 # Workspace app
 
 A small local app for this workspace, opened in its own Edge window: a dashboard (inbox,
-active reports, projects), project cards that start Claude, per-project agents (create,
-start isolated, view memory) and image upload (drag and drop, Ctrl+V, or choose files) into
-the hub inbox or a chosen agent's image folder.
+flows, active reports, projects), flows (saved prompts with reference images, run in the hub,
+a project or one agent), a Tools view with a button for every skill and workspace tool,
+project cards that start Claude, per-project agents (create, edit, archive and restore, start
+isolated, view memory) and image upload (drag and drop, Ctrl+V, or choose files) into the hub
+inbox, a chosen agent's image folder or a flow.
 
 Start it with a double-click on `Workspace App.cmd` (workspace root) or the "Claude Workspace"
 shortcut, or `[A]` in the `start.ps1` menu. All three run `start-app.ps1`, which starts the
@@ -25,8 +27,12 @@ runs just opens another window.
 |---|---|
 | `server.mjs` | Startup: port 4317 (or a free one), sign-in token, one app per workspace, idle shutdown, opens the window |
 | `app.mjs` | Routes, access checks and the JSON API |
+| `catalog.mjs` | The Tools view's list: skills (with their form fields and how the prompt is built) and workspace tools |
 | `uploads.mjs` | Image targets, type check by content, dated folders, no overwrites |
-| `launch.mjs` | Builds the commands for terminals, Explorer, the editor and the window |
+| `launch.mjs` | Builds the commands for terminals, Explorer, the editor and the window; runs workspace tools and collects their output |
+| `claude-prompt.mjs` | Runs in the new terminal: starts `claude <prompt>` with the prompt (and readable folders) from a prompt file, `tools/lib/prompt-file.mjs` |
+| `../lib/flows.mjs` | Flows: read, check, save, archive and restore `flows/<flow>.md`; build a run's prompt ([flows/README.md](../../flows/README.md)) |
+| `../lib/agents.mjs` | Agents, shared with the CLI tools; editing (`saveAgentText`, refuses renames and stale saves), archiving and restoring live here too |
 | `start-app.ps1` | Starts the server hidden with `--log` (shows a dialog if Node is missing) |
 | `make-shortcut.mjs` | Desktop / Start menu shortcut; never replaces or removes a "Claude Workspace" shortcut that starts something else (another workspace copy included) |
 | `make-icon.mjs` | Draws `ui/icon.ico` (16 to 256 px) from the same design as `ui/icon.svg` |
@@ -34,6 +40,13 @@ runs just opens another window.
 
 The app does what the command-line tools do and nothing more. "Start" on an agent runs
 `tools/agent-session.mjs` in a Windows Terminal tab, and "New agent" runs `tools/new-agent.mjs`.
+In Tools, a skill starts Claude in the hub or a project with `/<skill> <form values>` as its
+first prompt; "New project" runs `tools/new-project.mjs` in a terminal; Check workspace, Run
+tests, Rebuild navigator and Install library run inside the app and show their output (Install
+library always shows its `--dry-run` preview first). A flow's Run starts `claude-prompt.mjs`
+(hub, project) or `agent-session.mjs --prompt-file` (agent) in a terminal. Archiving an agent
+moves its file to `.claude/agents-archived/`, outside the folder Claude Code loads agents
+from; archiving a flow moves it to `flows/_archived/`. Memory and images always stay.
 The inbox counts come from `tools/lib/inbox.mjs`. Image rules:
 [inbox/README.md](../../inbox/README.md). Agents: [the decision](../../knowledge/decisions/2026-10-21-project-agents.md).
 
@@ -56,8 +69,18 @@ The inbox counts come from `tools/lib/inbox.mjs`. Image rules:
 - Programs start with argument lists, never through a shell string. PowerShell gets its command
   base64-encoded. Project folders with unusual characters in their name can't be started from
   the app.
+- The Tools view sends only an id and form values. The server builds every prompt and command
+  line from `catalog.mjs` and checks each value (known project, listed option, length, date
+  format, kebab-case names, a plain `https://` or `git@` clone URL), so the page can't start
+  anything that isn't on that list.
+- Agent and flow files are found by name in their own folders, never by a path from the page.
+  Saves check that the file hasn't changed since it was opened (409 otherwise), and an agent's
+  name can't change in the editor (its memory folder is named after it).
+- A flow run may read only that flow's image folder (`--settings` with
+  `permissions.additionalDirectories`), and the prompt reaches Claude through a temp file that
+  is deleted as soon as it is read.
 
-Tests: `node --test "tools/**/*.test.mjs"` (`app.test.mjs`, `uploads.test.mjs`, `launch.test.mjs`,
+Tests: `node tools/run-tests.mjs workspace-app` (`app.test.mjs`, `uploads.test.mjs`, `launch.test.mjs`,
 `server.test.mjs`, `shortcut.test.mjs`).
 
 If the window doesn't appear, look in `%TEMP%\claude-workspace\app.log`, or run

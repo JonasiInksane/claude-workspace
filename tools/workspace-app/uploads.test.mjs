@@ -1,4 +1,4 @@
-// Tests for tools/workspace-app/uploads.mjs. Run: node --test "tools/**/*.test.mjs"
+// Tests for tools/workspace-app/uploads.mjs. Run: node tools/run-tests.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

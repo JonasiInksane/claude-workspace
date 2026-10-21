@@ -22,6 +22,14 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
           Dashboard
         </button>
+        <button data-view="flows">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 3l14 9-14 9z"/></svg>
+          Flows <span class="count" id="countFlows"></span>
+        </button>
+        <button data-view="tools">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+          Tools
+        </button>
         <button data-view="projects">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6H9l2 2h8.5A1.5 1.5 0 0 1 21 9.5v8A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5z"/></svg>
           Projects <span class="count" id="countProjects"></span>
@@ -44,6 +52,8 @@
     </aside>
     <main>
       <section class="view" id="view-home" hidden></section>
+      <section class="view" id="view-flows" hidden></section>
+      <section class="view" id="view-tools" hidden></section>
       <section class="view" id="view-projects" hidden></section>
       <section class="view" id="view-images" hidden></section>
     </main>

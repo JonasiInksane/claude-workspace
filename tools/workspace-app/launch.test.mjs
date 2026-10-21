@@ -1,8 +1,12 @@
-// Tests for the command building in tools/workspace-app/launch.mjs. Nothing is started here.
-// Run: node --test "tools/**/*.test.mjs"
+// Tests for the command building in tools/workspace-app/launch.mjs. No terminals or windows open;
+// only the runTool test starts a process (a tiny Node script in a temp folder).
+// Run: node tools/run-tests.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { encodePs, explorerArgs, psCommand, psq, terminalCommand, wtArg, wtPath } from './launch.mjs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { encodePs, explorerArgs, psCommand, psq, realActions, terminalCommand, wtArg, wtPath } from './launch.mjs';
 
 const decode = b64 => Buffer.from(b64, 'base64').toString('utf16le');
 
@@ -56,4 +60,34 @@ test('terminalCommand uses a Windows Terminal tab, or a new console without it',
   assert.match(decode(hiddenStart.args[3]), / -WindowStyle Hidden$/);
   assert.doesNotMatch(start, /-WindowStyle/);
   assert.equal(encodePs('x'), Buffer.from('x', 'utf16le').toString('base64'));
+});
+
+test('runTool collects stdout and stderr without colour codes and keeps the exit code', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ws-run-'));
+  try {
+    const script = join(dir, 'tool.mjs');
+    writeFileSync(script, "console.log('\x1b[32mok\x1b[0m line'); console.error('bad line'); process.exit(3);\n");
+    const r = await realActions({ root: dir, tools: {} }).runTool({ args: [script], cwd: dir });
+    assert.equal(r.status, 3);
+    assert.match(r.output, /^ok line\n/);
+    assert.match(r.output, /bad line/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('runTool stops a hung tool together with the child that holds its output open', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ws-run-'));
+  try {
+    const script = join(dir, 'hang.mjs');
+    // Like run-tests: a child with inherited output that never ends.
+    writeFileSync(script, "import { spawn } from 'node:child_process';\nconsole.log('started');\n" +
+      "spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'inherit' });\n");
+    const t0 = Date.now();
+    const r = await realActions({ root: dir, tools: {} }).runTool({ args: [script], cwd: dir, timeoutMs: 1500 });
+    assert.ok(Date.now() - t0 < 10_000, 'returned soon after the timeout');
+    assert.match(r.output, /started[\s\S]*stopped: it ran longer than 2 seconds/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

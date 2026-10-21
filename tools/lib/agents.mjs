@@ -2,6 +2,7 @@
 // its own image folder in the workspace inbox. Shared by new-agent, agent-session and the app.
 //
 //   projects/<project>/.claude/agents/<agent>.md        definition (memory: project)
+//   projects/<project>/.claude/agents-archived/<agent>.md   archived: not loaded, memory and images kept
 //   projects/<project>/.claude/agent-memory/<agent>/    that agent's memory (MEMORY.md + topic files)
 //   inbox/attachments/<project>/<agent>/YYYY-MM-DD/     that agent's reference images
 //   inbox/attachments/<project>/_shared/YYYY-MM-DD/     images for every agent of the project
@@ -10,9 +11,10 @@
 // `claude --agent <name>` loads the agent's MEMORY.md but ALSO the project's normal auto memory.
 // sessionSettings() points autoMemoryDirectory at the agent's own folder, so an agent session
 // sees only its own memory, and grants read access to its two image folders.
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { delimiter, join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { delimiter, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
+import { createHash } from 'node:crypto';
 
 export const NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const SHARED_DIR = '_shared';
@@ -123,6 +125,7 @@ export function listAgents(root, project) {
       isolated: fm.memory === 'project' || fm.memory === 'local',
       valid,
       file,
+      rel: relative(agentsDir(root, project), file).split(sep).join('/'), // art.md, team/art.md
       memoryDir: valid ? memoryDir(root, project, fm.name, fm.memory) : '',
       imagesDir: valid ? imagesDir(root, project, fm.name) : '',
     });
@@ -136,6 +139,86 @@ export function duplicateNames(agents) {
   const seen = new Map();
   for (const a of agents) seen.set(a.name, [...(seen.get(a.name) || []), a.file]);
   return [...seen].filter(([, files]) => files.length > 1).map(([name, files]) => ({ name, files }));
+}
+
+// ---- Editing and archiving (the workspace app uses these) ----
+
+export const MAX_AGENT_BYTES = 60 * 1024;
+export const textHash = text => createHash('sha1').update(text).digest('hex');
+
+// Checks new text for the file of the existing agent `name`. Returns { error, warnings }.
+export function checkAgentText(text, name) {
+  if (Buffer.byteLength(text, 'utf8') > MAX_AGENT_BYTES) return { error: 'the file is larger than 60 KB', warnings: [] };
+  const fm = readFrontmatter(text);
+  if (!fm) return { error: 'the file must start with a frontmatter block between two --- lines', warnings: [] };
+  if (fm.name !== name) {
+    return { error: `name must stay "${name}": a new name would leave its memory folder behind. Archive it and create a new agent instead.`, warnings: [] };
+  }
+  if (!fm.description) return { error: 'description is required: it tells Claude when to hand work to this agent', warnings: [] };
+  const warnings = [];
+  if (fm.memory !== 'project' && fm.memory !== 'local') {
+    warnings.push(`Without "memory: project" ${name} has no memory of its own and can't be started isolated.`);
+  }
+  return { error: '', warnings };
+}
+
+// Saves an agent's file, unless it changed on disk since the text with `baseHash` was read.
+// Keeps the file's line endings. Returns { error, conflict, warnings, hash }.
+export function saveAgentText(agent, text, baseHash) {
+  const current = readFileSync(agent.file, 'utf8');
+  if (textHash(current) !== baseHash) {
+    return { error: 'the file changed on disk since you opened it. Close it and open it again.', conflict: true, warnings: [] };
+  }
+  const check = checkAgentText(text, agent.name);
+  if (check.error) return check;
+  const out = current.includes('\r\n') ? text.replace(/\r?\n/g, '\r\n') : text.replace(/\r\n/g, '\n');
+  writeFileSync(agent.file, out, 'utf8');
+  return { error: '', warnings: check.warnings, hash: textHash(out) };
+}
+
+// Archived agent files live outside .claude/agents/, so Claude Code no longer loads them. Their
+// memory and image folders stay where they are, so restoring brings the agent back whole.
+export function archivedAgentsDir(root, project) { return join(projectDir(root, project), '.claude', 'agents-archived'); }
+
+// Moves an agent's file to .claude/agents-archived/<name>.md (<name>--2.md ... when taken).
+// Returns the new path.
+export function archiveAgent(root, project, agent) {
+  const dir = archivedAgentsDir(root, project);
+  mkdirSync(dir, { recursive: true });
+  for (let i = 1; i < 100; i++) {
+    const target = join(dir, i === 1 ? `${agent.name}.md` : `${agent.name}--${i}.md`);
+    if (existsSync(target)) continue;
+    renameSync(agent.file, target);
+    return target;
+  }
+  throw new Error(`too many archived copies of ${agent.name}`);
+}
+
+export function listArchivedAgents(root, project) {
+  const dir = archivedAgentsDir(root, project);
+  const out = [];
+  for (const e of listDir(dir)) {
+    if (!e.isFile() || !e.name.toLowerCase().endsWith('.md')) continue;
+    const file = join(dir, e.name);
+    let fm = null;
+    try { fm = readFrontmatter(readFileSync(file, 'utf8')); } catch { /* unreadable: no name */ }
+    const name = (fm && fm.name) || '';
+    out.push({ archivedAs: e.name, file, name, description: (fm && fm.description) || '', valid: checkAgentName(name) === '' });
+  }
+  return out.sort((a, b) => a.archivedAs.localeCompare(b.archivedAs));
+}
+
+// Moves an archived file back to .claude/agents/<name>.md. Returns { error, name }.
+export function restoreAgent(root, project, archivedAs) {
+  const entry = listArchivedAgents(root, project).find(a => a.archivedAs === archivedAs);
+  if (!entry) return { error: `there is no archived agent file "${archivedAs}"`, name: '' };
+  if (!entry.valid) return { error: `${archivedAs} has no usable name in its frontmatter`, name: '' };
+  if (listAgents(root, project).some(a => a.name === entry.name) || existsSync(agentFile(root, project, entry.name))) {
+    return { error: `an agent named "${entry.name}" already exists. Archive that one first.`, name: '' };
+  }
+  mkdirSync(agentsDir(root, project), { recursive: true });
+  renameSync(entry.file, agentFile(root, project, entry.name));
+  return { error: '', name: entry.name };
 }
 
 // Names of the global library agents (installed to ~/.claude/agents). A project agent with the

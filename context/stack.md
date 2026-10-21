@@ -7,8 +7,9 @@ Machine facts, last checked 2026-10-21. Update this file when something changes
 - OS: Windows 11
 - Shells: Windows PowerShell 5.1 (no PowerShell 7, so no `&&`, `||`, `??` or ternary in .ps1)
   and Git Bash (Git for Windows)
-- Node: v24.11.1 at `C:\Program Files\nodejs` (on PATH). `nvm` was not found on 2026-10-21,
-  although Tattoogenda pins Node 20.15.1
+- Node: managed by nvm-windows (`%APPDATA%\nvm`; `C:\Program Files\nodejs` is its link).
+  Active: v20.15.1, the version Tattoogenda pins (also installed: 18.20.3, 20.18.0, 23.2.0).
+  Node 20 can't expand globs in `node --test`, so run the tool tests with `node tools/run-tests.mjs`
 - Python: 3.13 (not needed by the workspace tools)
 - Editors: VS Code, Cursor
 - Git client: GitKraken (plus the git CLI)

@@ -9,7 +9,8 @@ This folder is a hub, not an app. It holds the user's context, knowledge, inbox,
 pipelines, a library of global skills and agents, project templates, and the user's repos
 under `projects/`. Everything is plain Markdown or JSON. `index.html` is a generated navigator.
 The user's control panel is the workspace app (`Workspace App.cmd`, code in
-`tools/workspace-app/`): it starts Claude and project agents and saves uploaded images to
+`tools/workspace-app/`): it runs flows (saved prompts with images, `flows/`), starts Claude,
+skills and project agents, edits and archives agents, and saves uploaded images to
 `inbox/attachments/`. Its tools are the same CLI tools listed below.
 
 The four `context/` files imported above are always loaded. Everything else is read on demand:
@@ -27,6 +28,7 @@ check `knowledge/INDEX.md`, grep, then open only what the task needs.
 | A deliverable (status, audit, plan, research, playtest) | `reports/YYYY-MM-DD_slug/report.md` | `node tools/register-report.mjs --folder reports/<id> ...` |
 | Raw material (links, screenshots, PDFs, notes) | `inbox/` | `/inbox-triage` files it later |
 | Code | `projects/<name>/` | `/new-project`; each project is its own git repo |
+| A reusable prompt with reference images (a flow) | `flows/<flow>.md`, images in `inbox/attachments/_flows/<flow>/` | Workspace app, Flows view; format in `flows/README.md` |
 | A specialist agent for one project (own memory, own images) | `projects/<name>/.claude/agents/<agent>.md` | `node tools/new-agent.mjs <project> <agent> --role "..."`; start it with `node tools/agent-session.mjs <project> <agent>` |
 
 When a task ends, file what was learned using this table. Offer `/capture-lesson` for lessons.
@@ -71,7 +73,7 @@ When a task ends, file what was learned using this table. Offer `/capture-lesson
 - **Navigator.** A PostToolUse hook rebuilds `index.html` after edits outside `projects/` and
   `inbox/`. If it looks stale, run `node tools/build-index.mjs`.
 - **Self-check.** After structural changes run `node tools/check-workspace.mjs` and fix errors.
-  After changing a tool, run its tests: `node --test "tools/**/*.test.mjs"`.
+  After changing a tool, run its tests: `node tools/run-tests.mjs`.
 
 ## Skills
 

@@ -43,11 +43,13 @@ claude-workspace/
 Run `Setup.ps1` once, in PowerShell, from this folder:
 
 ```powershell
-# Check (the default): reports Node, git, Git Bash, claude, PATH and the library. Changes nothing.
+# Check (the default): reports Node, git, Git LFS, Git Bash, claude, PATH, the library, and
+# the projects in projects\repos.json with the tools they need (Blender 5.2). Changes nothing.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Setup.ps1
 
-# Install: installs the library into ~/.claude, builds index.html, runs the self-check,
-# and offers to "git init" the workspace. Add -FixPath if claude is not on your PATH.
+# Install: clones the listed projects that are missing, installs the library into ~/.claude,
+# builds index.html, runs the self-check, and offers to "git init" the workspace.
+# Add -FixPath if claude is not on your PATH. Programs such as Blender it only reports.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Setup.ps1 -Mode Install
 ```
 

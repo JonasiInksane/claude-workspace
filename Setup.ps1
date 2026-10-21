@@ -3,10 +3,12 @@
   Checks (and optionally sets up) what this Claude Code workspace needs on Windows.
 
 .DESCRIPTION
-  -Mode Check    (default) Reports Node.js, git, Git Bash, claude, your user PATH and the
-                 global library in ~/.claude. Changes nothing.
-  -Mode Install  Runs the same checks, then installs the library into ~/.claude, builds
-                 index.html, runs the workspace self-check and offers to "git init" the workspace.
+  -Mode Check    (default) Reports Node.js, git, Git LFS, Git Bash, claude, your user PATH, the
+                 global library in ~/.claude, and the projects in projects\repos.json with the
+                 tools they need (such as Blender 5.2). Changes nothing.
+  -Mode Install  Runs the same checks, clones the listed projects that are missing, installs the
+                 library into ~/.claude, builds index.html, runs the workspace self-check and
+                 offers to "git init" the workspace. It never installs Blender or other programs.
   -FixPath       Install mode only: appends %USERPROFILE%\.local\bin (where the native
                  installer puts claude.exe) to your USER PATH if it is missing.
 
@@ -196,6 +198,21 @@ if (Get-Command git -ErrorAction SilentlyContinue) {
   Write-Warn 'git not found. Install Git for Windows (https://git-scm.com) for version control and Git Bash.'
 }
 
+# Git LFS (projects with binary assets, such as game-dev, store images and models with it)
+$lfsOk = $false
+if ($gitOk) {
+  # Collect the output first: "| Select-Object -First 1" would stop git early and spoil its exit code.
+  $lfsOut = @(& git lfs version 2>$null)
+  $lfsCode = $LASTEXITCODE
+  $lfsVersion = $lfsOut | Select-Object -First 1
+  if ($lfsCode -eq 0 -and $lfsVersion) {
+    $lfsOk = $true
+    Write-Ok $lfsVersion
+  } else {
+    Write-Warn 'Git LFS not found. Git for Windows includes it; reinstall Git with the LFS option, or see https://git-lfs.com'
+  }
+}
+
 # Git Bash (not WSL's bash.exe in System32)
 $gitBash = Find-GitBash
 if ($gitBash) {
@@ -272,6 +289,69 @@ Write-Section 'Workspace'
 $isRepo = Test-Path -LiteralPath (Join-Path $Root '.git')
 if ($isRepo) { Write-Ok 'The workspace is a git repository' } else { Write-Info 'Not a git repository yet (Install mode offers "git init").' }
 if (Test-Path -LiteralPath (Join-Path $Root 'index.html')) { Write-Ok 'index.html (navigator) exists' } else { Write-Info 'index.html not built yet (Install mode builds it).' }
+
+# Projects: projects\repos.json says which repo belongs in which folder (projects\README.md).
+Write-Section 'Projects (projects\repos.json)'
+$reposFile = Join-Path $Root 'projects\repos.json'
+$repos = @()
+if (Test-Path -LiteralPath $reposFile) {
+  try { $repos = @((Get-Content -LiteralPath $reposFile -Raw | ConvertFrom-Json).repos) } catch { Write-Fail "projects\repos.json is not valid JSON: $($_.Exception.Message)" }
+} else {
+  Write-Info 'No projects\repos.json: nothing to clone.'
+}
+$requires = @{}
+foreach ($repo in $repos) {
+  if (-not $repo.name -or -not $repo.url -or $repo.name -notmatch '^[a-z0-9]+(-[a-z0-9]+)*$') {
+    Write-Warn "projects\repos.json: skipped an entry without a kebab-case name and a url"
+    continue
+  }
+  foreach ($need in @($repo.requires)) { if ($need) { $requires[$need] = $true } }
+  $dir = Join-Path $Root "projects\$($repo.name)"
+  if (Test-Path -LiteralPath $dir) {
+    $origin = ''
+    if ($gitOk) { $origin = (& git -C $dir remote get-url origin 2>$null | Select-Object -First 1) }
+    if ($origin -and $origin -ne $repo.url) {
+      Write-Warn "$($repo.name): present, but its origin is $origin (repos.json says $($repo.url))"
+    } else {
+      Write-Ok "$($repo.name): present"
+    }
+  } elseif ($Mode -eq 'Install' -and $gitOk) {
+    Write-Info "$($repo.name): cloning $($repo.url) ..."
+    & git clone $repo.url $dir
+    if ($LASTEXITCODE -eq 0) { Write-Ok "$($repo.name): cloned" } else {
+      Write-Fail "$($repo.name): git clone failed (exit code $LASTEXITCODE)"
+      Add-NextStep "Clone it yourself once you have access: git clone $($repo.url) projects\$($repo.name)"
+    }
+  } else {
+    Write-Warn "$($repo.name): not cloned yet"
+    Write-Info "git clone $($repo.url) projects\$($repo.name)"
+    Add-NextStep "Clone the missing projects (listed above): $SetupCmd -Mode Install"
+  }
+}
+# Project folders nobody listed would not reach another PC.
+$listed = @($repos | ForEach-Object { $_.name })
+Get-ChildItem -LiteralPath (Join-Path $Root 'projects') -Directory -ErrorAction SilentlyContinue |
+  Where-Object { $listed -notcontains $_.Name -and -not $_.Name.StartsWith('.') -and -not $_.Name.StartsWith('_') } |
+  ForEach-Object { Write-Info "$($_.Name): not in projects\repos.json, so another PC won't get it (add it once it has a GitHub remote)." }
+
+# Tools the listed projects need.
+if ($requires['git-lfs'] -and -not $lfsOk) {
+  Write-Warn 'A project needs Git LFS (see Prerequisites above); without it its images and models are only pointer files.'
+}
+if ($requires['blender-5.2']) {
+  $blender = $env:BLENDER_EXE
+  if (-not $blender) { $blender = Join-Path $env:ProgramFiles 'Blender Foundation\Blender 5.2\blender.exe' }
+  if (Test-Path -LiteralPath $blender) {
+    $blenderVersion = (& $blender --version 2>$null | Select-Object -First 1)
+    if ($blenderVersion -match '^Blender 5\.2\.') { Write-Ok "$blenderVersion  ($blender)" } else {
+      Write-Warn "Blender at $blender is '$blenderVersion'; the game-dev asset scripts need 5.2.x."
+      Add-NextStep 'Install Blender 5.2: winget install --id BlenderFoundation.Blender --version 5.2.2 --exact; then: winget pin add --id BlenderFoundation.Blender --exact'
+    }
+  } else {
+    Write-Warn 'Blender 5.2 not found (needed by the game-dev asset pipeline).'
+    Add-NextStep 'Install Blender 5.2: winget install --id BlenderFoundation.Blender --version 5.2.2 --exact; then: winget pin add --id BlenderFoundation.Blender --exact'
+  }
+}
 
 # ------------------------------------------------------------------ install
 

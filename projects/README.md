@@ -2,7 +2,21 @@
 
 Your actual repos, one folder per project. Each project is its own git repo with its own
 `CLAUDE.md` and `.claude/` settings. The workspace's `.gitignore` ignores everything in this
-folder except this README, so project code never ends up in the workspace's history.
+folder except this README and `repos.json`, so project code never ends up in the workspace's
+history.
+
+## On another PC
+
+`repos.json` lists which repo belongs in which folder here, and what each needs (for example
+Git LFS or Blender 5.2). After cloning the workspace:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Setup.ps1                # reports missing projects and tools
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Setup.ps1 -Mode Install   # also clones the missing projects
+```
+
+Add a project to `repos.json` once it has a GitHub remote; `Setup.ps1` warns about project
+folders that aren't listed. Keep the folder names: flows and agents refer to them.
 
 ## Add a project
 

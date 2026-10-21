@@ -39,9 +39,15 @@ and render, one `asset-builder` agent runs them, and the user approves at fixed 
 - **Scripts, not MCP:** `node tools/asset.mjs new | clean | check | review | selftest`.
   `check --stage final` fails (exit 1) on hard rules; looks only warn. `selftest` proves every
   rule with deliberately broken models.
-- **Generation:** the user tests Meshy's free web app first; Meshy Pro and an API script only
-  if the quality holds up. Paid-plan output is the user's; free output is CC BY 4.0.
-- **One agent** (`asset-builder`, opus, medium effort) plus four flows in `flows/asset-*.md`;
+- **Three sources per asset**, a field in `asset.json`: `procedural` (default; the agent writes
+  a `build.py` recipe with `tools/blender/kit.py`, for hard-surface and stylized props),
+  `meshy` (for organic or detailed shapes) and `library` (CC0 placeholders). Everything from
+  `gen/raw.glb` on is shared. Recipes may only call the kit, `math` and basic Python; `build`
+  refuses the rest before running, so `build` could be pre-approved like the other commands.
+  A test barrel built this way: 1,056 triangles, exact size, every check passing, flat colours.
+- **Meshy:** the user tests the free web app first; Meshy Pro and an API script only if the
+  quality holds up. Paid-plan output is the user's; free output is CC BY 4.0.
+- **One agent** (`asset-builder`, opus, medium effort) plus five flows in `flows/asset-*.md`;
   a separate reviewer agent only after the first approved asset.
 
 ## Consequences

@@ -31,6 +31,7 @@ import {
 import {
   contentTypeFor, isInside, listImages, localDate, MAX_UPLOAD_BYTES, resolveTarget, saveImage,
 } from './uploads.mjs';
+import { assetDetail, assetFile, assetProjects, listAssets, setVerdict } from './assets.mjs';
 
 const appDir = dirname(fileURLToPath(import.meta.url));
 const toolsDir = join(appDir, '..'); // the CLI tools this app runs (new-agent.mjs ...)
@@ -43,6 +44,7 @@ const STATIC = {
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/app.css': ['app.css', 'text/css; charset=utf-8'],
   '/icon.svg': ['icon.svg', 'image/svg+xml'],
+  '/viewer.js': ['viewer.js', 'text/javascript; charset=utf-8'],
 };
 const PAGE_CSP = "default-src 'self'; img-src 'self' blob: data:; style-src 'self'; script-src 'self'; " +
   "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'";
@@ -191,7 +193,15 @@ export function buildState(root, tools) {
       have: requirementStatus(),
     },
     catalog: catalogForUi(),
+    assets: assetProjects(root).map(project => ({ project, assets: listAssets(root, project) })),
   };
+}
+
+// A project with the asset pipeline (projects/<p>/tools/asset.mjs and assets/), checked.
+function assetProjectOrThrow(root, projectName) {
+  const name = findProject(root, projectName);
+  if (!assetProjects(root).includes(name)) throw new HttpError(404, `projects/${name} has no asset pipeline`);
+  return name;
 }
 
 function flowOrThrow(root, slug) {
@@ -277,6 +287,21 @@ export function createApp({ root, token, actions, getPort, workspaceTag = '', on
         const text = readFileSync(agent.file, 'utf8');
         const path = agent.file.slice(root.length + 1).split(sep).join('/');
         return json(res, 200, { ok: true, project, agent: agent.name, file: agent.rel, path, text, hash: textHash(text) });
+      }
+
+      case 'GET /api/asset': {
+        const project = assetProjectOrThrow(root, q.project);
+        const d = assetDetail(root, project, q.id);
+        if (d.error) throw new HttpError(404, d.error);
+        return json(res, 200, { ok: true, project, ...d });
+      }
+
+      case 'POST /api/asset-verdict': {
+        const b = await readJson(req);
+        const project = assetProjectOrThrow(root, b.project);
+        const r = setVerdict(root, project, String(b.id || ''), String(b.verdict || ''), String(b.notes || ''));
+        if (r.error) throw new HttpError(400, r.error);
+        return json(res, 200, { ok: true, status: r.status, message: `${b.id}: ${b.verdict} saved (status ${r.status}, logged in brief.md)` });
       }
 
       case 'POST /api/agent-file': {
@@ -587,6 +612,18 @@ export function createApp({ root, token, actions, getPort, workspaceTag = '', on
           'Content-Type': type,
           'Content-Security-Policy': "default-src 'none'; sandbox",
           'Cache-Control': 'private, max-age=300',
+        });
+      }
+
+      // Renders, concept images and models of a project's assets (the Assets view).
+      if (req.method === 'GET' && url.pathname === '/asset-file') {
+        const project = assetProjectOrThrow(root, url.searchParams.get('project'));
+        const f = assetFile(root, project, url.searchParams.get('path'));
+        if (!f) throw new HttpError(404, 'asset file not found');
+        return send(res, 200, readFileSync(f.full), {
+          'Content-Type': f.type,
+          'Content-Security-Policy': "default-src 'none'; sandbox",
+          'Cache-Control': 'private, no-cache',
         });
       }
 

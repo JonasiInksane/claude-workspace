@@ -481,3 +481,76 @@ test('new agents are made by tools/new-agent.mjs, with its checks', async () => 
   assert.equal(roleFlag.status, 200, roleFlag.buf.toString());
   assert.match(readFileSync(join(root, 'projects', 'Tattoo', '.claude', 'agents', 'flags.md'), 'utf8'), /--help/);
 });
+
+// A project with the asset pipeline: tools/asset.mjs and assets/<style>/<category>/<Name>/.
+function assetFixture() {
+  const a = 'projects/Game/assets/demo/props/Box';
+  put('projects/Game/tools/asset.mjs', '// pipeline');
+  put(`${a}/asset.json`, JSON.stringify({ name: 'Box', style: 'demo', category: 'props', class: 'prop-small', source: 'meshy', status: 'review' }, null, 2));
+  put(`${a}/brief.md`, '# Asset brief: Box\n\n## Log\n- 2026-10-20 brief created\n- 2026-10-21 meshy try 1:\n  30 credits\n');
+  put(`${a}/review/check-final.json`, JSON.stringify({ checkedAt: '2026-10-21T10:00:00+00:00', triangles: 12, dimensionsM: { width: 1, depth: 1, height: 1 },
+    summary: { pass: 1, warn: 1, fail: 1 },
+    checks: [{ id: 'triangles', status: 'pass', message: 'ok' }, { id: 'open-edges', status: 'warn', message: '3 open' }, { id: 'pivot', status: 'fail', message: 'off' }] }));
+  put(`${a}/review/final_side.png`, PNG);
+  put(`${a}/review/final_front.png`, PNG);
+  put(`${a}/concept/front.png`, PNG);
+  put(`${a}/export/SM_Box.glb`, 'glTF-fake');
+  put(`${a}/review/clean.log`, 'log');
+  put('projects/Game/assets/demo/props/_Old/asset.json', '{}');
+  put('projects/Game/secret.png', PNG);
+}
+
+test('assets: listed per pipeline project, with checks, renders, models and the log', async () => {
+  assetFixture();
+  const state = (await call('GET', '/api/state')).json;
+  assert.deepEqual(state.assets.map(p => p.project), ['Game']);
+  const [box] = state.assets[0].assets;
+  assert.equal(state.assets[0].assets.length, 1);
+  assert.equal(box.id, 'demo/props/Box');
+  assert.equal(box.thumb, 'demo/props/Box/review/final_front.png');
+  assert.deepEqual([box.final.pass, box.final.warn, box.final.fail, box.raw], [1, 1, 1, null]);
+
+  const d = (await call('GET', '/api/asset?project=Game&id=demo/props/Box')).json;
+  assert.deepEqual(d.checks.final.checks.map(c => c.status), ['fail', 'warn', 'pass']);
+  assert.deepEqual(d.renders.final, ['demo/props/Box/review/final_front.png', 'demo/props/Box/review/final_side.png']);
+  assert.deepEqual(d.models, { final: 'demo/props/Box/export/SM_Box.glb', raw: '' });
+  assert.deepEqual(d.log, ['2026-10-21 meshy try 1: 30 credits', '2026-10-20 brief created']);
+  for (const q of ['project=Tattoo&id=demo/props/Box', 'project=Game&id=demo/props', 'project=Game&id=demo/../Box', 'project=Game&id=demo/props/_Old']) {
+    assert.equal((await call('GET', `/api/asset?${q}`)).status, 404, q);
+  }
+});
+
+test('asset files: renders and models from assets/ only, sandboxed; nothing else', async () => {
+  assetFixture();
+  const png = await call('GET', '/asset-file?project=Game&path=demo/props/Box/review/final_front.png');
+  assert.equal(png.status, 200);
+  assert.equal(png.headers['content-type'], 'image/png');
+  assert.match(png.headers['content-security-policy'], /sandbox/);
+  const glb = await call('GET', '/asset-file?project=Game&path=demo/props/Box/export/SM_Box.glb');
+  assert.equal(glb.headers['content-type'], 'model/gltf-binary');
+  for (const path of ['demo/props/Box/review/clean.log', '../secret.png', '../tools/asset.mjs', 'demo/props/Box/brief.md',
+    `${root}/projects/Game/secret.png`, 'demo/props/Box/review/missing.png', '']) {
+    assert.equal((await call('GET', `/asset-file?project=Game&path=${encodeURIComponent(path)}`)).status, 404, path);
+  }
+  assert.equal((await call('GET', '/asset-file?project=Tattoo&path=secret.png')).status, 404);
+  assert.equal((await call('GET', '/asset-file?project=Game&path=demo/props/Box/review/final_front.png', { auth: false })).status, 403);
+});
+
+test('asset verdicts set the status and log a dated line in the brief; bad input changes nothing', async () => {
+  assetFixture();
+  const r = await call('POST', '/api/asset-verdict', { body: { project: 'Game', id: 'demo/props/Box', verdict: 'revise', notes: 'gold warmer\nbail bigger' } });
+  assert.equal(r.status, 200, r.buf.toString());
+  const dir = join(root, 'projects', 'Game', 'assets', 'demo', 'props', 'Box');
+  assert.equal(JSON.parse(readFileSync(join(dir, 'asset.json'), 'utf8')).status, 'revise');
+  const brief = readFileSync(join(dir, 'brief.md'), 'utf8');
+  assert.match(brief, /\n- \d{4}-\d{2}-\d{2} user verdict \(workspace app\): revise\. Notes:\n {2}gold warmer\n {2}bail bigger\n$/);
+  for (const body of [
+    { project: 'Game', id: 'demo/props/Box', verdict: 'approved' },
+    { project: 'Game', id: 'demo/props/Box', verdict: 'approve', notes: 'x'.repeat(2001) },
+    { project: 'Game', id: '../Box', verdict: 'approve' },
+  ]) assert.equal((await call('POST', '/api/asset-verdict', { body })).status, 400, JSON.stringify(body).slice(0, 80));
+  assert.equal((await call('POST', '/api/asset-verdict', { body: { project: 'Tattoo', id: 'demo/props/Box', verdict: 'approve' } })).status, 404);
+  assert.equal((await call('POST', '/api/asset-verdict', { body: { project: 'Game', id: 'demo/props/Box', verdict: 'approve' }, headers: { Origin: 'http://evil.example' } })).status, 403);
+  assert.equal(JSON.parse(readFileSync(join(dir, 'asset.json'), 'utf8')).status, 'revise');
+  assert.equal(readFileSync(join(dir, 'brief.md'), 'utf8'), brief);
+});

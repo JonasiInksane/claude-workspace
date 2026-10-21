@@ -4,8 +4,9 @@ A small local app for this workspace, opened in its own Edge window: a dashboard
 flows, active reports, projects), flows (saved prompts with reference images, run in the hub,
 a project or one agent), a Tools view with a button for every skill and workspace tool,
 project cards that start Claude, per-project agents (create, edit, archive and restore, start
-isolated, view memory) and image upload (drag and drop, Ctrl+V, or choose files) into the hub
-inbox, a chosen agent's image folder or a flow.
+isolated, view memory), image upload (drag and drop, Ctrl+V, or choose files) into the hub
+inbox, a chosen agent's image folder or a flow, and an Assets view for projects with the asset
+pipeline (`projects/game-dev`): renders, check results, a 3D view of the model and your verdict.
 
 Start it with a double-click on `Workspace App.cmd` (workspace root) or the "Claude Workspace"
 shortcut, or `[A]` in the `start.ps1` menu. All three run `start-app.ps1`, which starts the
@@ -37,7 +38,9 @@ runs just opens another window.
 | `make-shortcut.mjs` | Desktop / Start menu shortcut; never replaces or removes a "Claude Workspace" shortcut that starts something else (another workspace copy included) |
 | `make-icon.mjs` | Draws `ui/icon.ico` (16 to 256 px) from the same design as `ui/icon.svg`; its PNG encoder is shared with `bmp.mjs` |
 | `bmp.mjs` | BMP to PNG on upload (uncompressed 1, 4, 8, 24 and 32-bit; others are refused with a message) |
-| `ui/` | The page: `index.html`, `app.js`, `app.css`, `icon.svg` (plus `icon.ico` for the shortcut). Plain JS, no build step |
+| `assets.mjs` | The Assets view: finds projects with `tools/asset.mjs` and `assets/`, reads each asset's `asset.json`, check reports, renders and brief log; serves only PNG, JPEG, JSON and GLB files from inside `assets/` (sandboxed); writes a verdict (Approve, Revise, Reject) as the `asset.json` status plus a dated line in the brief's log |
+| `ui/viewer.js` | The 3D view: a small WebGL2 GLB viewer, no libraries (base colour, metal/roughness and normal maps; studio light and a fake sky; turntable, wireframe). No Draco or meshopt compression, skins or morphs |
+| `ui/` | The page: `index.html`, `app.js`, `app.css`, `viewer.js`, `icon.svg` (plus `icon.ico` for the shortcut). Plain JS, no build step |
 
 The app does what the command-line tools do and nothing more. "Start" on an agent runs
 `tools/agent-session.mjs` in a Windows Terminal tab, and "New agent" runs `tools/new-agent.mjs`.

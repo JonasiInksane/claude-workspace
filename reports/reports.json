@@ -38,6 +38,23 @@
           "path": "reports/2026-10-20_tattoogenda-audit/report-v2.md"
         }
       ]
+    },
+    {
+      "id": "2026-10-21_prompt-pipeline-practices",
+      "title": "Prompt and pipeline best practices",
+      "project": null,
+      "type": "research",
+      "status": "active",
+      "created": "2026-10-21",
+      "updated": "2026-10-21",
+      "folder": "reports/2026-10-21_prompt-pipeline-practices",
+      "summary": "How to write prompts, skills, agents and pipelines for current Claude models and Claude Code 2.1.306, and which of it the workspace app supports. Next: per-flow launch settings and labeled images.",
+      "steps": [
+        {
+          "name": "Report",
+          "path": "reports/2026-10-21_prompt-pipeline-practices/report.md"
+        }
+      ]
     }
   ]
 }

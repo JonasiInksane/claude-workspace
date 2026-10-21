@@ -13,7 +13,7 @@ Machine facts, last checked 2026-10-21. Update this file when something changes
 - Python: 3.13 (not needed by the workspace tools)
 - Editors: VS Code, Cursor
 - Git client: GitKraken (plus the git CLI)
-- Claude Code: 2.1.305, native install at `%USERPROFILE%\.local\bin\claude.exe`
+- Claude Code: 2.1.306 (auto-updates), native install at `%USERPROFILE%\.local\bin\claude.exe`
 
 ## Workspace tooling
 - Tools are Node ESM scripts (`node tools/<name>.mjs`) with no npm dependencies.

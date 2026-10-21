@@ -117,10 +117,10 @@ export function realActions({ root, tools = findTools(), windowStyle } = {}) {
     tools,
     // With `prompt`: it goes through a prompt file (tools/lib/prompt-file.mjs explains why), with
     // `readDirs` the session may read without asking.
-    startClaude({ dir, title, continueLast, prompt, readDirs = [] }) {
+    startClaude({ dir, title, continueLast, prompt, readDirs = [], launch = {} }) {
       if (!tools.claude) throw new Error('Claude Code was not found (PATH or %USERPROFILE%\\.local\\bin).');
       if (!prompt) return terminal(dir, title, psCommand(dir, tools.claude, continueLast ? ['-c'] : []));
-      const file = writePromptFile({ prompt, readDirs });
+      const file = writePromptFile({ prompt, readDirs, launch });
       return terminal(dir, title, psCommand(dir, node, [join(appDir, 'claude-prompt.mjs'), file]));
     },
     newProject({ project, type, from }) {
@@ -149,9 +149,9 @@ export function realActions({ root, tools = findTools(), windowStyle } = {}) {
         });
       });
     },
-    startAgent({ project, agent, title, prompt, readDirs = [] }) {
+    startAgent({ project, agent, title, prompt, readDirs = [], launch = {} }) {
       const args = [join(toolsDir, 'agent-session.mjs'), project, agent, '--root', root];
-      if (prompt) args.push('--prompt-file', writePromptFile({ prompt, readDirs }));
+      if (prompt) args.push('--prompt-file', writePromptFile({ prompt, readDirs, launch }));
       return terminal(root, title, psCommand(root, node, args));
     },
     openFolder({ dir }) {

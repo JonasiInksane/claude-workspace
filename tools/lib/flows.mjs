@@ -4,18 +4,27 @@
 //   flows/_archived/<flow>.md             archived flows (files kept; Restore brings them back)
 //   inbox/attachments/_flows/<flow>/      its reference images (gitignored, never triaged)
 //
-// Frontmatter: title, description, target (hub | project | agent), project, agent. Values are
-// written as JSON strings, which are valid YAML, so ": " or "#" in a title can't break the file.
-// A run starts Claude at the target with the prompt, optional notes for that run and the image
-// paths; the session may read the image folder without asking.
+// Frontmatter: title, description, target (hub | project | agent), project, agent, and optional
+// launch settings permissionMode, model, effort, allowedTools (tools/lib/prompt-file.mjs checks
+// them). Values are written as JSON strings, which are valid YAML, so ": " or "#" in a title
+// can't break the file.
+// A run starts Claude at the target with the labeled image paths first ("Image 1: <path>" plus
+// an optional caption from the image folder's captions.json), then the prompt, then optional
+// notes for that run; the session may read the image folder without asking.
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { duplicateNames, listAgents, readFrontmatter, resolveProject, textHash } from './agents.mjs';
+import { checkLaunch } from './prompt-file.mjs';
 
 export const FLOW_TARGETS = ['hub', 'project', 'agent'];
 export const FLOW_IMAGES_DIR = '_flows';
 export const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-export const LIMITS = { title: 120, description: 300, prompt: 16000, notes: 2000, images: 40 };
+export const LIMITS = { title: 120, description: 300, prompt: 16000, notes: 2000, images: 40, caption: 200 };
+// What a run passes: the formats Claude Code's Read tool shows as images. BMP uploads are
+// converted to PNG; a BMP copied into the folder by hand is listed but not passed.
+const RUN_IMAGE_RE = /\.(png|jpe?g|gif|webp)$/i;
+const CAPTIONS_FILE = 'captions.json';
+const LAUNCH_KEYS = ['permissionMode', 'model', 'effort', 'allowedTools'];
 
 export const flowsDir = root => join(root, 'flows');
 export const archivedFlowsDir = root => join(flowsDir(root), '_archived');
@@ -38,10 +47,12 @@ export function parseFlow(text) {
   const fm = readFrontmatter(src) || {};
   const m = src.match(/^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/);
   const prompt = (m ? src.slice(m[0].length) : src).replace(/\r\n/g, '\n').replace(/^\n+/, '').replace(/\s+$/, '');
-  return {
+  const flow = {
     title: fm.title || '', description: fm.description || '', target: fm.target || '',
     project: fm.project || '', agent: fm.agent || '', prompt,
   };
+  for (const k of LAUNCH_KEYS) flow[k] = fm[k] || '';
+  return flow;
 }
 
 export function renderFlow(f) {
@@ -50,8 +61,14 @@ export function renderFlow(f) {
   lines.push(`target: ${f.target}`);
   if (f.target !== 'hub') lines.push(`project: ${JSON.stringify(f.project)}`);
   if (f.target === 'agent') lines.push(`agent: ${JSON.stringify(f.agent)}`);
+  for (const k of LAUNCH_KEYS) if (f[k]) lines.push(`${k}: ${JSON.stringify(f[k])}`);
   lines.push('---', '', f.prompt.trim(), '');
   return lines.join('\n');
+}
+
+// The launch settings of a checked flow, for tools/lib/prompt-file.mjs.
+export function flowLaunch(flow) {
+  return checkLaunch(flow).launch;
 }
 
 // Checks a flow's fields. Returns { error, flow }: `flow` is cleaned up (trimmed, the project's
@@ -68,6 +85,12 @@ export function checkFlow(root, input) {
     if (flow[k].length > LIMITS[k]) return bad(`the ${k} is longer than ${LIMITS[k]} characters`);
   }
   if (!flow.prompt) return bad('the prompt is empty');
+  const launch = checkLaunch(input);
+  if (launch.error) return bad(launch.error);
+  flow.permissionMode = launch.launch.permissionMode || '';
+  flow.model = launch.launch.model || '';
+  flow.effort = launch.launch.effort || '';
+  flow.allowedTools = (launch.launch.allowedTools || []).join(', ');
   if (!FLOW_TARGETS.includes(flow.target)) return bad('target must be hub, project or agent');
   if (flow.target === 'hub') return { error: '', flow };
   const { name, error } = resolveProject(root, s('project'));
@@ -142,27 +165,64 @@ export function saveFlow(root, input, { slug = '', baseHash = '' } = {}) {
   return { error: '', slug, hash: textHash(text) };
 }
 
-// Images directly in the flow's image folder, oldest first (the order they were added).
+// Images directly in the flow's image folder that a run passes, in run order: oldest first
+// (the order they were added), then by name. Image 1 is the first one.
 export function flowImages(root, slug) {
   const dir = flowImagesDir(root, slug);
   const out = [];
   for (const e of listDir(dir)) {
-    if (!e.isFile() || !/\.(png|jpe?g|gif|webp|bmp)$/i.test(e.name)) continue;
+    if (!e.isFile() || !RUN_IMAGE_RE.test(e.name)) continue;
     let mtimeMs = 0;
-    try { mtimeMs = statSync(join(dir, e.name)).mtimeMs; } catch { continue; }
-    out.push({ file: join(dir, e.name), mtimeMs });
+    try { mtimeMs = Math.floor(statSync(join(dir, e.name)).mtimeMs); } catch { continue; }
+    out.push({ file: join(dir, e.name), name: e.name, mtimeMs });
   }
-  return out.sort((a, b) => a.mtimeMs - b.mtimeMs).map(x => x.file);
+  return out.sort((a, b) => a.mtimeMs - b.mtimeMs || a.name.localeCompare(b.name)).map(x => x.file);
 }
 
-// The prompt a run starts with: the flow's prompt, the run's notes, then the image paths.
-export function runPrompt(flow, images, notes = '') {
-  const parts = [flow.prompt.trim()];
+// Image files in the folder that a run does not pass (BMP copied in by hand).
+export function skippedFlowImages(root, slug) {
+  return listDir(flowImagesDir(root, slug))
+    .filter(e => e.isFile() && /\.bmp$/i.test(e.name))
+    .map(e => e.name).sort();
+}
+
+// { "<file name>": "what it shows" } from the image folder's captions.json.
+export function readCaptions(root, slug) {
+  try {
+    const data = JSON.parse(readFileSync(join(flowImagesDir(root, slug), CAPTIONS_FILE), 'utf8'));
+    return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+  } catch { return {}; }
+}
+
+// Sets (or, with an empty caption, removes) one image's caption, and drops captions of images
+// that are gone. Returns { error }.
+export function setCaption(root, slug, image, caption) {
+  const names = flowImages(root, slug).map(f => basename(f));
+  if (!names.includes(image)) return { error: `the flow has no image "${image}"` };
+  const text = String(caption ?? '').replace(/\s+/g, ' ').trim();
+  if (text.length > LIMITS.caption) return { error: `a caption can be at most ${LIMITS.caption} characters` };
+  const captions = readCaptions(root, slug);
+  if (text) captions[image] = text;
+  else delete captions[image];
+  for (const k of Object.keys(captions)) if (!names.includes(k) || typeof captions[k] !== 'string') delete captions[k];
+  writeFileSync(join(flowImagesDir(root, slug), CAPTIONS_FILE), JSON.stringify(captions, null, 2) + '\n', 'utf8');
+  return { error: '' };
+}
+
+// The prompt a run starts with. Images come first, labeled, because Anthropic's vision guidance
+// puts images before the question and labels several as "Image 1:", "Image 2:"; the flow's
+// prompt can refer to them by those labels. Then the prompt, then the run's notes.
+export function runPrompt(flow, images, notes = '', captions = {}) {
+  const parts = [];
+  if (images.length) {
+    parts.push(['Reference images for this task. Read each one before you start:', ...images.map((p, i) => {
+      const c = typeof captions[basename(p)] === 'string' ? captions[basename(p)].trim() : '';
+      return `- Image ${i + 1}: ${p}${c ? `\n  What it shows: ${c}` : ''}`;
+    })].join('\n'));
+  }
+  parts.push(flow.prompt.trim());
   const n = String(notes || '').trim();
   if (n) parts.push(`Notes for this run:\n${n}`);
-  if (images.length) {
-    parts.push(`Reference images for this flow (read them before you start):\n${images.map(p => `- ${p}`).join('\n')}`);
-  }
   return parts.join('\n\n');
 }
 

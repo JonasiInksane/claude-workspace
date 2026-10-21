@@ -156,8 +156,10 @@ opens in its own window. It has five views:
 
 - **Dashboard:** what is waiting in the inbox, agent images, flows, active reports and projects.
 - **Flows:** saved prompts with reference images. **+ New flow**, then write the prompt, pick
-  where it runs (the hub, a project or one agent) and drop images on it. **Run…** shows the
-  exact prompt, takes notes for that run and starts Claude. Format: [flows/README.md](flows/README.md).
+  where it runs (the hub, a project or one agent), optionally how the session starts (plan
+  mode, model, effort, pre-approved tools), and drop images on it (they become Image 1,
+  Image 2 ..., each with an optional caption). **Run…** shows the exact prompt, takes notes for
+  that run and starts Claude. Format: [flows/README.md](flows/README.md).
 - **Tools:** a button for every hub and project skill (Claude opens in a new terminal and runs
   it), **New project**, and Check workspace, Run tests, Rebuild navigator and Install library
   (these run in the app and show their output).

@@ -10,6 +10,7 @@ import { mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { HUB_DIR, SHARED_DIR, imagesDir, listAgents, resolveProject, sharedImagesDir } from '../lib/agents.mjs';
 import { flowImagesDir, getFlow } from '../lib/flows.mjs';
+import { bmpToPng } from './bmp.mjs';
 
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 // SVG is left out on purpose: it can carry scripts.
@@ -84,11 +85,16 @@ export function resolveTarget(root, query) {
 }
 
 // Writes the image into <dir>/<date>/<stem>.<ext> (date '' : straight into <dir>), adding
-// -2, -3 ... instead of overwriting. Returns the absolute path.
+// -2, -3 ... instead of overwriting. A BMP is saved as PNG (bmp.mjs says why). Returns the
+// absolute path.
 export function saveImage(dir, buf, { name = '', date = localDate(), now = new Date() } = {}) {
-  const type = detectImageType(buf);
+  let type = detectImageType(buf);
   if (!type) throw Object.assign(new Error('not a PNG, JPEG, GIF, WebP or BMP image'), { status: 415 });
   if (buf.length > MAX_UPLOAD_BYTES) throw Object.assign(new Error('image is larger than 25 MB'), { status: 413 });
+  if (type === 'bmp') {
+    buf = bmpToPng(buf);
+    type = 'png';
+  }
   const p = n => String(n).padStart(2, '0');
   const stem = safeStem(name, `image-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`);
   const dayDir = date ? join(dir, date) : dir;

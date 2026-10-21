@@ -35,7 +35,8 @@ runs just opens another window.
 | `../lib/agents.mjs` | Agents, shared with the CLI tools; editing (`saveAgentText`, refuses renames and stale saves), archiving and restoring live here too |
 | `start-app.ps1` | Starts the server hidden with `--log` (shows a dialog if Node is missing) |
 | `make-shortcut.mjs` | Desktop / Start menu shortcut; never replaces or removes a "Claude Workspace" shortcut that starts something else (another workspace copy included) |
-| `make-icon.mjs` | Draws `ui/icon.ico` (16 to 256 px) from the same design as `ui/icon.svg` |
+| `make-icon.mjs` | Draws `ui/icon.ico` (16 to 256 px) from the same design as `ui/icon.svg`; its PNG encoder is shared with `bmp.mjs` |
+| `bmp.mjs` | BMP to PNG on upload (uncompressed 1, 4, 8, 24 and 32-bit; others are refused with a message) |
 | `ui/` | The page: `index.html`, `app.js`, `app.css`, `icon.svg` (plus `icon.ico` for the shortcut). Plain JS, no build step |
 
 The app does what the command-line tools do and nothing more. "Start" on an agent runs
@@ -44,7 +45,10 @@ In Tools, a skill starts Claude in the hub or a project with `/<skill> <form val
 first prompt; "New project" runs `tools/new-project.mjs` in a terminal; Check workspace, Run
 tests, Rebuild navigator and Install library run inside the app and show their output (Install
 library always shows its `--dry-run` preview first). A flow's Run starts `claude-prompt.mjs`
-(hub, project) or `agent-session.mjs --prompt-file` (agent) in a terminal. Archiving an agent
+(hub, project) or `agent-session.mjs --prompt-file` (agent) in a terminal, with the flow's
+launch settings as `--permission-mode` / `--model` / `--effort` and its pre-approved tools in
+the settings file (`tools/lib/prompt-file.mjs` checks them; `bypassPermissions` and `dontAsk`
+are refused). Archiving an agent
 moves its file to `.claude/agents-archived/`, outside the folder Claude Code loads agents
 from; archiving a flow moves it to `flows/_archived/`. Memory and images always stay.
 The inbox counts come from `tools/lib/inbox.mjs`. Image rules:
@@ -61,7 +65,8 @@ The inbox counts come from `tools/lib/inbox.mjs`. Image rules:
   and the state file in your own temp folder, so other programs running as you could use it.
   POST requests also need a same-origin `Origin`
   and the `X-Workspace-App` header, so other web pages can't call the API.
-- Uploads must really be PNG, JPEG, GIF, WebP or BMP (checked by content, not by name; no SVG),
+- Uploads must really be PNG, JPEG, GIF, WebP or BMP (checked by content, not by name; no SVG;
+  BMP is saved as PNG by `bmp.mjs`, since Claude Code's Read tool doesn't show BMP),
   at most 25 MB. They are saved under `inbox/attachments/` only, and existing files are never
   overwritten.
 - Images are served only from `inbox/`, with a sandboxing CSP. The page itself has a strict CSP

@@ -261,6 +261,13 @@ test('agent-session --prompt-file starts with the prompt and may read the extra 
   const plain = JSON.parse(run('agent-session.mjs', ['demo', 'art', '--print'], root).out);
   assert.notEqual(plain.settingsFile, plan.settingsFile);
   assert.match(run('agent-session.mjs', ['demo', 'art', '--print', '--prompt-file', promptFile], root).err, /could not read the prompt file/);
+  // Launch settings: flags before the prompt, pre-approved tools in the settings file.
+  writeFileSync(promptFile, JSON.stringify({ prompt: 'Plan it', readDirs: [], launch: { permissionMode: 'plan', effort: 'high', allowedTools: ['Read', 'Bash(npm test:*)'] } }));
+  const launched = JSON.parse(run('agent-session.mjs', ['demo', 'art', '--print', '--prompt-file', promptFile], root).out);
+  assert.deepEqual(launched.args.slice(4), ['--permission-mode', 'plan', '--effort', 'high', 'Plan it']);
+  assert.deepEqual(JSON.parse(readFileSync(launched.settingsFile, 'utf8')).permissions.allow, ['Read', 'Bash(npm test:*)']);
+  writeFileSync(promptFile, JSON.stringify({ prompt: 'x', launch: { permissionMode: 'bypassPermissions' } }));
+  assert.match(run('agent-session.mjs', ['demo', 'art', '--print', '--prompt-file', promptFile], root).err, /launch: permission mode/);
   // A file outside the prompt folder (named by mistake) is read but never deleted.
   const elsewhere = join(root, 'settings.json');
   writeFileSync(elsewhere, JSON.stringify({ permissions: {} }));

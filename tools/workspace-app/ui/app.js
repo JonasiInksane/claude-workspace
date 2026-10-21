@@ -451,6 +451,32 @@ function targetSelect(current) {
   return select;
 }
 
+// "plan mode · effort high · model opus · pre-approved: Read, Grep", or '' for all defaults.
+function launchSummary(launch = {}) {
+  return [
+    launch.permissionMode && `${launch.permissionMode} mode`,
+    launch.effort && `effort ${launch.effort}`,
+    launch.model && `model ${launch.model}`,
+    launch.allowedTools && launch.allowedTools.length && `pre-approved: ${launch.allowedTools.join(', ')}`,
+  ].filter(Boolean).join(' · ');
+}
+
+// One image in the flow editor: its run label, its file name and an editable caption.
+function flowImageTile(slug, img, i) {
+  const caption = h('input', {
+    class: 'caption', maxlength: 200, autocomplete: 'off', placeholder: 'What it shows (optional)', 'aria-label': `What Image ${i + 1} shows`,
+  });
+  caption.value = img.caption || '';
+  caption.addEventListener('change', () => {
+    act(api('/api/flows/caption', { method: 'POST', body: { slug, image: img.name, caption: caption.value } }));
+  });
+  return h('div', { class: 'tile' },
+    h('button', { class: 'pic', title: img.name, on: { click: () => window.open(`/img?${qs({ path: img.path })}`, '_blank') } },
+      h('img', { src: `/img?${qs({ path: img.path })}`, alt: img.name, loading: 'lazy' })),
+    h('div', { class: 'meta' }, h('b', {}, `Image ${i + 1}`), h('span', { title: img.name }, img.name)),
+    caption);
+}
+
 async function loadFlowThumbs(f, box) {
   try {
     const r = await api(`/api/images?${qs({ flow: f.slug })}`);
@@ -472,6 +498,7 @@ function flowCard(f) {
       f.error ? h('div', { class: 'form-error' }, `Can't run: ${f.error}. Edit it to pick another target.`) : null,
       f.description ? h('p', { class: 'flow-desc' }, f.description) : null,
       h('div', { class: 'muted small-text' }, f.images ? plural(f.images, 'reference image') : 'No images', ' · ', h('code', {}, `flows/${f.slug}.md`)),
+      launchSummary(f.launch) ? h('div', { class: 'muted small-text' }, `Starts with ${launchSummary(f.launch)}`) : null,
       thumbs));
 }
 
@@ -514,7 +541,28 @@ async function flowDialog(slug) {
   title.value = f.title;
   description.value = f.description;
   prompt.value = f.prompt;
-  const snapshot = () => JSON.stringify([title.value, description.value, target.value, prompt.value]);
+  // How the session starts (flags on the claude command; empty = the user's own default).
+  const mode = h('select', {}, [
+    ['', 'Your default'], ['plan', 'Plan: reads and proposes, changes nothing'], ['acceptEdits', 'Accept edits: edits files without asking'],
+    ['manual', 'Manual: asks before edits and commands'], ['auto', 'Auto'],
+  ].map(([value, label]) => h('option', { value }, label)));
+  const model = h('input', { list: 'flowModels', maxlength: 80, autocomplete: 'off', spellcheck: 'false', placeholder: 'Your default (or opus, sonnet, haiku, fable)' });
+  const effort = h('select', {}, [['', 'Your default'], ...['low', 'medium', 'high', 'xhigh', 'max'].map(e => [e, e])].map(([value, label]) => h('option', { value }, label)));
+  const tools = h('input', { maxlength: 500, autocomplete: 'off', spellcheck: 'false', placeholder: 'Read, Grep, Bash(npm test:*)' });
+  mode.value = f.permissionMode || '';
+  model.value = f.model || '';
+  effort.value = f.effort || '';
+  tools.value = f.allowedTools || '';
+  const launchSet = !!(f.permissionMode || f.model || f.effort || f.allowedTools);
+  const launchBox = h('details', { class: 'launch', open: launchSet },
+    h('summary', {}, 'How the session starts', launchSet ? '' : h('span', { class: 'muted' }, ' (your defaults)')),
+    h('div', { class: 'two-col' },
+      h('label', {}, 'Permission mode', h('small', {}, 'Plan suits flows that should explore and propose first.'), mode),
+      h('label', {}, 'Effort', h('small', {}, 'How hard Claude thinks; the first control to change.'), effort),
+      h('label', {}, 'Model', h('small', {}, 'An alias or a full model name.'), model,
+        h('datalist', { id: 'flowModels' }, ['opus', 'sonnet', 'haiku', 'fable'].map(m => h('option', { value: m })))),
+      h('label', {}, 'Pre-approved tools', h('small', {}, 'Allowed without asking, e.g. Read, Bash(npm test:*).'), tools)));
+  const snapshot = () => JSON.stringify([title.value, description.value, target.value, prompt.value, mode.value, model.value, effort.value, tools.value]);
   const initial = snapshot();
   const dirty = () => snapshot() !== initial;
   const error = h('div', { class: 'form-error', hidden: true });
@@ -524,10 +572,15 @@ async function flowDialog(slug) {
   let images;
   if (slug) {
     const gallery = h('div', { class: 'gallery small' });
+    const skipped = h('p', { class: 'form-error', hidden: true });
+    // In run order, labeled the way the prompt sees them ("Image 1"), each with a caption.
     const reload = async () => {
       try {
-        const r = await api(`/api/images?${qs({ flow: slug })}`);
-        gallery.replaceChildren(...(r.images.length ? r.images.map(img => imageTile(img, { zoom: false })) : [h('p', { class: 'muted' }, 'No images yet.')]));
+        const r = await api(`/api/flow?${qs({ slug })}`);
+        gallery.replaceChildren(...(r.images.length ? r.images.map((img, i) => flowImageTile(slug, img, i)) : [h('p', { class: 'muted' }, 'No images yet.')]));
+        skipped.textContent = r.skipped.length
+          ? `Not passed to runs: ${r.skipped.join(', ')}. Claude Code doesn't read BMP; drop the file again and the app saves it as PNG.` : '';
+        skipped.hidden = !r.skipped.length;
       } catch (e) { gallery.replaceChildren(h('p', { class: 'muted' }, e.message)); }
     };
     upload = async (files, pasted) => { await uploadFiles(files, pasted, { flow: slug, title: f.title }); reload(); };
@@ -542,8 +595,8 @@ async function flowDialog(slug) {
         class: 'drop compact', id: 'dialogDrop', tabindex: '0', role: 'button', 'aria-label': 'Add images to this flow',
         on: { click: () => input.click(), keydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } } },
       }, h('b', {}, 'Drop images here, paste with Ctrl+V, or click to choose'),
-      h('span', {}, `Saved right away in inbox/attachments/_flows/${slug}/. Every run passes their paths.`)),
-      input, gallery);
+      h('span', {}, `Saved right away in inbox/attachments/_flows/${slug}/ (BMP as PNG). A run lists them first, as Image 1, Image 2 ..., so the prompt can refer to them.`)),
+      input, skipped, gallery);
     reload();
   } else {
     images = h('p', { class: 'muted hint' }, 'After you create the flow, you can add reference images to it here.');
@@ -554,7 +607,10 @@ async function flowDialog(slug) {
     save.disabled = true;
     error.hidden = true;
     try {
-      const body = { slug, hash: f.hash, title: title.value, description: description.value, prompt: prompt.value, ...parseTargetValue(target.value) };
+      const body = {
+        slug, hash: f.hash, title: title.value, description: description.value, prompt: prompt.value, ...parseTargetValue(target.value),
+        permissionMode: mode.value, model: model.value.trim(), effort: effort.value, allowedTools: tools.value,
+      };
       const r = await api('/api/flows', { method: 'POST', body });
       closeGuard = null;
       toast(r.message);
@@ -573,7 +629,10 @@ async function flowDialog(slug) {
       h('label', {}, 'Title', title),
       h('label', {}, 'Runs in', h('small', {}, 'An agent starts with its own memory and images.'), target)),
     h('label', {}, 'Description', description),
-    h('label', {}, 'Prompt', h('small', {}, 'Notes for one run and the image paths are added when you run it. Ctrl+S saves.'), prompt),
+    launchBox,
+    h('label', {}, 'Prompt',
+      h('small', {}, 'Say the goal, why it matters, the scope, what done looks like and the output you want. ' +
+        'The images go above it and run notes below it when you run it. Ctrl+S saves.'), prompt),
     error,
     images);
   body.addEventListener('keydown', e => {
@@ -610,10 +669,13 @@ function archiveFlowDialog(slug, title) {
 function runFlowDialog(f) {
   const notes = h('textarea', { maxlength: 2000, placeholder: 'Optional: what is different this time, for example "the hero, walking left"' });
   const pre = h('pre', { class: 'output' }, 'Loading…');
+  const settings = h('p', { class: 'muted small-text' });
   let timer = 0;
   const preview = async () => {
     try {
-      pre.textContent = (await api('/api/flows/run', { method: 'POST', body: { slug: f.slug, notes: notes.value, preview: true } })).prompt;
+      const r = await api('/api/flows/run', { method: 'POST', body: { slug: f.slug, notes: notes.value, preview: true } });
+      pre.textContent = r.prompt;
+      settings.textContent = `Session: ${launchSummary(r.launch) || 'your default mode, model and effort'}.`;
     } catch (e) { pre.textContent = e.message; }
   };
   notes.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(preview, 350); });
@@ -626,7 +688,7 @@ function runFlowDialog(f) {
   });
   openDialog(`Run: ${f.title || f.slug}`, h('div', { class: 'form' },
     h('label', {}, 'Notes for this run', h('small', {}, 'Added below the prompt. Leave empty to run the flow as it is.'), notes),
-    h('div', {}, h('div', { class: 'section-label' }, h('span', {}, 'Claude starts with')), pre)), {
+    h('div', {}, h('div', { class: 'section-label' }, h('span', {}, 'Claude starts with')), settings, pre)), {
     wide: true,
     actions: [h('button', { class: 'btn', on: { click: closeDialog } }, 'Cancel'), start],
   });
@@ -904,7 +966,7 @@ function renderImages() {
       keydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } },
     },
   }, icon(ICON_UPLOAD), h('b', {}, 'Drop images here, or paste with Ctrl+V'),
-  h('span', {}, `Saved to ${targetLabel(imageTarget)} in today's folder · PNG, JPEG, GIF, WebP or BMP up to 25 MB`));
+  h('span', {}, `Saved to ${targetLabel(imageTarget)} in today's folder · PNG, JPEG, GIF, WebP or BMP (saved as PNG) up to 25 MB`));
   // Same target as last time (a refresh): keep the old gallery until the new one is loaded.
   const gallery = h('div', {}, galleryCache.key === key ? galleryCache.nodes : h('div', { class: 'empty' }, 'Loading…'));
 

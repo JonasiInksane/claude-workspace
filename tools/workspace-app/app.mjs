@@ -9,7 +9,7 @@
 // X-Workspace-App header, which other web pages cannot send without a CORS preflight that this
 // server never approves.
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { dirname, extname, join, resolve, sep } from 'node:path';
+import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { timingSafeEqual } from 'node:crypto';
@@ -21,8 +21,8 @@ import { projectNameMap, scanInbox } from '../lib/inbox.mjs';
 import { detectProjectType, typeLabel } from '../lib/project-type.mjs';
 import { catalogForUi, commandArgs, PROJECT_TYPES, skillLaunch } from './catalog.mjs';
 import {
-  archiveFlow, checkFlow, flowImages, flowImagesDir, getFlow, LIMITS as FLOW_LIMITS, listArchivedFlows, listFlows,
-  restoreFlow, runPrompt, saveFlow,
+  archiveFlow, checkFlow, flowImages, flowImagesDir, flowLaunch, getFlow, LIMITS as FLOW_LIMITS, listArchivedFlows,
+  listFlows, readCaptions, restoreFlow, runPrompt, saveFlow, setCaption, skippedFlowImages,
 } from '../lib/flows.mjs';
 import {
   contentTypeFor, isInside, listImages, localDate, MAX_UPLOAD_BYTES, resolveTarget, saveImage,
@@ -179,7 +179,7 @@ export function buildState(root, tools) {
     projects,
     flows: listFlows(root).map(f => ({
       slug: f.slug, title: f.title, description: f.description, target: f.target, project: f.project, agent: f.agent,
-      error: f.error, images: flowImages(root, f.slug).length,
+      error: f.error, images: flowImages(root, f.slug).length, launch: f.error ? {} : flowLaunch(f),
     })),
     archivedFlows: listArchivedFlows(root).map(f => ({ archivedAs: f.archivedAs, title: f.title })),
     catalog: catalogForUi(),
@@ -358,15 +358,33 @@ export function createApp({ root, token, actions, getPort, workspaceTag = '', on
         return json(res, 200, { ok: true, message: 'Opened in Explorer' });
       }
 
+      // The flow, plus its images in run order (Image 1 first) with their captions.
       case 'GET /api/flow': {
         const f = flowOrThrow(root, q.slug);
         const { file, ...flow } = f;
-        return json(res, 200, { ok: true, ...flow, path: `flows/${f.slug}.md`, imageDir: flowImagesDir(root, f.slug) });
+        const captions = readCaptions(root, f.slug);
+        const images = flowImages(root, f.slug).map(abs => ({
+          name: basename(abs), path: abs.slice(root.length + 1).split(sep).join('/'), caption: captions[basename(abs)] || '',
+        }));
+        return json(res, 200, {
+          ok: true, ...flow, path: `flows/${f.slug}.md`, imageDir: flowImagesDir(root, f.slug), images, skipped: skippedFlowImages(root, f.slug),
+        });
+      }
+
+      case 'POST /api/flows/caption': {
+        const b = await readJson(req);
+        const f = flowOrThrow(root, b.slug);
+        const r = setCaption(root, f.slug, String(b.image || ''), b.caption);
+        if (r.error) throw new HttpError(400, r.error);
+        return json(res, 200, { ok: true, message: 'Caption saved' });
       }
 
       case 'POST /api/flows': {
         const b = await readJson(req);
-        const fields = { title: b.title, description: b.description, target: b.target, project: b.project, agent: b.agent, prompt: b.prompt };
+        const fields = {
+          title: b.title, description: b.description, target: b.target, project: b.project, agent: b.agent, prompt: b.prompt,
+          permissionMode: b.permissionMode, model: b.model, effort: b.effort, allowedTools: b.allowedTools,
+        };
         const r = saveFlow(root, fields, { slug: b.slug ? String(b.slug) : '', baseHash: String(b.hash || '') });
         if (r.error) throw new HttpError(r.conflict ? 409 : 400, r.error);
         return json(res, 200, { ok: true, slug: r.slug, hash: r.hash, message: b.slug ? 'Flow saved' : 'Flow created' });
@@ -385,17 +403,18 @@ export function createApp({ root, token, actions, getPort, workspaceTag = '', on
         if (notes.length > FLOW_LIMITS.notes) throw new HttpError(400, `the notes are longer than ${FLOW_LIMITS.notes} characters`);
         const images = flowImages(root, f.slug);
         if (images.length > FLOW_LIMITS.images) throw new HttpError(400, `a flow can pass at most ${FLOW_LIMITS.images} images; it has ${images.length}`);
-        const prompt = runPrompt(f, images, notes);
-        if (b.preview === true) return json(res, 200, { ok: true, prompt });
+        const prompt = runPrompt(f, images, notes, readCaptions(root, f.slug));
+        const launch = flowLaunch(f);
+        if (b.preview === true) return json(res, 200, { ok: true, prompt, launch });
         const readDirs = images.length ? [flowImagesDir(root, f.slug)] : [];
         const title = `Flow: ${f.title || f.slug}`;
-        if (f.target === 'hub') await actions.startClaude({ dir: root, title, prompt, readDirs });
+        if (f.target === 'hub') await actions.startClaude({ dir: root, title, prompt, readDirs, launch });
         else if (f.target === 'project') {
           if (!LAUNCHABLE.test(f.project)) throw new HttpError(400, `start ${f.project} from a terminal (its folder name has unusual characters)`);
-          await actions.startClaude({ dir: projectDir(root, f.project), title, prompt, readDirs });
+          await actions.startClaude({ dir: projectDir(root, f.project), title, prompt, readDirs, launch });
         } else {
           if (!LAUNCHABLE.test(f.project)) throw new HttpError(400, `start ${f.project} from a terminal (its folder name has unusual characters)`);
-          await actions.startAgent({ project: f.project, agent: f.agent, title, prompt, readDirs });
+          await actions.startAgent({ project: f.project, agent: f.agent, title, prompt, readDirs, launch });
         }
         return json(res, 200, { ok: true, message: `Started ${f.title || f.slug}` });
       }

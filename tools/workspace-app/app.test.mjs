@@ -295,11 +295,24 @@ test('flows: create, edit with a hash, add images, preview and run at each targe
   assert.equal((await post('/api/flows', { ...edit, hash: 'stale' })).status, 409);
   assert.equal((await post('/api/flows', { ...edit, hash: got.hash })).status, 200);
 
+  // Launch settings and captions.
+  const flowNow = (await call('GET', '/api/flow?slug=hero-sprite')).json;
+  assert.deepEqual(flowNow.images.map(i => [i.name, i.path, i.caption]), [['ref.png', 'inbox/attachments/_flows/hero-sprite/ref.png', '']]);
+  assert.equal((await post('/api/flows', { ...edit, hash: flowNow.hash, permissionMode: 'bypassPermissions' })).status, 400);
+  assert.equal((await post('/api/flows', { ...edit, hash: flowNow.hash, permissionMode: 'plan', effort: 'high', allowedTools: 'Read, Grep' })).status, 200);
+  assert.equal((await post('/api/flows/caption', { slug: 'hero-sprite', image: 'ref.png', caption: 'the hero, front view' })).status, 200);
+  assert.equal((await post('/api/flows/caption', { slug: 'hero-sprite', image: '..\\secret.png', caption: 'x' })).status, 400);
+  assert.equal((await call('GET', '/api/flow?slug=hero-sprite')).json.images[0].caption, 'the hero, front view');
+
   const imgDir = join(root, 'inbox', 'attachments', '_flows', 'hero-sprite');
   const preview = await post('/api/flows/run', { slug: 'hero-sprite', notes: 'Walk cycle', preview: true });
-  assert.equal(preview.json.prompt, `Draw the hero, side view.\n\nNotes for this run:\nWalk cycle\n\nReference images for this flow (read them before you start):\n- ${join(imgDir, 'ref.png')}`);
+  assert.equal(preview.json.prompt, 'Reference images for this task. Read each one before you start:\n' +
+    `- Image 1: ${join(imgDir, 'ref.png')}\n  What it shows: the hero, front view\n\n` +
+    'Draw the hero, side view.\n\nNotes for this run:\nWalk cycle');
+  assert.deepEqual(preview.json.launch, { permissionMode: 'plan', effort: 'high', allowedTools: ['Read', 'Grep'] });
   calls.length = 0;
   assert.equal((await post('/api/flows/run', { slug: 'hero-sprite' })).status, 200);
+  assert.deepEqual(calls[0].launch, { permissionMode: 'plan', effort: 'high', allowedTools: ['Read', 'Grep'] });
   await post('/api/flows', { title: 'Hub one', target: 'hub', prompt: 'Hub work' });
   await post('/api/flows', { title: 'Project one', target: 'project', project: 'Tattoo', prompt: 'Project work' });
   assert.equal((await post('/api/flows/run', { slug: 'hub-one' })).status, 200);

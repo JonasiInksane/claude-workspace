@@ -27,7 +27,7 @@ check `knowledge/INDEX.md`, grep, then open only what the task needs.
 | A repeatable procedure | a library skill (`library/skills/<name>/`) or a pipeline (`pipelines/`) | After a library change, `node tools/install-library.mjs` |
 | A deliverable (status, audit, plan, research, playtest) | `reports/YYYY-MM-DD_slug/report.md` | `node tools/register-report.mjs --folder reports/<id> ...` |
 | Raw material (links, screenshots, PDFs, notes) | `inbox/` | `/inbox-triage` files it later |
-| Code | `projects/<name>/` | `/new-project`; each project is its own git repo |
+| Code | `projects/<name>/` | `/new-project`; each project is its own git repo, listed with its URL in `projects/repos.json` (`node tools/projects.mjs`, or the app's Repositories card) so other PCs can clone it |
 | A reusable prompt with reference images (a flow) | `flows/<flow>.md`, images in `inbox/attachments/_flows/<flow>/` | Workspace app, Flows view; format in `flows/README.md` |
 | A specialist agent for one project (own memory, own images) | `projects/<name>/.claude/agents/<agent>.md` | `node tools/new-agent.mjs <project> <agent> --role "..."`; start it with `node tools/agent-session.mjs <project> <agent>` |
 

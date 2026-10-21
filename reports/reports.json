@@ -72,6 +72,23 @@
           "path": "reports/2026-10-21_concept-art-to-3d-assets/report.md"
         }
       ]
+    },
+    {
+      "id": "2026-10-21_game-dev-asset-pipeline-audit",
+      "title": "game-dev asset pipeline audit",
+      "project": "game-dev",
+      "type": "audit",
+      "status": "active",
+      "created": "2026-10-21",
+      "updated": "2026-10-21",
+      "folder": "reports/2026-10-21_game-dev-asset-pipeline-audit",
+      "summary": "Scripted core is solid; human gates have no UI and the flows were never run live. Next: a pilot asset, then an Assets view in the app.",
+      "steps": [
+        {
+          "name": "Report",
+          "path": "reports/2026-10-21_game-dev-asset-pipeline-audit/report.md"
+        }
+      ]
     }
   ]
 }

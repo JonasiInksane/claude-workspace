@@ -1,0 +1,14 @@
+{
+  "repos": [
+    {
+      "name": "tattoogenda",
+      "url": "https://github.com/Tattoogenda/tattoogenda.git",
+      "requires": []
+    },
+    {
+      "name": "game-dev",
+      "url": "https://github.com/JonasiInksane/game-dev.git",
+      "requires": ["git-lfs", "blender-5.2"]
+    }
+  ]
+}

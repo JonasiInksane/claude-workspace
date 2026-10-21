@@ -7,6 +7,7 @@ inbox/**
 # --- Projects are their own git repos. Keep only the README.
 projects/*
 !projects/README.md
+!projects/repos.json
 
 # --- Secrets. .env.example (names only) stays tracked.
 .env

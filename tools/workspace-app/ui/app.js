@@ -2,7 +2,7 @@
 // never as HTML: names, descriptions and file names come from repos and the inbox.
 
 const $ = sel => document.querySelector(sel);
-const VIEWS = ['home', 'projects', 'images'];
+const VIEWS = ['home', 'flows', 'tools', 'projects', 'images'];
 const MAX_UPLOAD = 25 * 1024 * 1024;
 
 let state = null;
@@ -115,10 +115,12 @@ function setTarget(t) {
   imageTarget = t;
   try { localStorage.setItem('imageTarget', JSON.stringify(t)); } catch { /* private mode */ }
 }
-const targetKey = t => (t.hub ? 'hub' : `p:${t.project}/${t.agent}`);
-const targetParams = t => (t.hub ? { hub: '1' } : { project: t.project, agent: t.agent });
+// A target is { hub: true }, { project, agent } (agent may be '_shared') or { flow, title }.
+const targetKey = t => (t.hub ? 'hub' : t.flow ? `f:${t.flow}` : `p:${t.project}/${t.agent}`);
+const targetParams = t => (t.hub ? { hub: '1' } : t.flow ? { flow: t.flow } : { project: t.project, agent: t.agent });
 function targetLabel(t) {
   if (t.hub) return 'Hub';
+  if (t.flow) return `flow ${t.title || t.flow}`;
   return `${t.project} · ${t.agent === '_shared' ? 'shared' : t.agent}`;
 }
 function allTargets() {
@@ -133,18 +135,35 @@ function allTargets() {
 // ---------------------------------------------------------------- dialog
 
 const dialog = $('#dialog');
+// A dialog with unsaved changes sets this; it returns false to stay open.
+let closeGuard = null;
+// A dialog that takes dropped or pasted images (the flow editor) sets this.
+let dialogUpload = null;
+function closeDialog() {
+  if (closeGuard && !closeGuard()) return;
+  dialog.close();
+}
+dialog.addEventListener('close', () => { closeGuard = null; dialogUpload = null; });
+// Esc with unsaved changes: handled on keydown, because Edge may make the `cancel` event
+// uncancelable (no user activation since the last Esc) and then close anyway.
+dialog.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && closeGuard) { e.preventDefault(); closeDialog(); }
+});
+dialog.addEventListener('cancel', e => { if (closeGuard && !closeGuard()) e.preventDefault(); });
 // Close on a click on the backdrop, but not when a drag (text selection) started inside.
 let downOnBackdrop = false;
 dialog.addEventListener('pointerdown', e => { downOnBackdrop = e.target === dialog; });
 dialog.addEventListener('click', e => {
-  if (e.target === dialog && downOnBackdrop) dialog.close();
+  if (e.target === dialog && downOnBackdrop) closeDialog();
   downOnBackdrop = false;
 });
-function openDialog(title, body, { wide = false, actions = [] } = {}) {
+function openDialog(title, body, { wide = false, actions = [], guard = null, upload = null } = {}) {
+  closeGuard = guard;
+  dialogUpload = upload;
   dialog.className = wide ? 'wide' : '';
   dialog.replaceChildren(
     h('div', { class: 'card-head' }, h('h3', {}, title),
-      h('button', { class: 'icon-btn', 'aria-label': 'Close', on: { click: () => dialog.close() } }, '✕')),
+      h('button', { class: 'icon-btn', 'aria-label': 'Close', on: { click: closeDialog } }, '✕')),
     h('div', { class: 'card-body' }, body),
     actions.length ? h('div', { class: 'card-foot dialog-actions' }, actions) : null,
   );
@@ -167,6 +186,7 @@ function render() {
   $('#rootPath').textContent = state.root.split(/[\\/]/).pop();
   $('#rootPath').title = state.root;
   $('#countProjects').textContent = state.projects.length || '';
+  $('#countFlows').textContent = state.flows.length || '';
   const missing = [];
   if (!state.tools.claude) missing.push('Claude Code not found');
   if (!state.tools.wt) missing.push('no Windows Terminal (new windows instead)');
@@ -175,7 +195,7 @@ function render() {
   // Re-rendering replaces the view; keep the reader's place (show() scrolls to the top itself).
   const main = $('main');
   const top = main.scrollTop;
-  ({ home: renderHome, projects: renderProjects, images: renderImages })[view]();
+  ({ home: renderHome, flows: renderFlows, tools: renderTools, projects: renderProjects, images: renderImages })[view]();
   main.scrollTop = top;
 }
 
@@ -244,6 +264,7 @@ function renderHome() {
     h('div', { class: 'stats' },
       stat(`${s.inbox.total}${s.inbox.truncated ? '+' : ''}`, 'inbox items waiting', () => $('#inboxCard').scrollIntoView({ behavior: 'smooth' })),
       stat(libFiles, 'agent images', () => show('images')),
+      stat(s.flows.length, 'flows', () => show('flows')),
       stat(s.reports.length, 'active reports', () => reportsCard.scrollIntoView({ behavior: 'smooth' })),
       stat(s.projects.length, 'projects', () => show('projects'))),
     h('div', { class: 'grid2' }, inboxCard, h('div', { class: 'stack' }, reportsCard, projectsCard)),
@@ -251,9 +272,10 @@ function renderHome() {
 }
 
 function agentRow(p, a) {
-  const usable = a.valid && a.isolated;
+  const usable = a.valid && a.isolated && !a.duplicate;
   const why = !a.valid ? 'Unusable name (not kebab-case or reserved). Rename it in its agent file.'
-    : !a.isolated ? 'No "memory: project" in its agent file, so it has no memory of its own.' : '';
+    : a.duplicate ? 'More than one agent file uses this name, so they would share one memory. Rename one.'
+      : !a.isolated ? 'No "memory: project" in its agent file, so it has no memory of its own.' : '';
   return h('li', { class: `agent${usable ? '' : ' disabled'}` },
     h('div', { class: 'agent-name' }, a.name,
       a.isolated ? h('span', { class: 'badge violet', title: `.claude/agent-memory/${a.name}/` }, `memory · ${plural(a.memoryFiles, 'file')}`) : null,
@@ -265,6 +287,7 @@ function agentRow(p, a) {
         title: 'Opens a terminal with only this agent\'s memory and images',
         on: { click: () => launch({ kind: 'agent', project: p.name, agent: a.name }) },
       }, 'Start'),
+      h('button', { class: 'btn small', disabled: !a.valid, title: 'Role, description, model and instructions', on: { click: () => editAgentDialog(p, a) } }, 'Edit'),
       h('button', { class: 'btn small', disabled: !a.isolated || !a.valid, on: { click: () => memoryDialog(p.name, a.name) } }, 'Memory'),
       h('button', { class: 'btn small', disabled: !a.valid, on: { click: () => { setTarget({ project: p.name, agent: a.name }); show('images'); } } }, 'Images')));
 }
@@ -281,6 +304,18 @@ function projectCard(p) {
           h('button', { class: 'btn small', on: { click: () => { setTarget({ project: p.name, agent: '_shared' }); show('images'); } } }, 'Images'))))
     : h('div', { class: 'empty' }, h('b', {}, 'No agents yet'),
       'Add a specialist such as ', h('code', {}, 'asset-builder'), '. Each agent keeps its own memory and image folder.');
+  const archived = p.archived.length
+    ? h('details', { class: 'archived' },
+      h('summary', {}, `Archived agents (${p.archived.length})`),
+      h('ul', { class: 'agents' }, p.archived.map(x => h('li', { class: 'agent' },
+        h('div', { class: 'agent-name' }, x.name || x.archivedAs),
+        h('div', { class: 'agent-desc' }, x.valid ? x.description : `No usable name in .claude/agents-archived/${x.archivedAs}`),
+        h('div', { class: 'row-actions' }, h('button', {
+          class: 'btn small', disabled: !x.valid,
+          title: 'Moves its file back to .claude/agents/; its memory and images are still there',
+          on: { click: () => act(api('/api/agents/restore', { method: 'POST', body: { project: p.name, archivedAs: x.archivedAs } })).then(refresh) },
+        }, 'Restore'))))))
+    : null;
   return h('div', { class: 'card project' },
     h('div', { class: 'card-head' },
       h('div', { class: 'project-title' }, h('h3', {}, p.name), h('span', { class: 'badge blue' }, p.label),
@@ -288,12 +323,89 @@ function projectCard(p) {
       h('div', { class: 'row-actions' },
         h('button', { class: 'btn primary small', disabled: !canLaunch, title: hint, on: { click: () => launch({ kind: 'project', project: p.name }) } }, 'Start Claude'),
         h('button', { class: 'btn small', disabled: !canLaunch, title: hint || 'claude -c in this project', on: { click: () => launch({ kind: 'project', project: p.name, continueLast: true }) } }, 'Continue'),
+        p.hasClaudeMd ? null : h('button', {
+          class: 'btn small', disabled: !canLaunch, title: hint || 'Runs /onboard-project there: maps the repo and writes its CLAUDE.md',
+          on: { click: () => skillDialog(skillById('onboard-project'), { project: p.name }) },
+        }, 'Onboard'),
         h('button', { class: 'btn small', on: { click: () => openPlace({ place: 'project', project: p.name }) } }, 'Folder'),
         state.tools.editor ? h('button', { class: 'btn small', on: { click: () => openPlace({ place: 'project', project: p.name, with: 'editor' }) } }, state.tools.editor) : null)),
     h('div', { class: 'card-body' },
       h('div', { class: 'section-label' }, h('span', {}, `Agents (${p.agents.length})`),
         h('button', { class: 'btn small', on: { click: () => newAgentDialog(p) } }, '+ New agent')),
-      agents));
+      agents, archived));
+}
+
+// The whole agent file in a text box: the frontmatter (name, description, memory, model) and
+// the instructions below it. The server refuses a rename and a save over newer changes.
+async function editAgentDialog(p, a) {
+  const ref = { project: p.name, agent: a.name, file: a.file };
+  let f;
+  try { f = await api(`/api/agent-file?${qs(ref)}`); } catch (e) { toast(e.message, true); return; }
+  const area = h('textarea', { class: 'code-edit', spellcheck: 'false', 'aria-label': `${a.name} agent file` });
+  area.value = f.text;
+  const original = area.value; // the text box turns CRLF into LF; compare with what it holds
+  const dirty = () => area.value !== original;
+  const error = h('div', { class: 'form-error', hidden: true });
+  const save = h('button', { class: 'btn primary' }, 'Save');
+  const doSave = async () => {
+    if (save.disabled) return; // Ctrl+S while a save is running
+    save.disabled = true;
+    error.hidden = true;
+    try {
+      const r = await api('/api/agent-file', { method: 'POST', body: { ...ref, text: area.value, hash: f.hash } });
+      closeGuard = null;
+      dialog.close();
+      toast(r.message);
+      for (const w of r.warnings || []) toast(w, true);
+      refresh();
+    } catch (e) {
+      error.textContent = e.message;
+      error.hidden = false;
+    } finally {
+      save.disabled = false;
+    }
+  };
+  save.addEventListener('click', doSave);
+  area.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); doSave(); }
+  });
+  const archive = h('button', {
+    class: 'btn danger push-left',
+    on: { click: () => { if (!dirty() || confirm(`Discard your changes to ${a.name}?`)) archiveDialog(p, a); } },
+  }, 'Archive…');
+  openDialog(`Edit ${a.name}`, h('div', {},
+    h('p', { class: 'target-path mono' }, f.path),
+    area,
+    h('p', { class: 'muted hint' },
+      'Between the --- lines: ', h('code', {}, 'description'), ' (when Claude hands work to it), ',
+      h('code', {}, 'memory: project'), ' (its own memory), ', h('code', {}, 'model'), ' (inherit, sonnet, opus, haiku, fable or a full model ID) and optional ',
+      h('code', {}, 'tools'), '. Below: its instructions. The name stays fixed. Ctrl+S saves.'),
+    error), {
+    wide: true,
+    guard: () => !dirty() || confirm(`Discard your changes to ${a.name}?`),
+    actions: [
+      archive,
+      state.tools.editor ? h('button', { class: 'btn', on: { click: () => openPlace({ place: 'agent', ...ref, with: 'editor' }) } }, `Open in ${state.tools.editor}`) : null,
+      h('button', { class: 'btn', on: { click: closeDialog } }, 'Cancel'),
+      save,
+    ].filter(Boolean),
+  });
+  area.focus();
+}
+
+function archiveDialog(p, a) {
+  const body = { project: p.name, agent: a.name, file: a.file };
+  openDialog(`Archive ${a.name}?`, h('div', {},
+    h('p', {}, 'Its file moves to ', h('code', {}, '.claude/agents-archived/'), ', so Claude no longer uses it.'),
+    h('p', { class: 'muted' }, 'Its memory and images stay where they are. Restore (under the agents list) brings it back with both.')), {
+    actions: [
+      h('button', { class: 'btn', on: { click: closeDialog } }, 'Cancel'),
+      h('button', {
+        class: 'btn primary',
+        on: { click: async () => { dialog.close(); await act(api('/api/agents/archive', { method: 'POST', body })); refresh(); } },
+      }, 'Archive'),
+    ],
+  });
 }
 
 function renderProjects() {
@@ -306,6 +418,415 @@ function renderProjects() {
     return;
   }
   $('#view-projects').replaceChildren(head, h('div', { class: 'stack' }, state.projects.map(projectCard)));
+}
+
+// ---------------------------------------------------------------- flows
+
+// Where a flow runs, as one select value: hub, project:<name> or agent:<project>/<agent>.
+const flowTargetValue = f => (f.target === 'hub' ? 'hub' : f.target === 'project' ? `project:${f.project}` : `agent:${f.project}/${f.agent}`);
+function flowTargetLabel(f) {
+  if (f.target === 'hub') return 'Hub';
+  return f.target === 'project' ? f.project : `${f.project} · ${f.agent}`;
+}
+function parseTargetValue(v) {
+  if (v === 'hub') return { target: 'hub', project: '', agent: '' };
+  if (v.startsWith('project:')) return { target: 'project', project: v.slice(8), agent: '' };
+  const rest = v.slice(6);
+  const i = rest.lastIndexOf('/');
+  return { target: 'agent', project: rest.slice(0, i), agent: rest.slice(i + 1) };
+}
+
+function targetSelect(current) {
+  const select = h('select', {},
+    h('option', { value: 'hub' }, 'Hub: Claude in the workspace'),
+    state.projects.filter(p => p.launchable).map(p => h('optgroup', { label: p.name },
+      h('option', { value: `project:${p.name}` }, `${p.name}: project session`),
+      p.agents.filter(a => a.valid && a.isolated && !a.duplicate)
+        .map(a => h('option', { value: `agent:${p.name}/${a.name}` }, `${p.name}: ${a.name} (agent, own memory and images)`)))));
+  if (current) {
+    const v = flowTargetValue(current);
+    if (![...select.options].some(o => o.value === v)) select.prepend(h('option', { value: v }, `${flowTargetLabel(current)} (not available now)`));
+    select.value = v;
+  }
+  return select;
+}
+
+// "plan mode · effort high · model opus · pre-approved: Read, Grep", or '' for all defaults.
+function launchSummary(launch = {}) {
+  return [
+    launch.permissionMode && `${launch.permissionMode} mode`,
+    launch.effort && `effort ${launch.effort}`,
+    launch.model && `model ${launch.model}`,
+    launch.allowedTools && launch.allowedTools.length && `pre-approved: ${launch.allowedTools.join(', ')}`,
+  ].filter(Boolean).join(' · ');
+}
+
+// One image in the flow editor: its run label, its file name and an editable caption.
+function flowImageTile(slug, img, i) {
+  const caption = h('input', {
+    class: 'caption', maxlength: 200, autocomplete: 'off', placeholder: 'What it shows (optional)', 'aria-label': `What Image ${i + 1} shows`,
+  });
+  caption.value = img.caption || '';
+  caption.addEventListener('change', () => {
+    act(api('/api/flows/caption', { method: 'POST', body: { slug, image: img.name, caption: caption.value } }));
+  });
+  return h('div', { class: 'tile' },
+    h('button', { class: 'pic', title: img.name, on: { click: () => window.open(`/img?${qs({ path: img.path })}`, '_blank') } },
+      h('img', { src: `/img?${qs({ path: img.path })}`, alt: img.name, loading: 'lazy' })),
+    h('div', { class: 'meta' }, h('b', {}, `Image ${i + 1}`), h('span', { title: img.name }, img.name)),
+    caption);
+}
+
+async function loadFlowThumbs(f, box) {
+  try {
+    const r = await api(`/api/images?${qs({ flow: f.slug })}`);
+    box.replaceChildren(...r.images.slice(0, 6).map(img => h('img', { src: `/img?${qs({ path: img.path })}`, alt: img.name, title: img.name, loading: 'lazy' })));
+  } catch { /* thumbnails are a nicety */ }
+}
+
+function flowCard(f) {
+  const thumbs = h('div', { class: 'flow-thumbs' });
+  if (f.images) loadFlowThumbs(f, thumbs);
+  const badge = f.target === 'agent' ? 'violet' : f.target === 'project' ? 'blue' : '';
+  return h('div', { class: 'card flow' },
+    h('div', { class: 'card-head' },
+      h('div', { class: 'project-title' }, h('h3', {}, f.title || f.slug), h('span', { class: `badge ${badge}` }, flowTargetLabel(f))),
+      h('div', { class: 'row-actions' },
+        h('button', { class: 'btn primary small', disabled: !!f.error || !state.tools.claude, on: { click: () => runFlowDialog(f) } }, 'Run…'),
+        h('button', { class: 'btn small', on: { click: () => flowDialog(f.slug) } }, 'Edit'))),
+    h('div', { class: 'card-body' },
+      f.error ? h('div', { class: 'form-error' }, `Can't run: ${f.error}. Edit it to pick another target.`) : null,
+      f.description ? h('p', { class: 'flow-desc' }, f.description) : null,
+      h('div', { class: 'muted small-text' }, f.images ? plural(f.images, 'reference image') : 'No images', ' · ', h('code', {}, `flows/${f.slug}.md`)),
+      launchSummary(f.launch) ? h('div', { class: 'muted small-text' }, `Starts with ${launchSummary(f.launch)}`) : null,
+      thumbs));
+}
+
+function renderFlows() {
+  const archived = state.archivedFlows.length
+    ? h('details', { class: 'archived' },
+      h('summary', {}, `Archived flows (${state.archivedFlows.length})`),
+      h('ul', { class: 'list' }, state.archivedFlows.map(x => h('li', {},
+        h('div', { class: 'main' }, h('div', { class: 'title' }, x.title), h('div', { class: 'sub' }, `flows/_archived/${x.archivedAs}`)),
+        h('button', {
+          class: 'btn small',
+          on: { click: () => act(api('/api/flows/restore', { method: 'POST', body: { archivedAs: x.archivedAs } })).then(refresh) },
+        }, 'Restore')))))
+    : null;
+  $('#view-flows').replaceChildren(
+    h('div', { class: 'view-head' },
+      h('div', {}, h('h2', {}, 'Flows'),
+        h('p', {}, 'A tuned prompt plus its reference images. Run starts Claude with both, in the hub, a project or one agent.')),
+      h('button', { class: 'btn primary', on: { click: () => flowDialog('') } }, '+ New flow')),
+    state.flows.length
+      ? h('div', { class: 'grid2' }, state.flows.map(flowCard))
+      : h('div', { class: 'card' }, h('div', { class: 'empty' }, h('b', {}, 'No flows yet'),
+        'Make one for work you repeat: a prompt you have tuned, plus the images that go with it.')),
+    archived || '');
+}
+
+// Create (slug '') or edit a flow. A new flow reopens in edit mode, where images can be added.
+async function flowDialog(slug) {
+  let f = { title: '', description: '', target: 'hub', project: '', agent: '', prompt: '', hash: '' };
+  if (slug) {
+    try { f = await api(`/api/flow?${qs({ slug })}`); } catch (e) { toast(e.message, true); return; }
+  }
+  const title = h('input', { required: true, maxlength: 120, autocomplete: 'off', placeholder: 'Hero sprite from a sketch' });
+  const description = h('input', { maxlength: 300, autocomplete: 'off', placeholder: 'Optional: what it is for, shown on its card' });
+  const target = targetSelect(slug ? f : null);
+  const prompt = h('textarea', {
+    class: 'code-edit prompt-edit', 'aria-label': 'Prompt',
+    placeholder: 'Write it as you would type it to Claude: the goal, the constraints, what done looks like.',
+  });
+  title.value = f.title;
+  description.value = f.description;
+  prompt.value = f.prompt;
+  // How the session starts (flags on the claude command; empty = the user's own default).
+  const mode = h('select', {}, [
+    ['', 'Your default'], ['plan', 'Plan: reads and proposes, changes nothing'], ['acceptEdits', 'Accept edits: edits files without asking'],
+    ['manual', 'Manual: asks before edits and commands'], ['auto', 'Auto'],
+  ].map(([value, label]) => h('option', { value }, label)));
+  const model = h('input', { list: 'flowModels', maxlength: 80, autocomplete: 'off', spellcheck: 'false', placeholder: 'Your default (or opus, sonnet, haiku, fable)' });
+  const effort = h('select', {}, [['', 'Your default'], ...['low', 'medium', 'high', 'xhigh', 'max'].map(e => [e, e])].map(([value, label]) => h('option', { value }, label)));
+  const tools = h('input', { maxlength: 500, autocomplete: 'off', spellcheck: 'false', placeholder: 'Read, Grep, Bash(npm test:*)' });
+  mode.value = f.permissionMode || '';
+  model.value = f.model || '';
+  effort.value = f.effort || '';
+  tools.value = f.allowedTools || '';
+  const launchSet = !!(f.permissionMode || f.model || f.effort || f.allowedTools);
+  const launchBox = h('details', { class: 'launch', open: launchSet },
+    h('summary', {}, 'How the session starts', launchSet ? '' : h('span', { class: 'muted' }, ' (your defaults)')),
+    h('div', { class: 'two-col' },
+      h('label', {}, 'Permission mode', h('small', {}, 'Plan suits flows that should explore and propose first.'), mode),
+      h('label', {}, 'Effort', h('small', {}, 'How hard Claude thinks; the first control to change.'), effort),
+      h('label', {}, 'Model', h('small', {}, 'An alias or a full model name.'), model,
+        h('datalist', { id: 'flowModels' }, ['opus', 'sonnet', 'haiku', 'fable'].map(m => h('option', { value: m })))),
+      h('label', {}, 'Pre-approved tools', h('small', {}, 'Allowed without asking, e.g. Read, Bash(npm test:*).'), tools)));
+  const snapshot = () => JSON.stringify([title.value, description.value, target.value, prompt.value, mode.value, model.value, effort.value, tools.value]);
+  const initial = snapshot();
+  const dirty = () => snapshot() !== initial;
+  const error = h('div', { class: 'form-error', hidden: true });
+  const save = h('button', { class: 'btn primary' }, slug ? 'Save' : 'Create flow');
+
+  let upload = null;
+  let images;
+  if (slug) {
+    const gallery = h('div', { class: 'gallery small' });
+    const skipped = h('p', { class: 'form-error', hidden: true });
+    // In run order, labeled the way the prompt sees them ("Image 1"), each with a caption.
+    const reload = async () => {
+      try {
+        const r = await api(`/api/flow?${qs({ slug })}`);
+        gallery.replaceChildren(...(r.images.length ? r.images.map((img, i) => flowImageTile(slug, img, i)) : [h('p', { class: 'muted' }, 'No images yet.')]));
+        skipped.textContent = r.skipped.length
+          ? `Not passed to runs: ${r.skipped.join(', ')}. Claude Code doesn't read BMP; drop the file again and the app saves it as PNG.` : '';
+        skipped.hidden = !r.skipped.length;
+      } catch (e) { gallery.replaceChildren(h('p', { class: 'muted' }, e.message)); }
+    };
+    upload = async (files, pasted) => { await uploadFiles(files, pasted, { flow: slug, title: f.title }); reload(); };
+    const input = h('input', {
+      type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp,image/bmp', multiple: true, hidden: true,
+      on: { change: e => { const files = [...e.target.files]; e.target.value = ''; upload(files, false); } },
+    });
+    images = h('div', {},
+      h('div', { class: 'section-label' }, h('span', {}, 'Reference images'),
+        h('button', { class: 'btn small', on: { click: () => openPlace({ place: 'images', flow: slug }) } }, 'Open folder')),
+      h('div', {
+        class: 'drop compact', id: 'dialogDrop', tabindex: '0', role: 'button', 'aria-label': 'Add images to this flow',
+        on: { click: () => input.click(), keydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } } },
+      }, h('b', {}, 'Drop images here, paste with Ctrl+V, or click to choose'),
+      h('span', {}, `Saved right away in inbox/attachments/_flows/${slug}/ (BMP as PNG). A run lists them first, as Image 1, Image 2 ..., so the prompt can refer to them.`)),
+      input, skipped, gallery);
+    reload();
+  } else {
+    images = h('p', { class: 'muted hint' }, 'After you create the flow, you can add reference images to it here.');
+  }
+
+  const doSave = async () => {
+    if (save.disabled) return; // Ctrl+S while a save is running, or after a create
+    save.disabled = true;
+    error.hidden = true;
+    try {
+      const body = {
+        slug, hash: f.hash, title: title.value, description: description.value, prompt: prompt.value, ...parseTargetValue(target.value),
+        permissionMode: mode.value, model: model.value.trim(), effort: effort.value, allowedTools: tools.value,
+      };
+      const r = await api('/api/flows', { method: 'POST', body });
+      closeGuard = null;
+      toast(r.message);
+      await refresh();
+      if (slug) dialog.close();
+      else flowDialog(r.slug); // Save stays disabled: this dialog is done
+    } catch (e) {
+      error.textContent = e.message;
+      error.hidden = false;
+      save.disabled = false;
+    }
+  };
+  save.addEventListener('click', doSave);
+  const body = h('div', { class: 'form flow-form' },
+    h('div', { class: 'two-col' },
+      h('label', {}, 'Title', title),
+      h('label', {}, 'Runs in', h('small', {}, 'An agent starts with its own memory and images.'), target)),
+    h('label', {}, 'Description', description),
+    launchBox,
+    h('label', {}, 'Prompt',
+      h('small', {}, 'Say the goal, why it matters, the scope, what done looks like and the output you want. ' +
+        'The images go above it and run notes below it when you run it. Ctrl+S saves.'), prompt),
+    error,
+    images);
+  body.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); doSave(); }
+  });
+  const archive = slug ? h('button', {
+    class: 'btn danger push-left',
+    on: { click: () => { if (!dirty() || confirm('Discard your changes to this flow?')) archiveFlowDialog(slug, f.title); } },
+  }, 'Archive…') : null;
+  openDialog(slug ? `Edit flow: ${f.title}` : 'New flow', body, {
+    wide: true,
+    guard: () => !dirty() || confirm('Discard your changes to this flow?'),
+    upload,
+    actions: [archive, h('button', { class: 'btn', on: { click: closeDialog } }, 'Cancel'), save].filter(Boolean),
+  });
+  (slug ? prompt : title).focus();
+}
+
+function archiveFlowDialog(slug, title) {
+  openDialog(`Archive ${title}?`, h('div', {},
+    h('p', {}, 'Its file moves to ', h('code', {}, 'flows/_archived/'), ', so it leaves this list.'),
+    h('p', { class: 'muted' }, 'Its images stay where they are. Restore (under the flows) brings it back with them.')), {
+    actions: [
+      h('button', { class: 'btn', on: { click: closeDialog } }, 'Cancel'),
+      h('button', {
+        class: 'btn primary',
+        on: { click: async () => { dialog.close(); await act(api('/api/flows/archive', { method: 'POST', body: { slug } })); refresh(); } },
+      }, 'Archive'),
+    ],
+  });
+}
+
+// Shows the exact prompt Claude will start with (built by the server), with optional notes.
+function runFlowDialog(f) {
+  const notes = h('textarea', { maxlength: 2000, placeholder: 'Optional: what is different this time, for example "the hero, walking left"' });
+  const pre = h('pre', { class: 'output' }, 'Loading…');
+  const settings = h('p', { class: 'muted small-text' });
+  let timer = 0;
+  const preview = async () => {
+    try {
+      const r = await api('/api/flows/run', { method: 'POST', body: { slug: f.slug, notes: notes.value, preview: true } });
+      pre.textContent = r.prompt;
+      settings.textContent = `Session: ${launchSummary(r.launch) || 'your default mode, model and effort'}.`;
+    } catch (e) { pre.textContent = e.message; }
+  };
+  notes.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(preview, 350); });
+  const start = h('button', { class: 'btn primary' }, `Start in ${flowTargetLabel(f)}`);
+  start.addEventListener('click', async () => {
+    start.disabled = true;
+    const r = await act(api('/api/flows/run', { method: 'POST', body: { slug: f.slug, notes: notes.value } }));
+    start.disabled = false;
+    if (r) dialog.close();
+  });
+  openDialog(`Run: ${f.title || f.slug}`, h('div', { class: 'form' },
+    h('label', {}, 'Notes for this run', h('small', {}, 'Added below the prompt. Leave empty to run the flow as it is.'), notes),
+    h('div', {}, h('div', { class: 'section-label' }, h('span', {}, 'Claude starts with')), settings, pre)), {
+    wide: true,
+    actions: [h('button', { class: 'btn', on: { click: closeDialog } }, 'Cancel'), start],
+  });
+  preview();
+  notes.focus();
+}
+
+// ---------------------------------------------------------------- tools
+
+// A form in the dialog. `controls` are [label, hint, element]; `submit` returns a promise. An
+// error shows inside the form; success closes the dialog and shows the server's message.
+function formDialog(title, intro, controls, submitLabel, submit) {
+  const error = h('div', { class: 'error', hidden: true });
+  const button = h('button', { class: 'btn primary', type: 'submit' }, submitLabel);
+  const form = h('form', {
+    class: 'form',
+    on: {
+      submit: async e => {
+        e.preventDefault();
+        button.disabled = true;
+        error.hidden = true;
+        try {
+          const r = await submit();
+          dialog.close();
+          if (r && r.message) toast(r.message);
+        } catch (x) {
+          error.textContent = x.message;
+          error.hidden = false;
+        } finally {
+          button.disabled = false;
+        }
+      },
+    },
+  },
+  intro ? h('p', { class: 'muted' }, intro) : null,
+  controls.map(([label, hint, el]) => h('label', {}, label, hint ? h('small', {}, hint) : null, el)),
+  error,
+  h('div', { class: 'dialog-actions' },
+    h('button', { class: 'btn', type: 'button', on: { click: () => dialog.close() } }, 'Cancel'), button));
+  openDialog(title, form);
+  const first = form.querySelector('input, textarea, select');
+  if (first) first.focus();
+}
+
+const skillById = id => state.catalog.skills.find(s => s.id === id);
+const startSkill = (id, values) => api('/api/skill', { method: 'POST', body: { id, values } });
+
+function fieldControl(f, skill, preset) {
+  if (f.kind === 'project') {
+    const projects = state.projects.filter(p => skill.where !== 'project' || p.launchable);
+    const el = h('select', { required: true }, projects.map(p => h('option', { value: p.name }, p.name)));
+    if (preset.project) el.value = preset.project;
+    return el;
+  }
+  if (f.kind === 'select') return h('select', {}, f.options.map(([value, label]) => h('option', { value }, label)));
+  if (f.kind === 'date') return h('input', { type: 'date' });
+  if (f.kind === 'textarea') return h('textarea', { required: !!f.required, maxlength: f.max || 200 });
+  return h('input', { required: !!f.required, maxlength: f.max || 200, autocomplete: 'off' });
+}
+
+// No fields: start at once. Otherwise ask for them first. `preset` fills in a project.
+function skillDialog(skill, preset = {}) {
+  if (!skill.fields.length) { act(startSkill(skill.id, {})); return; }
+  const controls = skill.fields.map(f => [f.label, f.hint, fieldControl(f, skill, preset)]);
+  formDialog(`${skill.label} (/${skill.id})`, skill.text, controls,
+    skill.where === 'project' ? 'Start in the project' : 'Start in the hub',
+    () => startSkill(skill.id, Object.fromEntries(skill.fields.map((f, i) => [f.key, controls[i][2].value]))));
+}
+
+// Runs a workspace tool and shows its output. The library shows a preview first, with a
+// button that installs for real.
+async function runCommand(cmd, { preview = false, confirm = false } = {}) {
+  const status = h('span', { class: 'badge' }, 'Running…');
+  const pre = h('pre', { class: 'output' });
+  const install = h('button', { class: 'btn primary', hidden: true, on: { click: () => runCommand(cmd, { confirm: true }) } }, 'Install now');
+  openDialog(preview ? `${cmd.label}: preview` : cmd.label,
+    h('div', {}, h('p', { class: 'target-path mono' }, preview ? `${cmd.command} --dry-run` : cmd.command), status, pre), {
+      wide: true,
+      actions: [install, h('button', { class: 'btn', on: { click: () => dialog.close() } }, 'Close')],
+    });
+  try {
+    const r = await api('/api/run', { method: 'POST', body: { id: cmd.id, preview, confirm } });
+    pre.textContent = r.output.trim() || '(no output)';
+    status.textContent = r.status === 0 ? 'Finished' : `Exit code ${r.status}`;
+    status.className = `badge ${r.status === 0 ? 'ok' : 'warn'}`;
+    if (preview && r.status === 0) install.hidden = false;
+  } catch (e) {
+    status.textContent = 'Failed';
+    status.className = 'badge warn';
+    pre.textContent = e.message;
+  }
+  refresh();
+}
+
+function newProjectDialog() {
+  const name = h('input', { required: true, pattern: '[a-z0-9]+(-[a-z0-9]+)*', placeholder: 'my-app', autocomplete: 'off', spellcheck: 'false' });
+  const type = h('select', {}, state.catalog.projectTypes.map(t => h('option', { value: t }, t === 'nextjs' ? 'Next.js' : 'Game')));
+  const from = h('input', { placeholder: 'https://github.com/you/repo.git', autocomplete: 'off', spellcheck: 'false' });
+  formDialog('New project', 'Runs tools/new-project.mjs in a terminal, so you can follow a clone.', [
+    ['Name', 'Lowercase with dashes. It becomes projects/<name>.', name],
+    ['Template', 'Copies templates/<type>/ into the project. Existing files are never overwritten.', type],
+    ['Git URL', 'Optional: clone this repo instead of starting an empty one.', from],
+  ], 'Create', () => api('/api/projects', { method: 'POST', body: { name: name.value.trim(), type: type.value, from: from.value.trim() } }));
+}
+
+function toolRow(title, text, button) {
+  return h('li', {}, h('div', { class: 'main' }, h('div', { class: 'title' }, title), h('div', { class: 'sub wrap' }, text)), button);
+}
+
+function renderTools() {
+  const c = state.catalog;
+  const skillRow = s => toolRow([s.label, ' ', h('code', {}, `/${s.id}`)], s.text, h('button', {
+    class: 'btn small primary',
+    disabled: !state.tools.claude || (s.fields.some(f => f.kind === 'project') && !state.projects.length),
+    on: { click: () => skillDialog(s) },
+  }, s.fields.length ? 'Start…' : 'Start'));
+  const card = (title, rows, foot) => h('div', { class: 'card' },
+    h('div', { class: 'card-head' }, h('h3', {}, title)),
+    h('div', { class: 'card-body' }, h('ul', { class: 'list' }, rows)),
+    foot ? h('div', { class: 'card-foot' }, foot) : null);
+
+  $('#view-tools').replaceChildren(
+    h('div', { class: 'view-head' }, h('div', {}, h('h2', {}, 'Tools'),
+      h('p', {}, 'Skills open Claude in a new terminal and run the command there. Workspace tools run here and show their output.'))),
+    h('div', { class: 'grid2' },
+      card('Hub skills', c.skills.filter(s => s.where === 'hub').map(skillRow),
+        ['/write-handoff is not here: it sums up the session it runs in, so type it in that session.']),
+      h('div', { class: 'stack' },
+        card('Project skills', c.skills.filter(s => s.where === 'project').map(skillRow),
+          ['Run /onboard-project first in a project without a CLAUDE.md.']),
+        card('Workspace', [
+          toolRow('New project', 'From the Next.js or game template, or cloned from a git URL.',
+            h('button', { class: 'btn small', on: { click: newProjectDialog } }, 'New…')),
+          ...c.commands.map(cmd => toolRow(cmd.label, cmd.text, h('button', {
+            class: 'btn small', on: { click: () => runCommand(cmd, { preview: cmd.preview }) },
+          }, cmd.preview ? 'Preview…' : 'Run'))),
+        ]))),
+  );
 }
 
 function newAgentDialog(p) {
@@ -380,9 +901,10 @@ function lightbox(img) {
   });
 }
 
-function imageTile(img) {
+// zoom: false inside another dialog (the lightbox would replace it).
+function imageTile(img, { zoom = true } = {}) {
   return h('div', { class: 'tile' },
-    h('button', { class: 'pic', title: `${img.name} (${fmtSize(img.size)})`, on: { click: () => lightbox(img) } },
+    h('button', { class: 'pic', title: `${img.name} (${fmtSize(img.size)})`, on: { click: () => (zoom ? lightbox(img) : window.open(`/img?${qs({ path: img.path })}`, '_blank')) } },
       h('img', { src: `/img?${qs({ path: img.path })}`, alt: img.name, loading: 'lazy' })),
     h('div', { class: 'meta' }, h('span', { title: img.name }, img.name),
       h('button', { class: 'icon-btn', title: 'Copy the full path', on: { click: () => copy(img.abs) } }, 'Copy')));
@@ -444,7 +966,7 @@ function renderImages() {
       keydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } },
     },
   }, icon(ICON_UPLOAD), h('b', {}, 'Drop images here, or paste with Ctrl+V'),
-  h('span', {}, `Saved to ${targetLabel(imageTarget)} in today's folder · PNG, JPEG, GIF, WebP or BMP up to 25 MB`));
+  h('span', {}, `Saved to ${targetLabel(imageTarget)} in today's folder · PNG, JPEG, GIF, WebP or BMP (saved as PNG) up to 25 MB`));
   // Same target as last time (a refresh): keep the old gallery until the new one is loaded.
   const gallery = h('div', {}, galleryCache.key === key ? galleryCache.nodes : h('div', { class: 'empty' }, 'Loading…'));
 
@@ -465,8 +987,7 @@ function renderImages() {
   loadGallery(gallery, pathEl);
 }
 
-async function uploadFiles(files, pasted) {
-  const target = imageTarget;
+async function uploadFiles(files, pasted, target = imageTarget) {
   const images = files.filter(f => /^image\/(png|jpeg|gif|webp|bmp)$/.test(f.type) || !f.type);
   if (!images.length) { toast('Only PNG, JPEG, GIF, WebP and BMP images can be uploaded.', true); return; }
   let saved = 0;
@@ -510,9 +1031,18 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) ping
 window.addEventListener('hashchange', () => show(location.hash.slice(1)));
 
 document.addEventListener('paste', e => {
-  if (view !== 'images' || dialog.open) return;
   const files = [...(e.clipboardData ? e.clipboardData.files : [])].filter(f => f.type.startsWith('image/'));
   if (!files.length) return;
+  if (dialog.open) {
+    if (!dialogUpload) return;
+    // Copies from Office apps carry text and a picture: in a text box, paste the text.
+    const inTextBox = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+    if (inTextBox && [...e.clipboardData.types].includes('text/plain')) return;
+    e.preventDefault();
+    dialogUpload(files, true);
+    return;
+  }
+  if (view !== 'images') return;
   e.preventDefault();
   uploadFiles(files, true);
 });
@@ -522,19 +1052,17 @@ const hasFiles = e => !!e.dataTransfer && [...e.dataTransfer.types].includes('Fi
 document.addEventListener('dragover', e => {
   if (!hasFiles(e)) return;
   e.preventDefault();
-  const zone = $('#dropZone');
-  if (zone && view === 'images' && !dialog.open) zone.classList.add('over');
+  const zone = dialog.open ? (dialogUpload ? $('#dialogDrop') : null) : view === 'images' ? $('#dropZone') : null;
+  if (zone) zone.classList.add('over');
 });
-document.addEventListener('dragleave', e => {
-  if (e.relatedTarget === null) { const zone = $('#dropZone'); if (zone) zone.classList.remove('over'); }
-});
+const clearDropZones = () => { for (const z of document.querySelectorAll('.drop.over')) z.classList.remove('over'); };
+document.addEventListener('dragleave', e => { if (e.relatedTarget === null) clearDropZones(); });
 document.addEventListener('drop', e => {
   if (!hasFiles(e)) return;
   e.preventDefault();
-  const zone = $('#dropZone');
-  if (zone) zone.classList.remove('over');
-  if (dialog.open) { toast('Close the dialog first, then drop the files.', true); return; }
-  if (view !== 'images') { toast('Open Images first, then drop the files there.', true); return; }
+  clearDropZones();
+  if (dialog.open && !dialogUpload) { toast('Close the dialog first, then drop the files.', true); return; }
+  if (!dialog.open && view !== 'images') { toast('Open Images (or a flow) first, then drop the files there.', true); return; }
   const files = [];
   let folders = 0;
   for (const item of [...e.dataTransfer.items]) {
@@ -545,7 +1073,9 @@ document.addEventListener('drop', e => {
     if (f) files.push(f);
   }
   if (folders) toast(`${plural(folders, 'folder')} skipped: drop the images themselves.`, true);
-  if (files.length) uploadFiles(files, false);
+  if (!files.length) return;
+  if (dialog.open) dialogUpload(files, false);
+  else uploadFiles(files, false);
 });
 
 // Heartbeat: the server stops itself a few minutes after the last window closes.

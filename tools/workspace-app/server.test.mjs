@@ -1,7 +1,7 @@
 // Tests for tools/workspace-app/server.mjs as a real process: one app per workspace, stale
 // state files, idle shutdown. Each test gets its own TEMP folder, so the real state files in
 // %TEMP%\claude-workspace are never touched, and --no-open keeps windows from opening.
-// Run: node --test "tools/**/*.test.mjs"
+// Run: node tools/run-tests.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';

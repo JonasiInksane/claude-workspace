@@ -17,6 +17,8 @@ Arguments: `$ARGUMENTS`. If a path is given, triage only that item. If empty, tr
 - Also skip `inbox/attachments/<project>/` when `projects/<project>` exists (any letter case;
   linked folders count). Those are agent image libraries (`<project>/<agent>/`,
   `<project>/_shared/`), reference material that stays where it is.
+- Also skip `inbox/attachments/_flows/` (any letter case): each subfolder holds one flow's
+  reference images (`flows/README.md`), which stay where they are.
   `inbox/attachments/_hub/` and dated `inbox/attachments/YYYY-MM-DD/` folders are triage items.
 - The session status block, the navigator and `node tools/check-workspace.mjs` use exactly this
   rule (`tools/lib/inbox.mjs`). The status block's "Inbox: N items" list is the quickest start.

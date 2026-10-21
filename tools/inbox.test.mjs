@@ -1,5 +1,5 @@
 // Tests for tools/lib/inbox.mjs: what counts as a triage item vs an agent image library.
-// Run: node --test "tools/**/*.test.mjs"
+// Run: node tools/run-tests.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
@@ -123,5 +123,17 @@ test('scanInbox skips build-output folders and counts linked project folders', t
 
 test('scanInbox reports a missing inbox without throwing', t => {
   const root = fixture(t);
-  assert.deepEqual(scanInbox(root), { exists: false, items: [], libraries: [], processed: 0, truncated: false });
+  assert.deepEqual(scanInbox(root), { exists: false, items: [], libraries: [], flowImages: 0, processed: 0, truncated: false });
+});
+
+test('flow images are counted on their own, never as triage items', t => {
+  const root = fixture(t);
+  put(root, 'inbox/attachments/_flows/sprite-pass/ref.png');
+  put(root, 'inbox/attachments/_FLOWS/loose.png');
+  put(root, 'inbox/attachments/_hub/2026-10-21/shot.png');
+  assert.deepEqual(classify(['attachments', '_flows', 'x', 'a.png'], new Map()), { kind: 'flow' });
+  const s = scanInbox(root);
+  assert.deepEqual(s.items.map(i => i.path), ['inbox/attachments/_hub/2026-10-21/shot.png']);
+  assert.equal(s.flowImages, 2);
+  assert.deepEqual(s.libraries, []);
 });

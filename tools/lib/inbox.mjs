@@ -6,6 +6,7 @@
 //   inbox/attachments/YYYY-MM-DD/             triage item (older layout, still supported)
 //   inbox/attachments/<project>/<agent>/...   agent image library, NOT a triage item
 //   inbox/attachments/<project>/_shared/...   project image library, NOT a triage item
+//   inbox/attachments/_flows/<flow>/...       a flow's reference images (tools/lib/flows.mjs), NOT a triage item
 //   inbox/_processed/...                      archive, only counted
 //
 // <project> must be an existing folder in projects/. When a project folder goes away, its
@@ -42,10 +43,11 @@ export function projectNameMap(root) {
 }
 
 // What a file at inbox/<parts...> is. `parts` are the path segments below inbox/.
-// Returns { kind: 'item' } or { kind: 'library', project, folder, agent }: `project` is the
-// project's real name, `folder` the attachments folder as spelled on disk, `agent` '' for a
-// file directly in attachments/<project>/.
+// Returns { kind: 'item' }, { kind: 'flow' } or { kind: 'library', project, folder, agent }:
+// `project` is the project's real name, `folder` the attachments folder as spelled on disk,
+// `agent` '' for a file directly in attachments/<project>/.
 export function classify(parts, projects) {
+  if (parts.length >= 3 && parts[0].toLowerCase() === 'attachments' && parts[1].toLowerCase() === '_flows') return { kind: 'flow' };
   if (parts.length >= 3 && parts[0].toLowerCase() === 'attachments') {
     const project = projects.get(parts[1].toLowerCase());
     if (project) return { kind: 'library', project, folder: parts[1], agent: parts.length >= 4 ? parts[2] : '' };
@@ -59,6 +61,7 @@ export function classify(parts, projects) {
 //   libraries  one entry per image library folder: { project, agent, files, latestMs, known, path }
 //              known = the agent is defined in the project (always true for _shared);
 //              path uses the folder names as spelled on disk
+//   flowImages number of files under inbox/attachments/_flows/
 //   processed  number of files in inbox/_processed/
 //   truncated  part of the inbox was not scanned (too deep, or over a limit)
 // Library files have their own, larger limit, so a big image library can't hide triage items.
@@ -66,7 +69,7 @@ export function classify(parts, projects) {
 export function scanInbox(root, limits = {}) {
   const { maxDepth, maxItems, maxLibraryFiles } = { ...LIMITS, ...limits };
   const base = join(root, 'inbox');
-  const out = { exists: false, items: [], libraries: [], processed: 0, truncated: false };
+  const out = { exists: false, items: [], libraries: [], flowImages: 0, processed: 0, truncated: false };
   const top = listDir(base);
   if (top === null) {
     try { statSync(base); } catch { return out; } // no inbox/ folder
@@ -100,6 +103,11 @@ export function scanInbox(root, limits = {}) {
       }
       if (!e.isFile() || lower === 'readme.md') continue;
       const c = classify(next, projects);
+      if (c.kind === 'flow') {
+        if (++libraryFiles > maxLibraryFiles) out.truncated = true;
+        else out.flowImages++;
+        continue;
+      }
       if (c.kind === 'library') {
         if (++libraryFiles > maxLibraryFiles) { out.truncated = true; continue; }
         let mtimeMs = 0;

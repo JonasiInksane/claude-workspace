@@ -7,8 +7,9 @@ skills and agents (`library/`), project templates (`templates/`) and your repos 
 
 Everything is plain Markdown and JSON. Double-click `index.html` to browse it all in a
 navigator with a dashboard (setup builds it; see "The navigator" below). For day-to-day
-control there is also a small **workspace app** (`Workspace App.cmd`): start Claude in
-projects, manage project agents, and drop or paste images (see "The workspace app" below).
+control there is also a small **workspace app** (`Workspace App.cmd`): run saved flows, start
+every skill and tool with a button, start Claude in projects, manage project agents, and drop
+or paste images (see "The workspace app" below).
 
 ## Folder map
 
@@ -31,6 +32,7 @@ claude-workspace/
 ├── pipelines/            how to work: the daily loop and per-type workflows
 ├── library/              global skills and agents, installed to ~/.claude
 ├── templates/            starter files for new Next.js and game projects
+├── flows/                saved prompts for the workspace app's Flows view (images live in the inbox)
 ├── projects/             your repos, each with its own git history (gitignored here)
 └── tools/                Node scripts: navigator, installer, checks, reports, new projects and agents,
                           and the workspace app (tools/workspace-app/)
@@ -150,12 +152,22 @@ outside `projects/` and `inbox/`. Run it after you add or move files by hand.
 ## The workspace app
 
 Double-click **`Workspace App.cmd`** (or the **Claude Workspace** desktop shortcut). The app
-opens in its own window. It has three views:
+opens in its own window. It has five views:
 
-- **Dashboard:** what is waiting in the inbox, agent images, active reports and projects.
-- **Projects:** one card per project with **Start Claude**, **Continue**, **Folder** and
-  your editor. Each project lists its **agents**:
+- **Dashboard:** what is waiting in the inbox, agent images, flows, active reports and projects.
+- **Flows:** saved prompts with reference images. **+ New flow**, then write the prompt, pick
+  where it runs (the hub, a project or one agent), optionally how the session starts (plan
+  mode, model, effort, pre-approved tools), and drop images on it (they become Image 1,
+  Image 2 ..., each with an optional caption). **Run…** shows the exact prompt, takes notes for
+  that run and starts Claude. Format: [flows/README.md](flows/README.md).
+- **Tools:** a button for every hub and project skill (Claude opens in a new terminal and runs
+  it), **New project**, and Check workspace, Run tests, Rebuild navigator and Install library
+  (these run in the app and show their output).
+- **Projects:** one card per project with **Start Claude**, **Continue**, **Folder**, your
+  editor and, without a CLAUDE.md, **Onboard**. Each project lists its **agents**:
   - **Start** opens a terminal tab where that agent sees only its own memory and images.
+  - **Edit** changes its file (description, model, instructions); **Archive…** in there takes
+    it out of use and **Restore** brings it back, with its memory and images.
   - **Memory** shows what it has learned.
   - **+ New agent** creates one.
 - **Images:** choose where images go (the hub, a project's shared folder, or one agent). Then
@@ -183,10 +195,10 @@ node tools/workspace-app/make-shortcut.mjs --remove       # remove the shortcut(
 | `node tools/register-report.mjs --folder reports/<id> ...` | Adds or updates a report in `reports/reports.json` |
 | `node tools/new-project.mjs <name> --type nextjs\|game [--from <url>]` | Creates or clones a project |
 | `node tools/new-agent.mjs <project> <agent> [--role "..."] [--description "..."] [--tools "..."]` | Adds a project agent with its own memory folder and inbox image folder |
-| `node tools/agent-session.mjs <project> <agent> [--print]` | Starts Claude as that agent, seeing only its own memory and images |
+| `node tools/agent-session.mjs <project> <agent> [--print] [--prompt-file <file>]` | Starts Claude as that agent, seeing only its own memory and images (the prompt file is how the workspace app's flows start it) |
 | `node tools/workspace-app/server.mjs [--no-open]` | Runs the workspace app (what `Workspace App.cmd` starts, hidden) |
 | `node tools/workspace-app/make-shortcut.mjs [--start-menu] [--remove]` | Creates or removes the "Claude Workspace" shortcut |
-| `node --test "tools/**/*.test.mjs"` | Runs the tool tests |
+| `node tools/run-tests.mjs [filter]` | Runs the tool tests (any Node version; `filter` picks files by path, e.g. `workspace-app`) |
 
 ## Good to know
 

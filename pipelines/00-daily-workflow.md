@@ -57,7 +57,8 @@ produce ends up. Pipelines 01-03 cover the project work in the middle.
 
 - Drop anything into `inbox/`: a `.md` with links or ideas, PDFs, design notes, playtest notes.
   Screenshots go in `inbox/attachments/_hub/YYYY-MM-DD/`; reference images for one project agent
-  go straight into `inbox/attachments/<project>/<agent>/YYYY-MM-DD/` (not triaged).
+  go straight into `inbox/attachments/<project>/<agent>/YYYY-MM-DD/` (not triaged), and a flow's
+  images into `inbox/attachments/_flows/<flow>/` (the app's Flows view; not triaged).
 - In the hub, run `/inbox-triage`. Claude proposes a filing plan as a table and **waits**.
   After your OK it files each item (knowledge, a project, or a report) and moves the original
   to `inbox/_processed/YYYY-MM-DD/`. Nothing is deleted.
@@ -118,6 +119,7 @@ produce ends up. Pipelines 01-03 cover the project work in the middle.
 |---|---|---|
 | Raw material: links, screenshots, PDFs, notes | `inbox/` (images in `inbox/attachments/_hub/YYYY-MM-DD/`) | `/inbox-triage` later |
 | Reference images for one project agent | `inbox/attachments/<project>/<agent>/YYYY-MM-DD/` | The workspace app's Images view; not triaged |
+| A tuned prompt plus its images, to run again (a flow) | `flows/<flow>.md`, images in `inbox/attachments/_flows/<flow>/` | The workspace app's Flows view; not triaged |
 | Who you are, preferences, goals, stack | `context/*.md` (always loaded, under 40 lines each) | Edit by hand |
 | A lesson, gotcha or how-to | `knowledge/<area>/<name>.md` + `knowledge/INDEX.md` | `/capture-lesson` |
 | A decision and why | `knowledge/decisions/YYYY-MM-DD-topic.md` | `/capture-lesson` |

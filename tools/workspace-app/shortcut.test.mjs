@@ -1,5 +1,5 @@
 // Tests for make-icon.mjs (a valid multi-size ICO) and make-shortcut.mjs (the PowerShell it
-// runs). Nothing is written to the Desktop here. Run: node --test "tools/**/*.test.mjs"
+// runs). Nothing is written to the Desktop here. Run: node tools/run-tests.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';

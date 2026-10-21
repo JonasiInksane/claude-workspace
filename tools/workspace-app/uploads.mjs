@@ -3,10 +3,14 @@
 // A target is where images go:
 //   { kind: 'hub' }                                inbox/attachments/_hub/
 //   { kind: 'agent', project, agent }              inbox/attachments/<project>/<agent>/   (agent = '_shared' allowed)
-// Uploads land in a dated subfolder (YYYY-MM-DD) and never overwrite an existing file.
+//   { kind: 'flow', flow }                         inbox/attachments/_flows/<flow>/      (no dated subfolders)
+// Uploads land in a dated subfolder (YYYY-MM-DD), except for flows, and never overwrite an
+// existing file.
 import { mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { HUB_DIR, SHARED_DIR, imagesDir, listAgents, resolveProject, sharedImagesDir } from '../lib/agents.mjs';
+import { flowImagesDir, getFlow } from '../lib/flows.mjs';
+import { bmpToPng } from './bmp.mjs';
 
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 // SVG is left out on purpose: it can carry scripts.
@@ -54,9 +58,14 @@ export function isInside(parent, child) {
   return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
-// Turns { project, agent } or { hub: true } from a request into a checked target with its folder.
-// Returns { target, dir, label } or { error }.
+// Turns { project, agent }, { flow } or { hub: true } from a request into a checked target with
+// its folder. Returns { target, dir, label, flat } or { error }; `flat`: no dated subfolders.
 export function resolveTarget(root, query) {
+  if (query.flow) {
+    const flow = getFlow(root, String(query.flow));
+    if (!flow) return { error: `there is no flow "${query.flow}"` };
+    return { target: { kind: 'flow', flow: flow.slug }, dir: flowImagesDir(root, flow.slug), label: `flow ${flow.title || flow.slug}`, flat: true };
+  }
   if (query.hub === '1' || query.hub === true || (!query.project && !query.agent)) {
     return { target: { kind: 'hub' }, dir: join(attachmentsRoot(root), HUB_DIR), label: 'Hub' };
   }
@@ -75,15 +84,20 @@ export function resolveTarget(root, query) {
   return { target: { kind: 'agent', project, agent }, dir, label: `${project} / ${agent === SHARED_DIR ? 'shared' : agent}` };
 }
 
-// Writes the image into <dir>/<date>/<stem>.<ext>, adding -2, -3 ... instead of overwriting.
-// Returns the absolute path.
+// Writes the image into <dir>/<date>/<stem>.<ext> (date '' : straight into <dir>), adding
+// -2, -3 ... instead of overwriting. A BMP is saved as PNG (bmp.mjs says why). Returns the
+// absolute path.
 export function saveImage(dir, buf, { name = '', date = localDate(), now = new Date() } = {}) {
-  const type = detectImageType(buf);
+  let type = detectImageType(buf);
   if (!type) throw Object.assign(new Error('not a PNG, JPEG, GIF, WebP or BMP image'), { status: 415 });
   if (buf.length > MAX_UPLOAD_BYTES) throw Object.assign(new Error('image is larger than 25 MB'), { status: 413 });
+  if (type === 'bmp') {
+    buf = bmpToPng(buf);
+    type = 'png';
+  }
   const p = n => String(n).padStart(2, '0');
   const stem = safeStem(name, `image-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`);
-  const dayDir = join(dir, date);
+  const dayDir = date ? join(dir, date) : dir;
   mkdirSync(dayDir, { recursive: true });
   for (let i = 1; i < 1000; i++) {
     const file = join(dayDir, `${stem}${i === 1 ? '' : `-${i}`}.${type}`);
@@ -97,8 +111,9 @@ export function saveImage(dir, buf, { name = '', date = localDate(), now = new D
   throw new Error('too many files with this name');
 }
 
-// Images in a target folder (directly or one dated level down), newest first.
-export function listImages(root, dir, limit = 500) {
+// Images in a target folder (directly or one dated level down), newest first. `flat`: only
+// directly in it (flows: a run passes only those).
+export function listImages(root, dir, limit = 500, { flat = false } = {}) {
   const out = [];
   const add = (folder, date) => {
     let entries = [];
@@ -106,7 +121,7 @@ export function listImages(root, dir, limit = 500) {
     for (const e of entries) {
       if (e.name.startsWith('.')) continue;
       const full = join(folder, e.name);
-      if (e.isDirectory()) { if (date === null) add(full, e.name); continue; }
+      if (e.isDirectory()) { if (date === null && !flat) add(full, e.name); continue; }
       if (!e.isFile() || !contentTypeFor(e.name)) continue;
       let st;
       try { st = statSync(full); } catch { continue; }

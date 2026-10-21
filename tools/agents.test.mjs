@@ -1,5 +1,5 @@
 // Tests for tools/lib/agents.mjs, new-agent.mjs and agent-session.mjs.
-// Run: node --test "tools/**/*.test.mjs"
+// Run: node tools/run-tests.mjs
 // Each test builds a throwaway workspace root in the temp folder; the real workspace is not touched.
 // Child tools get that root as TEMP and a fake claude.exe on PATH, so nothing machine-wide is used.
 import { test } from 'node:test';
@@ -10,8 +10,8 @@ import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
-  checkAgentName, checkProject, duplicateNames, listAgents, readFrontmatter, resolveClaude, resolveProject,
-  sessionSettings,
+  archiveAgent, checkAgentName, checkAgentText, checkProject, duplicateNames, listAgents, listArchivedAgents, readFrontmatter,
+  resolveClaude, resolveProject, restoreAgent, saveAgentText, sessionSettings, textHash,
 } from './lib/agents.mjs';
 
 const toolsDir = dirname(fileURLToPath(import.meta.url));
@@ -194,4 +194,83 @@ test('resolveClaude notices an npm claude.cmd shim on Windows', { skip: !WIN }, 
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(join(dir, 'claude.cmd'), '');
   assert.equal(resolveClaude({ PATH: dir }).shim, join(dir, 'claude.cmd'));
+});
+
+test('checkAgentText keeps the name, needs a description and warns without own memory', () => {
+  const ok = '---\nname: art\ndescription: Draws.\nmemory: project\n---\nBody\n';
+  assert.deepEqual(checkAgentText(ok, 'art'), { error: '', warnings: [] });
+  assert.match(checkAgentText(ok.replace('name: art', 'name: painter'), 'art').error, /must stay "art"/);
+  assert.match(checkAgentText(ok.replace('description: Draws.', 'description:'), 'art').error, /description is required/);
+  assert.match(checkAgentText('no frontmatter', 'art').error, /frontmatter/);
+  assert.match(checkAgentText('x'.repeat(61 * 1024), 'art').error, /60 KB/);
+  assert.equal(checkAgentText(ok.replace('memory: project', 'memory: user'), 'art').warnings.length, 1);
+});
+
+test('saveAgentText refuses stale edits and keeps CRLF line endings', t => {
+  const root = fixture(t);
+  addAgentFile(root, 'art.md', 'name: art\r\ndescription: Draws.\r\nmemory: project');
+  const agent = listAgents(root, 'demo')[0];
+  const before = readFileSync(agent.file, 'utf8');
+  const text = '---\nname: art\ndescription: Paints.\nmemory: project\n---\nNew body\n';
+  assert.equal(saveAgentText(agent, text, 'stale').conflict, true);
+  assert.equal(readFileSync(agent.file, 'utf8'), before);
+  const r = saveAgentText(agent, text, textHash(before));
+  assert.equal(r.error, '');
+  const after = readFileSync(agent.file, 'utf8');
+  assert.match(after, /description: Paints\.\r\n/);
+  assert.equal(r.hash, textHash(after));
+  assert.match(saveAgentText(agent, text.replace('name: art', 'name: x'), r.hash).error, /must stay/);
+});
+
+test('archiveAgent moves the file out of .claude/agents and restoreAgent brings it back', t => {
+  const root = fixture(t);
+  addAgentFile(root, 'team/art.md', 'name: art\ndescription: Draws.\nmemory: project');
+  const memory = join(root, 'projects', 'demo', '.claude', 'agent-memory', 'art', 'MEMORY.md');
+  mkdirSync(dirname(memory), { recursive: true });
+  writeFileSync(memory, '- remembered');
+  assert.equal(listAgents(root, 'demo')[0].rel, 'team/art.md');
+  archiveAgent(root, 'demo', listAgents(root, 'demo')[0]);
+  assert.deepEqual(listAgents(root, 'demo'), []);
+  assert.ok(existsSync(memory), 'memory stays');
+  // A second agent with the same name, archived too, gets its own file.
+  addAgentFile(root, 'art.md', 'name: art\ndescription: Again.\nmemory: project');
+  archiveAgent(root, 'demo', listAgents(root, 'demo')[0]);
+  assert.deepEqual(listArchivedAgents(root, 'demo').map(a => [a.archivedAs, a.name, a.valid]), [['art--2.md', 'art', true], ['art.md', 'art', true]]);
+  assert.equal(restoreAgent(root, 'demo', 'art.md').name, 'art');
+  assert.deepEqual(listAgents(root, 'demo').map(a => [a.name, a.rel, a.description]), [['art', 'art.md', 'Draws.']]);
+  assert.match(restoreAgent(root, 'demo', 'art--2.md').error, /already exists/);
+  assert.match(restoreAgent(root, 'demo', '../x.md').error, /no archived agent/);
+});
+
+test('agent-session --prompt-file starts with the prompt and may read the extra folders', t => {
+  const root = fixture(t);
+  assert.equal(run('new-agent.mjs', ['demo', 'art'], root).code, 0);
+  const extra = join(root, 'inbox', 'attachments', '_flows', 'hero');
+  // The child's temp folder is root, so this is its prompt folder (tools/lib/prompt-file.mjs).
+  const promptFile = join(root, 'claude-workspace', 'prompts', 'p.json');
+  mkdirSync(dirname(promptFile), { recursive: true });
+  writeFileSync(promptFile, JSON.stringify({ prompt: '-Draw "hero"\nnow', readDirs: [extra] }));
+  const r = run('agent-session.mjs', ['demo', 'art', '--print', '--prompt-file', promptFile], root);
+  assert.equal(r.code, 0, r.err);
+  const plan = JSON.parse(r.out);
+  assert.deepEqual(plan.args.slice(4), ['--', '-Draw "hero"\nnow']);
+  const settings = JSON.parse(readFileSync(plan.settingsFile, 'utf8'));
+  assert.deepEqual(settings.permissions.additionalDirectories, [...sessionSettings(root, 'demo', 'art').permissions.additionalDirectories, extra]);
+  assert.ok(!existsSync(promptFile), 'the prompt file is used once');
+  // The plain session keeps its own settings file.
+  const plain = JSON.parse(run('agent-session.mjs', ['demo', 'art', '--print'], root).out);
+  assert.notEqual(plain.settingsFile, plan.settingsFile);
+  assert.match(run('agent-session.mjs', ['demo', 'art', '--print', '--prompt-file', promptFile], root).err, /could not read the prompt file/);
+  // Launch settings: flags before the prompt, pre-approved tools in the settings file.
+  writeFileSync(promptFile, JSON.stringify({ prompt: 'Plan it', readDirs: [], launch: { permissionMode: 'plan', effort: 'high', allowedTools: ['Read', 'Bash(npm test:*)'] } }));
+  const launched = JSON.parse(run('agent-session.mjs', ['demo', 'art', '--print', '--prompt-file', promptFile], root).out);
+  assert.deepEqual(launched.args.slice(4), ['--permission-mode', 'plan', '--effort', 'high', 'Plan it']);
+  assert.deepEqual(JSON.parse(readFileSync(launched.settingsFile, 'utf8')).permissions.allow, ['Read', 'Bash(npm test:*)']);
+  writeFileSync(promptFile, JSON.stringify({ prompt: 'x', launch: { permissionMode: 'bypassPermissions' } }));
+  assert.match(run('agent-session.mjs', ['demo', 'art', '--print', '--prompt-file', promptFile], root).err, /launch: permission mode/);
+  // A file outside the prompt folder (named by mistake) is read but never deleted.
+  const elsewhere = join(root, 'settings.json');
+  writeFileSync(elsewhere, JSON.stringify({ permissions: {} }));
+  assert.match(run('agent-session.mjs', ['demo', 'art', '--print', '--prompt-file', elsewhere], root).err, /prompt is empty/);
+  assert.ok(existsSync(elsewhere));
 });

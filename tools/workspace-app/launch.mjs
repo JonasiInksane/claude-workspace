@@ -8,8 +8,13 @@ import { homedir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolveClaude } from '../lib/agents.mjs';
+import { writePromptFile } from '../lib/prompt-file.mjs';
 
-const toolsDir = join(dirname(fileURLToPath(import.meta.url)), '..');
+const appDir = dirname(fileURLToPath(import.meta.url));
+const toolsDir = join(appDir, '..');
+const MAX_OUTPUT = 400 * 1024;
+const TOOL_TIMEOUT_MS = 3 * 60_000;
+const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g;
 
 // A PowerShell single-quoted string: nothing inside is expanded. PowerShell also treats the
 // typographic quotes U+2018-U+201B as single quotes, so those are doubled too.
@@ -110,20 +115,52 @@ export function realActions({ root, tools = findTools(), windowStyle } = {}) {
   const explorer = target => run('explorer.exe', explorerArgs(target), { verbatim: true });
   return {
     tools,
-    startClaude({ dir, title, continueLast }) {
+    // With `prompt`: it goes through a prompt file (tools/lib/prompt-file.mjs explains why), with
+    // `readDirs` the session may read without asking.
+    startClaude({ dir, title, continueLast, prompt, readDirs = [], launch = {} }) {
       if (!tools.claude) throw new Error('Claude Code was not found (PATH or %USERPROFILE%\\.local\\bin).');
-      return terminal(dir, title, psCommand(dir, tools.claude, continueLast ? ['-c'] : []));
+      if (!prompt) return terminal(dir, title, psCommand(dir, tools.claude, continueLast ? ['-c'] : []));
+      const file = writePromptFile({ prompt, readDirs, launch });
+      return terminal(dir, title, psCommand(dir, node, [join(appDir, 'claude-prompt.mjs'), file]));
     },
-    startAgent({ project, agent, title }) {
+    newProject({ project, type, from }) {
+      const args = [join(toolsDir, 'new-project.mjs'), project, '--type', type, ...(from ? ['--from', from] : [])];
+      return terminal(root, `New project: ${project}`, psCommand(root, node, args));
+    },
+    // Runs a workspace tool and collects its output (stdout and stderr together).
+    runTool({ args, cwd, timeoutMs = TOOL_TIMEOUT_MS }) {
+      return new Promise((resolveP, reject) => {
+        const child = spawn(node, args, { cwd, windowsHide: true, env: { ...process.env, NO_COLOR: '1' } });
+        let output = '';
+        const add = chunk => { if (output.length < MAX_OUTPUT) output += chunk; };
+        child.stdout.setEncoding('utf8').on('data', add);
+        child.stderr.setEncoding('utf8').on('data', add);
+        // The whole tree: run-tests' own `node --test` child holds the output pipe open too.
+        const stop = () => {
+          if (process.platform === 'win32') spawnSync('taskkill', ['/T', '/F', '/PID', String(child.pid)], { windowsHide: true, stdio: 'ignore' });
+          else child.kill();
+        };
+        const timer = setTimeout(() => { add(`\n(stopped: it ran longer than ${Math.round(timeoutMs / 1000)} seconds)`); stop(); }, timeoutMs);
+        child.once('error', e => { clearTimeout(timer); reject(e); });
+        child.once('close', code => {
+          clearTimeout(timer);
+          if (output.length >= MAX_OUTPUT) output += '\n(output cut off)';
+          resolveP({ status: code ?? 1, output: output.replace(ANSI, '') });
+        });
+      });
+    },
+    startAgent({ project, agent, title, prompt, readDirs = [], launch = {} }) {
       const args = [join(toolsDir, 'agent-session.mjs'), project, agent, '--root', root];
+      if (prompt) args.push('--prompt-file', writePromptFile({ prompt, readDirs, launch }));
       return terminal(root, title, psCommand(root, node, args));
     },
     openFolder({ dir }) {
       return explorer(dir);
     },
-    openEditor({ dir }) {
+    // A folder or a single file.
+    openEditor({ path }) {
       if (!tools.editor) throw new Error('No editor found (VS Code or Cursor).');
-      return run(tools.editor.path, [dir]);
+      return run(tools.editor.path, [path]);
     },
     openNavigator() {
       spawnSync(node, [join(toolsDir, 'build-index.mjs'), '--quiet'], { stdio: 'ignore', windowsHide: true });

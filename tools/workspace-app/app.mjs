@@ -9,13 +9,21 @@
 // X-Workspace-App header, which other web pages cannot send without a CORS preflight that this
 // server never approves.
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { dirname, extname, join, resolve, sep } from 'node:path';
+import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { timingSafeEqual } from 'node:crypto';
-import { checkAgentName, listAgents, projectDir, resolveProject, SHARED_DIR } from '../lib/agents.mjs';
+import {
+  archiveAgent, checkAgentName, duplicateNames, listAgents, listArchivedAgents, projectDir, resolveProject, restoreAgent,
+  saveAgentText, SHARED_DIR, textHash,
+} from '../lib/agents.mjs';
 import { projectNameMap, scanInbox } from '../lib/inbox.mjs';
 import { detectProjectType, typeLabel } from '../lib/project-type.mjs';
+import { catalogForUi, commandArgs, PROJECT_TYPES, skillLaunch } from './catalog.mjs';
+import {
+  archiveFlow, checkFlow, flowImages, flowImagesDir, flowLaunch, getFlow, LIMITS as FLOW_LIMITS, listArchivedFlows,
+  listFlows, readCaptions, restoreFlow, runPrompt, saveFlow, setCaption, skippedFlowImages,
+} from '../lib/flows.mjs';
 import {
   contentTypeFor, isInside, listImages, localDate, MAX_UPLOAD_BYTES, resolveTarget, saveImage,
 } from './uploads.mjs';
@@ -25,6 +33,9 @@ const toolsDir = join(appDir, '..'); // the CLI tools this app runs (new-agent.m
 const MAX_JSON_BYTES = 64 * 1024;
 // Folder names the app will start terminals in. Others still show, with a hint to use a terminal.
 const LAUNCHABLE = /^[\w .()-]+$/;
+const PROJECT_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/; // what tools/new-project.mjs accepts
+// A clone URL that stays one plain argument: no spaces, quotes or shell characters.
+const GIT_URL = /^(?:https:\/\/|git@)[\w.@:/~+-]+$/;
 const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
@@ -120,12 +131,16 @@ export function buildState(root, tools) {
     const dir = projectDir(root, name);
     let label = 'Other';
     try { label = typeLabel(detectProjectType(dir)); } catch { /* keep Other */ }
-    const agents = listAgents(root, name).map(a => ({
+    const all = listAgents(root, name);
+    const dupes = new Set(duplicateNames(all).map(d => d.name));
+    const agents = all.map(a => ({
       name: a.name,
       description: a.description,
       memory: a.memory,
       isolated: a.isolated,
       valid: a.valid,
+      duplicate: dupes.has(a.name),
+      file: a.rel,
       images: libCount.get(`${name}/${a.name.toLowerCase()}`) || 0,
       memoryFiles: a.valid ? countMd(a.memoryDir) : 0,
     }));
@@ -136,6 +151,7 @@ export function buildState(root, tools) {
       launchable: LAUNCHABLE.test(name),
       sharedImages: libCount.get(`${name}/${SHARED_DIR}`) || 0,
       agents,
+      archived: listArchivedAgents(root, name).map(a => ({ archivedAs: a.archivedAs, name: a.name, description: a.description, valid: a.valid })),
     };
   });
 
@@ -161,15 +177,28 @@ export function buildState(root, tools) {
     },
     reports,
     projects,
+    flows: listFlows(root).map(f => ({
+      slug: f.slug, title: f.title, description: f.description, target: f.target, project: f.project, agent: f.agent,
+      error: f.error, images: flowImages(root, f.slug).length, launch: f.error ? {} : flowLaunch(f),
+    })),
+    archivedFlows: listArchivedFlows(root).map(f => ({ archivedAs: f.archivedAs, title: f.title })),
+    catalog: catalogForUi(),
   };
 }
 
+function flowOrThrow(root, slug) {
+  const f = getFlow(root, String(slug || ''));
+  if (!f) throw new HttpError(404, `there is no flow "${slug}"`);
+  return f;
+}
+
 // The agent a request names, checked: existing project and a valid agent name. With
-// `isolated`, the agent must also have memory of its own (memory: project or local).
-function findAgent(root, projectName, agentName, { isolated = false } = {}) {
+// `isolated`, the agent must also have memory of its own (memory: project or local). `file`
+// (its path inside .claude/agents/) picks one of two files that share a name.
+function findAgent(root, projectName, agentName, { isolated = false, file = '' } = {}) {
   const { name: project, error } = resolveProject(root, projectName);
   if (error) throw new HttpError(404, error);
-  const agent = listAgents(root, project).find(a => a.name === agentName);
+  const agent = listAgents(root, project).find(a => a.name === agentName && (!file || a.rel === file));
   if (!agent || !agent.valid) throw new HttpError(404, `projects/${project} has no usable agent "${agentName}"`);
   if (isolated && !agent.isolated) throw new HttpError(400, `${agent.name} has no "memory: project", so it has no memory of its own`);
   return { project, agent };
@@ -227,7 +256,7 @@ export function createApp({ root, token, actions, getPort, workspaceTag = '', on
 
       case 'GET /api/images': {
         const t = targetOrThrow(root, q);
-        return json(res, 200, { ok: true, label: t.label, dir: t.dir, images: listImages(root, t.dir) });
+        return json(res, 200, { ok: true, label: t.label, dir: t.dir, images: listImages(root, t.dir, 500, { flat: !!t.flat }) });
       }
 
       case 'GET /api/memory': {
@@ -235,10 +264,40 @@ export function createApp({ root, token, actions, getPort, workspaceTag = '', on
         return json(res, 200, { ok: true, ...memoryView(root, project, agent) });
       }
 
+      case 'GET /api/agent-file': {
+        const { project, agent } = findAgent(root, q.project, q.agent, { file: q.file });
+        const text = readFileSync(agent.file, 'utf8');
+        const path = agent.file.slice(root.length + 1).split(sep).join('/');
+        return json(res, 200, { ok: true, project, agent: agent.name, file: agent.rel, path, text, hash: textHash(text) });
+      }
+
+      case 'POST /api/agent-file': {
+        const b = await readJson(req);
+        const { agent } = findAgent(root, b.project, b.agent, { file: String(b.file || '') });
+        const r = saveAgentText(agent, String(b.text ?? ''), String(b.hash || ''));
+        if (r.error) throw new HttpError(r.conflict ? 409 : 400, r.error);
+        return json(res, 200, { ok: true, message: `Saved ${agent.name}`, warnings: r.warnings, hash: r.hash });
+      }
+
+      case 'POST /api/agents/archive': {
+        const b = await readJson(req);
+        const { project, agent } = findAgent(root, b.project, b.agent, { file: String(b.file || '') });
+        archiveAgent(root, project, agent);
+        return json(res, 200, { ok: true, message: `Archived ${agent.name}. Its memory and images stay; Restore brings it back.` });
+      }
+
+      case 'POST /api/agents/restore': {
+        const b = await readJson(req);
+        const project = findProject(root, b.project);
+        const r = restoreAgent(root, project, String(b.archivedAs || ''));
+        if (r.error) throw new HttpError(400, r.error);
+        return json(res, 200, { ok: true, message: `Restored ${r.name} in ${project}` });
+      }
+
       case 'POST /api/upload': {
         const t = targetOrThrow(root, q);
         const buf = await readBody(req, MAX_UPLOAD_BYTES + 1);
-        const file = saveImage(t.dir, buf, { name: q.name || '' });
+        const file = saveImage(t.dir, buf, { name: q.name || '', ...(t.flat ? { date: '' } : {}) });
         return json(res, 200, { ok: true, label: t.label, abs: file, path: file.slice(root.length + 1).split(sep).join('/') });
       }
 
@@ -257,6 +316,10 @@ export function createApp({ root, token, actions, getPort, workspaceTag = '', on
         if (b.kind === 'agent') {
           const { project, agent } = findAgent(root, b.project, b.agent);
           if (!agent.isolated) throw new HttpError(400, `${agent.name} has no "memory: project", so it can't run isolated`);
+          // agent-session.mjs refuses these too, but only inside the new terminal.
+          if (duplicateNames(listAgents(root, project)).some(d => d.name === agent.name)) {
+            throw new HttpError(400, `${agent.name} is defined by more than one agent file; rename one first`);
+          }
           if (!LAUNCHABLE.test(project)) throw new HttpError(400, `start ${project} from a terminal (its folder name has unusual characters)`);
           await actions.startAgent({ project, agent: agent.name, title: `${project}: ${agent.name}` });
           return json(res, 200, { ok: true, message: `Started ${agent.name} in ${project}` });
@@ -272,6 +335,11 @@ export function createApp({ root, token, actions, getPort, workspaceTag = '', on
         else if (b.place === 'project') dir = projectDir(root, findProject(root, b.project));
         else if (b.place === 'images') { dir = targetOrThrow(root, b).dir; mkdirSync(dir, { recursive: true }); }
         else if (b.place === 'memory') { dir = findAgent(root, b.project, b.agent, { isolated: true }).agent.memoryDir; mkdirSync(dir, { recursive: true }); }
+        else if (b.place === 'agent') {
+          // The agent's file: in the editor it opens the file itself, in Explorer its folder.
+          const { agent } = findAgent(root, b.project, b.agent, { file: String(b.file || '') });
+          dir = b.with === 'editor' ? agent.file : dirname(agent.file);
+        }
         else if (b.place === 'report') {
           const r = readReports(root).find(x => x.id === b.report);
           if (!r) throw new HttpError(404, 'report not found');
@@ -282,12 +350,120 @@ export function createApp({ root, token, actions, getPort, workspaceTag = '', on
           return json(res, 200, { ok: true, message: 'Rebuilt and opened the navigator' });
         } else throw new HttpError(400, 'unknown place');
         if (b.with === 'editor') {
-          if (b.place !== 'hub' && b.place !== 'project') throw new HttpError(400, 'only the hub or a project opens in the editor');
-          await actions.openEditor({ dir });
+          if (!['hub', 'project', 'agent'].includes(b.place)) throw new HttpError(400, 'only the hub, a project or an agent file opens in the editor');
+          await actions.openEditor({ path: dir });
           return json(res, 200, { ok: true, message: 'Opened in the editor' });
         }
         await actions.openFolder({ dir });
         return json(res, 200, { ok: true, message: 'Opened in Explorer' });
+      }
+
+      // The flow, plus its images in run order (Image 1 first) with their captions.
+      case 'GET /api/flow': {
+        const f = flowOrThrow(root, q.slug);
+        const { file, ...flow } = f;
+        const captions = readCaptions(root, f.slug);
+        const images = flowImages(root, f.slug).map(abs => ({
+          name: basename(abs), path: abs.slice(root.length + 1).split(sep).join('/'), caption: captions[basename(abs)] || '',
+        }));
+        return json(res, 200, {
+          ok: true, ...flow, path: `flows/${f.slug}.md`, imageDir: flowImagesDir(root, f.slug), images, skipped: skippedFlowImages(root, f.slug),
+        });
+      }
+
+      case 'POST /api/flows/caption': {
+        const b = await readJson(req);
+        const f = flowOrThrow(root, b.slug);
+        const r = setCaption(root, f.slug, String(b.image || ''), b.caption);
+        if (r.error) throw new HttpError(400, r.error);
+        return json(res, 200, { ok: true, message: 'Caption saved' });
+      }
+
+      case 'POST /api/flows': {
+        const b = await readJson(req);
+        const fields = {
+          title: b.title, description: b.description, target: b.target, project: b.project, agent: b.agent, prompt: b.prompt,
+          permissionMode: b.permissionMode, model: b.model, effort: b.effort, allowedTools: b.allowedTools,
+        };
+        const r = saveFlow(root, fields, { slug: b.slug ? String(b.slug) : '', baseHash: String(b.hash || '') });
+        if (r.error) throw new HttpError(r.conflict ? 409 : 400, r.error);
+        return json(res, 200, { ok: true, slug: r.slug, hash: r.hash, message: b.slug ? 'Flow saved' : 'Flow created' });
+      }
+
+      // preview: true only returns the prompt the run would start with.
+      case 'POST /api/flows/run': {
+        const b = await readJson(req);
+        const stored = flowOrThrow(root, b.slug);
+        // Checked now, not trusted from the list the page loaded: the agent may be archived
+        // since, and the file may be edited by hand. `f` has the checked project and agent.
+        const { error: runError, flow: f } = checkFlow(root, stored);
+        if (runError) throw new HttpError(400, `${stored.title || stored.slug} can't run: ${runError}`);
+        f.slug = stored.slug;
+        const notes = String(b.notes || '').trim();
+        if (notes.length > FLOW_LIMITS.notes) throw new HttpError(400, `the notes are longer than ${FLOW_LIMITS.notes} characters`);
+        const images = flowImages(root, f.slug);
+        if (images.length > FLOW_LIMITS.images) throw new HttpError(400, `a flow can pass at most ${FLOW_LIMITS.images} images; it has ${images.length}`);
+        const prompt = runPrompt(f, images, notes, readCaptions(root, f.slug));
+        const launch = flowLaunch(f);
+        if (b.preview === true) return json(res, 200, { ok: true, prompt, launch });
+        const readDirs = images.length ? [flowImagesDir(root, f.slug)] : [];
+        const title = `Flow: ${f.title || f.slug}`;
+        if (f.target === 'hub') await actions.startClaude({ dir: root, title, prompt, readDirs, launch });
+        else if (f.target === 'project') {
+          if (!LAUNCHABLE.test(f.project)) throw new HttpError(400, `start ${f.project} from a terminal (its folder name has unusual characters)`);
+          await actions.startClaude({ dir: projectDir(root, f.project), title, prompt, readDirs, launch });
+        } else {
+          if (!LAUNCHABLE.test(f.project)) throw new HttpError(400, `start ${f.project} from a terminal (its folder name has unusual characters)`);
+          await actions.startAgent({ project: f.project, agent: f.agent, title, prompt, readDirs, launch });
+        }
+        return json(res, 200, { ok: true, message: `Started ${f.title || f.slug}` });
+      }
+
+      case 'POST /api/flows/archive': {
+        const b = await readJson(req);
+        const f = flowOrThrow(root, b.slug);
+        const r = archiveFlow(root, f.slug);
+        if (r.error) throw new HttpError(400, r.error);
+        return json(res, 200, { ok: true, message: `Archived ${f.title || f.slug}. Its images stay; Restore brings it back.` });
+      }
+
+      case 'POST /api/flows/restore': {
+        const b = await readJson(req);
+        const r = restoreFlow(root, String(b.archivedAs || ''));
+        if (r.error) throw new HttpError(400, r.error);
+        return json(res, 200, { ok: true, message: 'Flow restored' });
+      }
+
+      case 'POST /api/skill': {
+        const b = await readJson(req);
+        const s = skillLaunch(root, String(b.id || ''), b.values && typeof b.values === 'object' ? b.values : {});
+        if (s.skill.where === 'project') {
+          if (!LAUNCHABLE.test(s.project)) throw new HttpError(400, `start ${s.project} from a terminal (its folder name has unusual characters)`);
+          await actions.startClaude({ dir: projectDir(root, s.project), title: `${s.project}: /${s.skill.id}`, prompt: s.prompt });
+          return json(res, 200, { ok: true, message: `Started /${s.skill.id} in ${s.project}` });
+        }
+        await actions.startClaude({ dir: root, title: `Hub: /${s.skill.id}`, prompt: s.prompt });
+        return json(res, 200, { ok: true, message: `Started /${s.skill.id} in the hub` });
+      }
+
+      case 'POST /api/run': {
+        const b = await readJson(req);
+        const { cmd, args } = commandArgs(String(b.id || ''), { preview: b.preview === true, confirm: b.confirm === true });
+        const r = await actions.runTool({ args: [join(toolsDir, args[0]), ...args.slice(1)], cwd: root });
+        return json(res, 200, { ok: true, label: cmd.label, status: r.status, output: r.output });
+      }
+
+      case 'POST /api/projects': {
+        const b = await readJson(req);
+        const name = String(b.name || '').trim();
+        const type = String(b.type || '');
+        const from = String(b.from || '').trim();
+        if (!PROJECT_NAME.test(name)) throw new HttpError(400, `"${name}" is not kebab-case. Use lowercase letters, digits and dashes, for example my-app.`);
+        if (!PROJECT_TYPES.includes(type)) throw new HttpError(400, `type must be ${PROJECT_TYPES.join(' or ')}`);
+        if (from && (from.length > 500 || !GIT_URL.test(from))) throw new HttpError(400, 'the git URL must start with https:// or git@ and contain no spaces or quotes');
+        if (existsSync(projectDir(root, name)) || !resolveProject(root, name).error) throw new HttpError(400, `projects/${name} already exists`);
+        await actions.newProject({ project: name, type, from });
+        return json(res, 200, { ok: true, message: `${from ? 'Cloning' : 'Creating'} ${name} in a terminal` });
       }
 
       case 'POST /api/agents': {
@@ -297,6 +473,10 @@ export function createApp({ root, token, actions, getPort, workspaceTag = '', on
         const nameError = checkAgentName(String(b.agent || ''));
         if (nameError) throw new HttpError(400, nameError);
         if (project.startsWith('-')) throw new HttpError(400, `create agents for ${project} from a terminal`);
+        // Its memory folder still exists, so a new agent would quietly inherit that memory.
+        if (listArchivedAgents(root, project).some(a => a.name === b.agent)) {
+          throw new HttpError(400, `an archived agent is named "${b.agent}". Restore it, or pick another name.`);
+        }
         const args = [join(toolsDir, 'new-agent.mjs'), project, String(b.agent), '--root', root];
         if (b.role && String(b.role).trim()) args.push('--role', String(b.role).slice(0, 500));
         if (b.description && String(b.description).trim()) args.push('--description', String(b.description).slice(0, 500));

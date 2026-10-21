@@ -13,6 +13,10 @@
 //   still writes the settings file and creates the folders. For scripts and checks; the
 //   workspace app runs this tool itself in a terminal tab.
 // - --root <dir> uses another workspace root (the workspace app passes it; also for tests).
+// - --prompt-file <file> starts with a first prompt (tools/lib/prompt-file.mjs; the workspace
+//   app's flows use it). Its readDirs are added to the folders the session may read, its launch
+//   settings become --permission-mode / --model / --effort, and its pre-approved tools go into
+//   the settings' permissions.allow.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -23,6 +27,7 @@ import {
   checkAgentName, duplicateNames, imagesDir, listAgents, projectDir, resolveClaude, resolveProject,
   sessionSettings, sharedImagesDir,
 } from './lib/agents.mjs';
+import { launchArgs, promptArgs, takePromptFile } from './lib/prompt-file.mjs';
 
 const toolsRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -32,11 +37,11 @@ function fail(msg) {
 }
 
 function usage() {
-  console.log('Usage: node tools/agent-session.mjs <project> <agent> [--print]');
+  console.log('Usage: node tools/agent-session.mjs <project> <agent> [--print] [--prompt-file <file>]');
 }
 
 function parseArgs(argv) {
-  const out = { positional: [], print: false, root: undefined };
+  const out = { positional: [], print: false, root: undefined, promptFile: undefined };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '-h' || a === '--help') { usage(); process.exit(0); }
@@ -44,6 +49,9 @@ function parseArgs(argv) {
     else if (a === '--root' || a.startsWith('--root=')) {
       out.root = a.includes('=') ? a.slice(7) : argv[++i];
       if (!out.root) fail('--root needs a value');
+    } else if (a === '--prompt-file') {
+      out.promptFile = argv[++i];
+      if (!out.promptFile) fail('--prompt-file needs a value');
     } else if (a.startsWith('--')) fail(`unknown option ${a}`);
     else out.positional.push(a);
   }
@@ -94,11 +102,25 @@ const settingsDir = join(tmpdir(), 'claude-workspace', 'agent-sessions');
 mkdirSync(settingsDir, { recursive: true });
 // The root hash keeps two workspace copies from sharing a settings file.
 const rootTag = createHash('sha1').update(root.toLowerCase()).digest('hex').slice(0, 8);
-const settingsFile = join(settingsDir, `${project}--${opts.agent}--${rootTag}.json`);
-writeFileSync(settingsFile, JSON.stringify(sessionSettings(root, project, opts.agent, agent.memory), null, 2) + '\n', 'utf8');
+let handed = null;
+if (opts.promptFile) {
+  try { handed = takePromptFile(opts.promptFile); } catch (e) { fail(e.message); }
+}
+const settings = sessionSettings(root, project, opts.agent, agent.memory);
+// Extra readable folders and pre-approved tools get their own settings file, so the plain one
+// stays the same.
+const extra = handed ? handed.readDirs.map(d => resolve(d)) : [];
+settings.permissions.additionalDirectories.push(...extra);
+const allow = handed && handed.launch.allowedTools ? handed.launch.allowedTools : [];
+if (allow.length) settings.permissions.allow = allow;
+const extraKey = [...extra, ...allow.map(r => `allow:${r}`)].join('\n');
+const extraTag = extraKey ? `--${createHash('sha1').update(extraKey).digest('hex').slice(0, 8)}` : '';
+const settingsFile = join(settingsDir, `${project}--${opts.agent}--${rootTag}${extraTag}.json`);
+writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + '\n', 'utf8');
 
 const cwd = projectDir(root, project);
 const args = ['--agent', opts.agent, '--settings', settingsFile];
+if (handed) args.push(...launchArgs(handed.launch), ...promptArgs(handed.prompt));
 
 if (opts.print) {
   console.log(JSON.stringify({ cwd, command: claude.path, args, settingsFile }, null, 2));

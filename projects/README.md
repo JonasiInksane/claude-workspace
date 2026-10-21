@@ -8,7 +8,17 @@ history.
 ## On another PC
 
 `repos.json` lists which repo belongs in which folder here, and what each needs (for example
-Git LFS or Blender 5.2). After cloning the workspace:
+Git LFS or Blender 5.2). The easiest way: the workspace app's **Projects › Repositories** card
+shows every listed repo with a **Clone** button, plus **Clone a repo…** for any URL and
+**Add to list** for a project folder that isn't listed yet. Or from a terminal:
+
+```powershell
+node tools/projects.mjs list                     # listed, cloned here, and what's missing
+node tools/projects.mjs clone game-dev           # plain git clone of a listed repo
+node tools/projects.mjs add my-game --requires git-lfs   # list a folder by its origin remote
+```
+
+Or, after cloning the workspace on a new PC:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Setup.ps1                # reports missing projects and tools

@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { createApp } from './app.mjs';
 import { localDate } from './uploads.mjs';
 
@@ -69,7 +70,7 @@ before(async () => {
     tools: { wt: 'wt.exe', claude: 'claude.exe', edge: '', editor: { name: 'Cursor' } },
     startClaude: rec('startClaude'), startAgent: rec('startAgent'), openFolder: rec('openFolder'),
     openEditor: rec('openEditor'), openNavigator: rec('openNavigator'), openWindow: rec('openWindow'),
-    newProject: rec('newProject'), runTool: rec('runTool', { status: 1, output: '1 error' }),
+    newProject: rec('newProject'), cloneProject: rec('cloneProject'), runTool: rec('runTool', { status: 1, output: '1 error' }),
   };
   server = createServer(createApp({ root, token: TOKEN, actions, workspaceTag: 'tag123', getPort: () => port }));
   await new Promise(r => server.listen(0, '127.0.0.1', r));
@@ -345,6 +346,46 @@ test('flows: create, edit with a hash, add images, preview and run at each targe
   assert.equal((await post('/api/flows/restore', { archivedAs: 'hub-one.md' })).status, 200);
   st = (await call('GET', '/api/state')).json;
   assert.equal(st.flows.length, 3);
+});
+
+test('repos: listed repos show their state; clone only listed names or a checked URL; add needs an origin', async () => {
+  put('projects/repos.json', JSON.stringify({ repos: [{ name: 'far-repo', url: 'https://github.com/me/far-repo.git', requires: ['blender-5.2'] }] }));
+  const withRemote = join(root, 'projects', 'with-remote');
+  mkdirSync(withRemote, { recursive: true });
+  spawnSync('git', ['init', '-q', withRemote]);
+  spawnSync('git', ['-C', withRemote, 'remote', 'add', 'origin', 'https://github.com/me/with-remote.git']);
+  const s = (await call('GET', '/api/state')).json.repos;
+  assert.deepEqual(s.list.map(r => [r.name, r.present, r.requires]), [['far-repo', false, ['blender-5.2']]]);
+  assert.ok(s.unlisted.some(u => u.name === 'with-remote' && u.origin === 'https://github.com/me/with-remote.git'));
+  assert.equal(typeof s.have['git-lfs'], 'boolean');
+
+  const post = (path, body) => call('POST', path, { body });
+  calls.length = 0;
+  assert.equal((await post('/api/repos/clone', { name: 'far-repo' })).status, 200);
+  assert.equal((await post('/api/repos/clone', { url: 'https://github.com/me/New_Thing.git', add: true, requires: ['git-lfs', 'photoshop'] })).status, 200);
+  assert.equal((await post('/api/repos/clone', { url: 'git@github.com:me/once.git', name: 'just-once' })).status, 200);
+  assert.deepEqual(calls.map(c => [c.name, c.project, c.args]), [
+    ['cloneProject', 'far-repo', ['clone', 'far-repo']],
+    ['cloneProject', 'new-thing', ['clone', 'new-thing']],
+    ['cloneProject', 'just-once', ['clone', '--url', 'git@github.com:me/once.git', '--name', 'just-once']],
+  ]);
+  const listed = JSON.parse(readFileSync(join(root, 'projects', 'repos.json'), 'utf8')).repos;
+  assert.deepEqual(listed.find(r => r.name === 'new-thing').requires, ['git-lfs']);
+  calls.length = 0;
+  for (const [body, status] of [
+    [{ name: 'ghost' }, 404],
+    [{ url: 'https://github.com/me/x y.git' }, 400],
+    [{ url: 'file:///C:/secret' }, 400],
+    [{ url: 'https://github.com/me/tattoo.git' }, 400], // projects/Tattoo exists (other case)
+    [{ url: 'https://github.com/me/x.git', name: '../evil' }, 400],
+  ]) assert.equal((await post('/api/repos/clone', body)).status, status, JSON.stringify(body));
+  assert.equal(calls.length, 0);
+
+  assert.equal((await post('/api/repos/add', { name: 'with-remote', requires: ['git-lfs'] })).status, 200);
+  assert.ok(JSON.parse(readFileSync(join(root, 'projects', 'repos.json'), 'utf8')).repos.some(r => r.name === 'with-remote'));
+  assert.equal((await post('/api/repos/add', { name: 'with-remote' })).status, 400); // already listed
+  assert.equal((await post('/api/repos/add', { name: 'Tattoo' })).status, 400); // not kebab-case
+  assert.equal((await post('/api/repos/add', { name: 'ghost' })).status, 404);
 });
 
 test('skills start Claude with a prompt built on the server, in the hub or the project', async () => {

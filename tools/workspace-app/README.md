@@ -51,6 +51,10 @@ the settings file (`tools/lib/prompt-file.mjs` checks them; `bypassPermissions` 
 are refused). Archiving an agent
 moves its file to `.claude/agents-archived/`, outside the folder Claude Code loads agents
 from; archiving a flow moves it to `flows/_archived/`. Memory and images always stay.
+In Projects, the Repositories card reads `projects/repos.json` (`tools/lib/repos.mjs`): Clone
+and "Clone a repo…" run `tools/projects.mjs clone` in a terminal (a plain `git clone`; only
+listed names or a checked `https://` / `git@` URL, never into an existing folder), and "Add to
+list" writes a project folder's origin remote into the file.
 The inbox counts come from `tools/lib/inbox.mjs`. Image rules:
 [inbox/README.md](../../inbox/README.md). Agents: [the decision](../../knowledge/decisions/2026-10-21-project-agents.md).
 

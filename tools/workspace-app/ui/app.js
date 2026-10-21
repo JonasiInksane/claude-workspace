@@ -408,16 +408,89 @@ function archiveDialog(p, a) {
   });
 }
 
+// ---------------------------------------------------------------- repositories
+
+const REQ_LABEL = { 'git-lfs': 'Git LFS', 'blender-5.2': 'Blender 5.2' };
+// Same rule as tools/lib/repos.mjs: https://github.com/me/My_Game.git -> my-game.
+const repoNameFromUrl = url => (String(url).trim().replace(/\.git$/, '').split(/[/:]/).filter(Boolean).pop() || '')
+  .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+// Checkboxes for what a repo needs on a PC, as one form row; `picked()` returns the values.
+function requirementBoxes(selected = []) {
+  const boxes = Object.entries(REQ_LABEL).map(([value, label]) =>
+    [h('input', { type: 'checkbox', value, checked: selected.includes(value) }), label]);
+  const row = h('div', { class: 'checks' }, h('div', { class: 'check-title' }, 'Needs on each PC',
+    h('small', {}, 'Setup.ps1 and this list warn when it is missing.')),
+  boxes.map(([box, label]) => h('label', { class: 'check' }, box, label)));
+  return { row, picked: () => boxes.filter(([box]) => box.checked).map(([box]) => box.value) };
+}
+
+function cloneDialog() {
+  const url = h('input', { required: true, placeholder: 'https://github.com/you/repo.git', autocomplete: 'off', spellcheck: 'false' });
+  const name = h('input', { required: true, pattern: '[a-z0-9]+(-[a-z0-9]+)*', autocomplete: 'off', spellcheck: 'false' });
+  let nameTyped = false;
+  name.addEventListener('input', () => { nameTyped = true; });
+  url.addEventListener('input', () => { if (!nameTyped) name.value = repoNameFromUrl(url.value); });
+  const add = h('input', { type: 'checkbox', checked: true });
+  const reqs = requirementBoxes();
+  formDialog('Clone a repo', 'A plain git clone into projects/<name>, in a terminal: nothing is added to the repo.', [
+    ['Git URL', 'HTTPS or SSH, for example https://github.com/you/game-dev.git', url],
+    ['Folder name', 'Flows and agents refer to it, so keep it the same on every PC.', name],
+    h('label', { class: 'check' }, add, 'Add it to projects/repos.json, so other PCs get it'),
+    reqs.row,
+  ], 'Clone', () => api('/api/repos/clone', {
+    method: 'POST', body: { url: url.value.trim(), name: name.value.trim(), add: add.checked, requires: reqs.picked() },
+  }).then(r => { refresh(); return r; }));
+}
+
+function addRepoDialog(u) {
+  const reqs = requirementBoxes();
+  formDialog(`List ${u.name}`, `Adds ${u.origin} to projects/repos.json, so another PC can clone it into projects/${u.name}.`,
+    [reqs.row], 'Add to list',
+    () => api('/api/repos/add', { method: 'POST', body: { name: u.name, requires: reqs.picked() } }).then(r => { refresh(); return r; }));
+}
+
+function reposCard() {
+  const r = state.repos;
+  const needs = reqs => reqs.map(q => h('span', { class: `badge ${r.have[q] ? 'ok' : 'warn'}`, title: r.have[q] ? 'Found on this PC' : 'Not found on this PC' },
+    r.have[q] ? REQ_LABEL[q] : `${REQ_LABEL[q]} missing`));
+  const listed = r.list.map(x => h('li', {},
+    h('div', { class: 'main' },
+      h('div', { class: 'title repo-title' }, x.name,
+        x.present ? h('span', { class: `badge ${x.originMatches ? 'ok' : 'warn'}` }, x.originMatches ? 'on this PC' : 'other origin here')
+          : h('span', { class: 'badge' }, 'not on this PC'),
+        needs(x.requires)),
+      h('div', { class: 'sub', title: x.url }, x.originMatches ? x.url : `listed: ${x.url} · here: ${x.origin}`)),
+    x.present
+      ? h('button', { class: 'btn small', on: { click: () => openPlace({ place: 'project', project: x.name }) } }, 'Folder')
+      : h('button', { class: 'btn small primary', on: { click: () => act(api('/api/repos/clone', { method: 'POST', body: { name: x.name } })) } }, 'Clone')));
+  const unlisted = r.unlisted.map(u => h('li', {},
+    h('div', { class: 'main' },
+      h('div', { class: 'title repo-title' }, u.name, h('span', { class: 'badge warn' }, 'not listed')),
+      h('div', { class: 'sub' }, u.origin ? `${u.origin} · another PC won't get it` : 'No GitHub remote yet: push it first, then list it')),
+    u.origin ? h('button', { class: 'btn small', on: { click: () => addRepoDialog(u) } }, 'Add to list') : null));
+  return h('div', { class: 'card' },
+    h('div', { class: 'card-head' }, h('h3', {}, 'Repositories'),
+      h('button', { class: 'btn small', on: { click: cloneDialog } }, 'Clone a repo…')),
+    h('div', { class: 'card-body' },
+      r.error ? h('div', { class: 'form-error' }, r.error) : null,
+      listed.length || unlisted.length ? h('ul', { class: 'list' }, listed, unlisted)
+        : h('div', { class: 'empty' }, 'No repos listed yet. Clone one, or list a project once it is on GitHub.')),
+    h('div', { class: 'card-foot' },
+      'The list is projects/repos.json in the workspace repo: commit and push it after a change, and another PC can clone the same ' +
+      'projects here or with Setup.ps1 -Mode Install. A clone runs in a terminal, where GitHub may ask you to sign in.'));
+}
+
 function renderProjects() {
   const head = h('div', { class: 'view-head' }, h('div', {}, h('h2', {}, 'Projects'),
     h('p', {}, 'Each project is its own repo in projects/. Its agents keep their own memory and images.')));
   if (!state.projects.length) {
-    $('#view-projects').replaceChildren(head, h('div', { class: 'card' }, h('div', { class: 'empty' },
-      h('b', {}, 'No projects yet'), 'Start Claude in the hub and run ', h('code', {}, '/new-project <name> nextjs'),
-      ' (or game, or with a git URL to clone).')));
+    $('#view-projects').replaceChildren(head, reposCard(), h('div', { class: 'card' }, h('div', { class: 'empty' },
+      h('b', {}, 'No projects yet'), 'Clone one of yours above, or start Claude in the hub and run ', h('code', {}, '/new-project <name> nextjs'),
+      ' (or game).')));
     return;
   }
-  $('#view-projects').replaceChildren(head, h('div', { class: 'stack' }, state.projects.map(projectCard)));
+  $('#view-projects').replaceChildren(head, h('div', { class: 'stack' }, reposCard(), state.projects.map(projectCard)));
 }
 
 // ---------------------------------------------------------------- flows
@@ -698,8 +771,9 @@ function runFlowDialog(f) {
 
 // ---------------------------------------------------------------- tools
 
-// A form in the dialog. `controls` are [label, hint, element]; `submit` returns a promise. An
-// error shows inside the form; success closes the dialog and shows the server's message.
+// A form in the dialog. `controls` are [label, hint, element], or a ready-made element (for
+// example a group of checkboxes); `submit` returns a promise. An error shows inside the form;
+// success closes the dialog and shows the server's message.
 function formDialog(title, intro, controls, submitLabel, submit) {
   const error = h('div', { class: 'error', hidden: true });
   const button = h('button', { class: 'btn primary', type: 'submit' }, submitLabel);
@@ -724,7 +798,7 @@ function formDialog(title, intro, controls, submitLabel, submit) {
     },
   },
   intro ? h('p', { class: 'muted' }, intro) : null,
-  controls.map(([label, hint, el]) => h('label', {}, label, hint ? h('small', {}, hint) : null, el)),
+  controls.map(c => (c instanceof Node ? c : h('label', {}, c[0], c[1] ? h('small', {}, c[1]) : null, c[2]))),
   error,
   h('div', { class: 'dialog-actions' },
     h('button', { class: 'btn', type: 'button', on: { click: () => dialog.close() } }, 'Cancel'), button));
@@ -790,7 +864,7 @@ function newProjectDialog() {
   formDialog('New project', 'Runs tools/new-project.mjs in a terminal, so you can follow a clone.', [
     ['Name', 'Lowercase with dashes. It becomes projects/<name>.', name],
     ['Template', 'Copies templates/<type>/ into the project. Existing files are never overwritten.', type],
-    ['Git URL', 'Optional: clone this repo instead of starting an empty one.', from],
+    ['Git URL', 'Optional: start from someone else\'s starter repo (the template files are added). For a repo of yours, use Projects › Repositories › Clone a repo.', from],
   ], 'Create', () => api('/api/projects', { method: 'POST', body: { name: name.value.trim(), type: type.value, from: from.value.trim() } }));
 }
 

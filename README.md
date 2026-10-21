@@ -165,7 +165,9 @@ opens in its own window. It has five views:
 - **Tools:** a button for every hub and project skill (Claude opens in a new terminal and runs
   it), **New project**, and Check workspace, Run tests, Rebuild navigator and Install library
   (these run in the app and show their output).
-- **Projects:** one card per project with **Start Claude**, **Continue**, **Folder**, your
+- **Projects:** a **Repositories** card first (your repos from `projects/repos.json`: which are
+  on this PC, a **Clone** button for the rest, **Clone a repo…**, and **Add to list** so other
+  PCs get a project). Then one card per project with **Start Claude**, **Continue**, **Folder**, your
   editor and, without a CLAUDE.md, **Onboard**. Each project lists its **agents**:
   - **Start** opens a terminal tab where that agent sees only its own memory and images.
   - **Edit** changes its file (description, model, instructions); **Archive…** in there takes
@@ -195,7 +197,8 @@ node tools/workspace-app/make-shortcut.mjs --remove       # remove the shortcut(
 | `node tools/check-workspace.mjs` | Self-check: JSON, skills, agents, knowledge index, reports, links, imports, hooks, `.env.example`, absolute paths |
 | `node tools/install-library.mjs [--dry-run]` | Copies `library/` skills and agents to `~/.claude` (backs up a same-named file before replacing it; never deletes) |
 | `node tools/register-report.mjs --folder reports/<id> ...` | Adds or updates a report in `reports/reports.json` |
-| `node tools/new-project.mjs <name> --type nextjs\|game [--from <url>]` | Creates or clones a project |
+| `node tools/new-project.mjs <name> --type nextjs\|game [--from <url>]` | Creates a project from a template (or clones a starter repo and adds the template) |
+| `node tools/projects.mjs list \| clone <name> \| clone --url <url> [--add] \| add <name>` | Your project repos from `projects/repos.json`: what's cloned here, plain clones, listing new ones |
 | `node tools/new-agent.mjs <project> <agent> [--role "..."] [--description "..."] [--tools "..."]` | Adds a project agent with its own memory folder and inbox image folder |
 | `node tools/agent-session.mjs <project> <agent> [--print] [--prompt-file <file>]` | Starts Claude as that agent, seeing only its own memory and images (the prompt file is how the workspace app's flows start it) |
 | `node tools/workspace-app/server.mjs [--no-open]` | Runs the workspace app (what `Workspace App.cmd` starts, hidden) |

@@ -127,6 +127,10 @@ export function realActions({ root, tools = findTools(), windowStyle } = {}) {
       const args = [join(toolsDir, 'new-project.mjs'), project, '--type', type, ...(from ? ['--from', from] : [])];
       return terminal(root, `New project: ${project}`, psCommand(root, node, args));
     },
+    // tools/projects.mjs in a terminal, so git's progress and any GitHub sign-in are visible.
+    cloneProject({ project, args }) {
+      return terminal(root, `Clone: ${project}`, psCommand(root, node, [join(toolsDir, 'projects.mjs'), ...args]));
+    },
     // Runs a workspace tool and collects its output (stdout and stderr together).
     runTool({ args, cwd, timeoutMs = TOOL_TIMEOUT_MS }) {
       return new Promise((resolveP, reject) => {

@@ -21,6 +21,10 @@ import { projectNameMap, scanInbox } from '../lib/inbox.mjs';
 import { detectProjectType, typeLabel } from '../lib/project-type.mjs';
 import { catalogForUi, commandArgs, PROJECT_TYPES, skillLaunch } from './catalog.mjs';
 import {
+  addRepo, GIT_URL, NAME_RE as REPO_NAME_RE, nameFromUrl, originOf, readRepos, repoStatus, REQUIREMENTS,
+  requirementStatus, unlistedProjects,
+} from '../lib/repos.mjs';
+import {
   archiveFlow, checkFlow, flowImages, flowImagesDir, flowLaunch, getFlow, LIMITS as FLOW_LIMITS, listArchivedFlows,
   listFlows, readCaptions, restoreFlow, runPrompt, saveFlow, setCaption, skippedFlowImages,
 } from '../lib/flows.mjs';
@@ -33,9 +37,7 @@ const toolsDir = join(appDir, '..'); // the CLI tools this app runs (new-agent.m
 const MAX_JSON_BYTES = 64 * 1024;
 // Folder names the app will start terminals in. Others still show, with a hint to use a terminal.
 const LAUNCHABLE = /^[\w .()-]+$/;
-const PROJECT_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/; // what tools/new-project.mjs accepts
-// A clone URL that stays one plain argument: no spaces, quotes or shell characters.
-const GIT_URL = /^(?:https:\/\/|git@)[\w.@:/~+-]+$/;
+const PROJECT_NAME = REPO_NAME_RE; // what tools/new-project.mjs and tools/projects.mjs accept
 const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
@@ -182,6 +184,12 @@ export function buildState(root, tools) {
       error: f.error, images: flowImages(root, f.slug).length, launch: f.error ? {} : flowLaunch(f),
     })),
     archivedFlows: listArchivedFlows(root).map(f => ({ archivedAs: f.archivedAs, title: f.title })),
+    repos: {
+      error: readRepos(root).error,
+      list: repoStatus(root),
+      unlisted: unlistedProjects(root),
+      have: requirementStatus(),
+    },
     catalog: catalogForUi(),
   };
 }
@@ -451,6 +459,48 @@ export function createApp({ root, token, actions, getPort, workspaceTag = '', on
         const { cmd, args } = commandArgs(String(b.id || ''), { preview: b.preview === true, confirm: b.confirm === true });
         const r = await actions.runTool({ args: [join(toolsDir, args[0]), ...args.slice(1)], cwd: root });
         return json(res, 200, { ok: true, label: cmd.label, status: r.status, output: r.output });
+      }
+
+      // Clone a listed repo ({ name }) or any repo ({ url, name?, add?, requires? }), in a
+      // terminal through tools/projects.mjs: plain git clone, no template files.
+      case 'POST /api/repos/clone': {
+        const b = await readJson(req);
+        let name;
+        let args;
+        if (b.url) {
+          const url = String(b.url).trim();
+          if (url.length > 500 || !GIT_URL.test(url)) throw new HttpError(400, 'the git URL must start with https:// or git@ and contain no spaces or quotes');
+          name = String(b.name || '').trim() || nameFromUrl(url);
+          if (!REPO_NAME_RE.test(name)) throw new HttpError(400, `"${name}" is not a kebab-case folder name. Use lowercase letters, digits and dashes.`);
+          if (existsSync(projectDir(root, name)) || !resolveProject(root, name).error) throw new HttpError(400, `projects/${name} already exists`);
+          if (b.add) {
+            const requires = (Array.isArray(b.requires) ? b.requires : []).map(String).filter(r => REQUIREMENTS.includes(r));
+            const r = addRepo(root, { name, url, requires });
+            if (r.error) throw new HttpError(400, r.error);
+            args = ['clone', name];
+          } else args = ['clone', '--url', url, '--name', name];
+        } else {
+          const entry = readRepos(root).repos.find(r => r.name === String(b.name || ''));
+          if (!entry) throw new HttpError(404, `${b.name} is not in projects/repos.json`);
+          name = entry.name;
+          if (existsSync(projectDir(root, name))) throw new HttpError(400, `projects/${name} already exists`);
+          args = ['clone', name];
+        }
+        await actions.cloneProject({ project: name, args });
+        return json(res, 200, { ok: true, message: `Cloning ${name} in a terminal${b.url && b.add ? ' (listed in projects/repos.json)' : ''}` });
+      }
+
+      // List a project folder in projects/repos.json by its origin remote.
+      case 'POST /api/repos/add': {
+        const b = await readJson(req);
+        const name = findProject(root, b.name);
+        if (!REPO_NAME_RE.test(name)) throw new HttpError(400, `"${name}" is not a kebab-case folder name, so it can't be listed`);
+        const url = originOf(projectDir(root, name));
+        if (!url) throw new HttpError(400, `projects/${name} has no origin remote; push it to GitHub first`);
+        const requires = (Array.isArray(b.requires) ? b.requires : []).map(String).filter(r => REQUIREMENTS.includes(r));
+        const r = addRepo(root, { name, url, requires });
+        if (r.error) throw new HttpError(400, r.error);
+        return json(res, 200, { ok: true, message: `Listed ${name}. Commit and push the workspace so other PCs get it.` });
       }
 
       case 'POST /api/projects': {

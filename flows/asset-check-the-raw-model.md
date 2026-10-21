@@ -1,6 +1,6 @@
 ---
 title: "Asset: check the raw model"
-description: "After saving the generator download as gen/raw.glb: numbers and renders next to the concept, for the continue-or-regenerate call."
+description: "For meshy and library assets, after saving the download as gen/raw.glb: numbers and renders next to the concept, for the continue-or-regenerate call."
 target: agent
 project: "game-dev"
 agent: "asset-builder"

@@ -49,6 +49,11 @@ and render, one `asset-builder` agent runs them, and the user approves at fixed 
   quality holds up. Paid-plan output is the user's; free output is CC BY 4.0.
 - **One agent** (`asset-builder`, opus, medium effort) plus five flows in `flows/asset-*.md`;
   a separate reviewer agent only after the first approved asset.
+- **Styles, not one global spec** (added the same day, after the pilot): the project serves many
+  games, so each game's art direction is a style in `styles/<style>/` (`spec.json`,
+  `art-bible.md`, `golden/`) and assets live in `assets/<style>/<category>/<Name>/`. Every
+  `asset.json` names its style and the checks use that style's spec. `styles/default/` is the
+  template for `node tools/asset.mjs new-style` and the selftest's spec. First style: `lunafen`.
 
 ## Consequences
 

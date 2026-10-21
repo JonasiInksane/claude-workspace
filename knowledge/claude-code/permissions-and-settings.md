@@ -1,8 +1,8 @@
 ---
 title: Permissions and settings
 tags: [claude-code, settings, permissions, security, windows]
-updated: 2026-10-20
-claude_code_version: 2.1.304
+updated: 2026-10-21
+claude_code_version: 2.1.306
 ---
 
 # Permissions and settings
@@ -107,6 +107,12 @@ The first time you run `claude` in a folder it asks whether you trust it.
   `.claude/settings.json` are **not applied**. `deny` and `ask` rules apply immediately.
 - `claude -p` (and any piped run) skips the trust dialog, and hooks from settings files still run.
   Only use `-p` in repos you trust.
+- Trust is per folder: trusting the workspace root does not cover `projects/<name>`; each folder
+  gets its own entry (`hasTrustDialogAccepted` per path in `~/.claude.json`). Verified
+  2026-10-21 on 2.1.306: a `claude -p` run in an untrusted `projects/game-dev` refused
+  `node tools/asset.mjs new ...` although its `.claude/settings.json` allowed it; after starting
+  `claude` there once and accepting the dialog, the same rule applied. Open each project
+  interactively once before relying on its allow list (or on headless runs there).
 - `additionalDirectories` lives under `permissions`, grants file access only, and loads no
   skills or CLAUDE.md from those folders.
 

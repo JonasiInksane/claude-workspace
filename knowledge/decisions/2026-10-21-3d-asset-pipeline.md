@@ -63,3 +63,7 @@ and render, one `asset-builder` agent runs them, and the user approves at fixed 
 - Shipping AI-generated meshes on Steam means disclosing AI content; the brief's log and
   `review/clean.json` record what was generated and how.
 - The API key, once there, lives only in the user's Windows environment (`MESHY_API_KEY`).
+- Update, later on 2026-10-21: the user moved to the API. `node tools/asset.mjs generate` (in
+  `projects/game-dev`) runs image-to-3D with a 250-credit total cap and 3 tries per asset,
+  tracked in `meshy-ledger.json`; each run needs `--confirm-credits`, and the permission rules
+  always ask. A 15-credit `meshy-6-lite` smoke test worked end to end.

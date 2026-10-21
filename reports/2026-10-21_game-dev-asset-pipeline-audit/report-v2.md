@@ -1,6 +1,6 @@
 # game-dev asset pipeline: audit, after the pilot
 
-2026-10-21, revision 2. The pilot ran the first real asset (`assets/props/CrystalPendant`, a
+2026-10-21, revision 2. The pilot ran the first real asset (`assets/lunafen/props/CrystalPendant`, a
 procedural pendant from the Lunafen sheet) through every flow with the real `asset-builder`
 agent, headless, in five runs (about 45 minutes, $7.46). It passes `check --stage final` and
 waits for the user's verdict.

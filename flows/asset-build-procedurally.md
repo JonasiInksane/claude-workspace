@@ -8,9 +8,9 @@ permissionMode: "acceptEdits"
 effort: "high"
 ---
 
-My notes name the asset (assets/<category>/<Name>); its brief is approved and its source is procedural.
+My notes name the asset (assets/<style>/<category>/<Name>); its brief is approved and its source is procedural.
 
-Build its raw model from a recipe. Read the brief, the concept views in concept/ and the kit's reference at the top of tools/blender/kit.py. Then write the asset's build.py: the kit's shapes at the brief's real sizes in metres, a palette with the brief's hex colours (metal parts marked), standing on z = 0 with the front facing -Y. Parts may overlap but must not touch face to face exactly; overlap them by about 1 mm. Keep within the class triangle budget: fewer segments before fewer details.
+Build its raw model from a recipe. Read the brief, the concept views in concept/, its style's styles/<style>/art-bible.md and golden/ (if written) and the kit's reference at the top of tools/blender/kit.py. Then write the asset's build.py: the kit's shapes at the brief's real sizes in metres, a palette with the brief's hex colours (metal parts marked), standing on z = 0 with the front facing -Y. Parts may overlap but must not touch face to face exactly; overlap them by about 1 mm. Keep within the class triangle budget: fewer segments before fewer details.
 
 Then loop, three rounds at most:
 1. node tools/asset.mjs build <asset> (it refuses imports and file access in the recipe; fix the recipe, not the rule).

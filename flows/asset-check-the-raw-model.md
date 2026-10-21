@@ -8,7 +8,7 @@ permissionMode: "acceptEdits"
 effort: "medium"
 ---
 
-My notes name the asset (assets/<category>/<Name>). I have saved the generator's download as gen/raw.glb in it.
+My notes name the asset (assets/<style>/<category>/<Name>). I have saved the generator's download as gen/raw.glb in it.
 
 Run node tools/asset.mjs check <asset> --stage raw and node tools/asset.mjs review <asset> --stage raw. Then compare the raw renders (review/raw_front.png and the others) with the concept views in concept/, point by point against the brief's must-keep list: what matches, what is missing or wrong, and whether the triangle count and size are reasonable to clean up.
 

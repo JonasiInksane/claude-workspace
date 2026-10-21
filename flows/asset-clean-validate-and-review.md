@@ -8,7 +8,7 @@ permissionMode: "acceptEdits"
 effort: "medium"
 ---
 
-My notes name the asset (assets/<category>/<Name>), and may add numbered revision notes from an earlier review.
+My notes name the asset (assets/<style>/<category>/<Name>), and may add numbered revision notes from an earlier review.
 
 1. Apply any revision notes that are yours to apply (a procedural asset's build.py, asset.json, the brief). A meshy or library asset needs its provenance in asset.json (where it came from and its licence) before it can pass.
 2. node tools/asset.mjs finalize <asset>: it rebuilds a procedural asset, then cleans, runs check --stage final and renders the review, stopping at the first failure.

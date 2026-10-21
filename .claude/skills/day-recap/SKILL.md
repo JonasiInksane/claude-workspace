@@ -18,7 +18,9 @@ Use `<date>` = the resolved `YYYY-MM-DD` everywhere below.
    `git log --since=<date>T00:00:00 --until=<date>T23:59:59 --oneline --name-only`.
    Always include both times, so the window is exactly that day.
 3. **Project repos**: for each folder in `projects/` that has a `.git` folder, run the same command with `git -C projects/<name> log ...`.
-4. **Inbox**: list `inbox/_processed/<date>/` (items filed that day) and `inbox/handoffs/<date>-*.md` (handoffs written that day).
+4. **Inbox**: list `inbox/_processed/<date>/` (items filed that day), `inbox/attachments/<project>/<agent>/<date>/`
+   (images added to agent libraries that day; not filed items) and `inbox/handoffs/<date>-*.md` (handoffs written
+   that day). For items still waiting, use the session status block's "Inbox:" line, which leaves agent libraries out.
 5. **Knowledge**: grep `knowledge/` for notes whose frontmatter has `updated: <date>`.
 
 If a source doesn't exist (no git repo, no `reports.json`), skip it and say so in one line at the end.
@@ -44,6 +46,7 @@ Use exactly this format. Leave out sections that have nothing in them.
 
 ### Inbox and handoffs
 - Filed 4 items (inbox/_processed/2026-10-20/)
+- Agent images: 3 added for my-game/asset-builder
 - Handoff: inbox/handoffs/2026-10-20-auth-redirect-fix.md
 
 ### Loose ends

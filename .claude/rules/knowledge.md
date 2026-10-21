@@ -10,7 +10,7 @@ file, read on demand: grep `knowledge/` or scan `knowledge/INDEX.md` before star
 
 ## File format
 - Path: `knowledge/<area>/<kebab-name>.md`. Areas: `claude-code`, `nextjs`, `gamedev`,
-  `decisions`. Add a new area only when none fits, and tell the user.
+  `windows` (Windows and Node tooling outside Claude Code), `decisions`. Add a new area only when none fits, and tell the user.
 - Frontmatter starts on line 1 and is required:
 
   ```yaml

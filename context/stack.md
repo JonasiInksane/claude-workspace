@@ -1,17 +1,18 @@
 # Stack
 
-Machine facts, last checked 2026-10-20. Update this file when something changes
+Machine facts, last checked 2026-10-21. Update this file when something changes
 (`node -v`, `claude --version`).
 
 ## Machine
 - OS: Windows 11
 - Shells: Windows PowerShell 5.1 (no PowerShell 7, so no `&&`, `||`, `??` or ternary in .ps1)
   and Git Bash (Git for Windows)
-- Node: v20.15.1, managed with nvm; `C:\Program Files\nodejs` is on PATH
+- Node: v24.11.1 at `C:\Program Files\nodejs` (on PATH). `nvm` was not found on 2026-10-21,
+  although Tattoogenda pins Node 20.15.1
 - Python: 3.13 (not needed by the workspace tools)
 - Editors: VS Code, Cursor
 - Git client: GitKraken (plus the git CLI)
-- Claude Code: 2.1.304, native install at `%USERPROFILE%\.local\bin\claude.exe`
+- Claude Code: 2.1.305, native install at `%USERPROFILE%\.local\bin\claude.exe`
 
 ## Workspace tooling
 - Tools are Node ESM scripts (`node tools/<name>.mjs`) with no npm dependencies.

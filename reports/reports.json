@@ -27,11 +27,15 @@
       "created": "2026-10-20",
       "updated": "2026-10-20",
       "folder": "reports/2026-10-20_tattoogenda-audit",
-      "summary": "2 critical and 18 high issues found in apps/web and its server endpoints, with a 4-phase fix plan",
+      "summary": "v2 re-check after merge: C1 C2 H1 H15 H16 fixed; new critical auth holes in email OAuth callback and JWT token purposes; money paths mostly open; 61 server tests red from clock drift; updated phased fix plan.",
       "steps": [
         {
           "name": "Report",
           "path": "reports/2026-10-20_tattoogenda-audit/report.md"
+        },
+        {
+          "name": "Report v2",
+          "path": "reports/2026-10-20_tattoogenda-audit/report-v2.md"
         }
       ]
     }

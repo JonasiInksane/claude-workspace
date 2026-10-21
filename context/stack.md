@@ -35,5 +35,5 @@ Machine facts, last checked 2026-10-21. Update this file when something changes
   tests against disposable PostgreSQL/Redis. No Vitest, Jest or Playwright.
 
 ## Games
-- TODO: engine and version (candidates: Godot, Unity, web with Phaser or Three.js)
-- TODO: language (GDScript, C# or TypeScript) and asset tools
+- No engine chosen; Unity 6000.4.11f1 is installed (Hub). GPU: Intel UHD + Radeon 530 (~2 GB, no CUDA).
+- Blender 5.2.2 LTS (winget, pinned) runs the asset pipeline in `projects/game-dev` (tools, not a game).

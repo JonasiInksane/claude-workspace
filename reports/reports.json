@@ -55,6 +55,23 @@
           "path": "reports/2026-10-21_prompt-pipeline-practices/report.md"
         }
       ]
+    },
+    {
+      "id": "2026-10-21_concept-art-to-3d-assets",
+      "title": "Concept art to 3D game assets",
+      "project": null,
+      "type": "research",
+      "status": "active",
+      "created": "2026-10-21",
+      "updated": "2026-10-21",
+      "folder": "reports/2026-10-21_concept-art-to-3d-assets",
+      "summary": "Pro pipeline from concept art to game-ready Unity assets, AI image-to-3D (Meshy recommended), and a scripted Blender and Unity setup with one asset-builder agent. Decisions pending.",
+      "steps": [
+        {
+          "name": "Report",
+          "path": "reports/2026-10-21_concept-art-to-3d-assets/report.md"
+        }
+      ]
     }
   ]
 }

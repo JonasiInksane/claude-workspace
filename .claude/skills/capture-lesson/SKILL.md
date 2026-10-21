@@ -19,7 +19,7 @@ If that is empty, take the lesson from the current conversation and state it in 
 | A personal preference about how the user likes work done | `context/preferences.md`: ask first, keep that file under 40 lines |
 | A fact about one project only | that project's `CLAUDE.md` or docs: suggest it, don't write from the hub |
 
-Areas: `claude-code`, `nextjs`, `gamedev`, `windows`, `decisions`. Add a new area only if none fits, and say so.
+Areas: `claude-code`, `nextjs`, `gamedev`, `windows`, `web`, `decisions`. Add a new area only if none fits, and say so.
 
 ## Step 2: Check what exists
 1. Read `knowledge/INDEX.md`.

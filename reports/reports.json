@@ -82,11 +82,15 @@
       "created": "2026-10-21",
       "updated": "2026-10-21",
       "folder": "reports/2026-10-21_game-dev-asset-pipeline-audit",
-      "summary": "Scripted core is solid; human gates have no UI and the flows were never run live. Next: a pilot asset, then an Assets view in the app.",
+      "summary": "Pilot done: the flow works end to end and 9 of its 11 findings are fixed. Open: an Assets view in the app, a shared palette and golden asset.",
       "steps": [
         {
           "name": "Report",
           "path": "reports/2026-10-21_game-dev-asset-pipeline-audit/report.md"
+        },
+        {
+          "name": "Report v2",
+          "path": "reports/2026-10-21_game-dev-asset-pipeline-audit/report-v2.md"
         }
       ]
     }

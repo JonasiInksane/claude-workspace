@@ -230,6 +230,19 @@ export function evidencePaths(evidence) {
   return unique(asList(evidence).map(e => catalogModule.cleanRelPath(String(e).trim().split(/[\s,;]/)[0].replace(/:\d+(?::\d+)?$/, ''))));
 }
 
+// The profile's workspace folders (other than ".") that are not folders in `tree`: a checkout
+// on a branch the profile doesn't describe.
+export async function missingWorkspaces(profile, tree) {
+  const out = [];
+  for (const w of asList(profile && profile.workspaces)) {
+    const dir = w && typeof w.dir === 'string' ? w.dir.replace(/\\/g, '/').replace(/\/+$/, '') : '';
+    if (!dir || dir === '.' || dir.split('/').includes('..')) continue;
+    const st = await stat(join(tree, ...dir.split('/'))).catch(() => null);
+    if (!st || !st.isDirectory()) out.push(dir);
+  }
+  return out;
+}
+
 // Ratchet wins from the G0 metric rows ({metric, before, after}), lower is better.
 export function winsFromMetricRows(rows, via, at) {
   const out = [];
@@ -1162,6 +1175,13 @@ export function createExecutor(deps = {}) {
       const sha = await revParse(mainDir, 'HEAD');
       run.isolation = { mode: 'none', tree: mainDir, mainDir, treeMode: 'main' };
       run.base = { branch: '', sha };
+      // A checkout on a branch the profile doesn't describe (other folders) scans as zeros that
+      // look real, and would be kept as a scan: refuse it before anything is measured.
+      const missing = await missingWorkspaces(profile, mainDir);
+      if (missing.length) {
+        return failed(`This checkout doesn't match the ${run.project} profile: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} missing. `
+          + `Is it on a branch the profile describes (${(profile.git || {}).integrationBranch || 'its integration branch'})? Nothing was measured or recorded.`);
+      }
       const before = (await dep('probes.loadMetrics')(dataDir, run.project)) || { scans: [] };
       const scans = asList(before.scans);
       const ref = v.compare === 'commit' ? [...scans].reverse().find(x => String(x.sha || '').startsWith(v.commit)) : scans[scans.length - 1];
@@ -1178,7 +1198,10 @@ export function createExecutor(deps = {}) {
       run.outputs.scan = { scanId: recorded && recorded.scanId, candidates: candidates.length, wins: asList(recorded && recorded.wins).length,
         errors: Object.keys(result.errors || {}), score: recorded ? recorded.score ?? null : null, since: ref ? ref.sha || null : null };
       const since = ref ? ` since ${sha7(ref.sha)}` : prevDetails ? '' : ' (first scan: nothing to compare)';
-      return done(`${plural(candidates.length, 'new candidate')}${since}`);
+      const bad = Object.keys(result.errors || {});
+      const total = bad.length + Object.keys(result.values || {}).length;
+      const failedNote = bad.length ? ` · ${bad.length} of ${total} probes failed: ${bad.join(', ')}` : '';
+      return done(`${plural(candidates.length, 'new candidate')}${since}${failedNote}`);
     },
 
     // Check my work: the run worktree when it is ready (your changes copied in, a baseline at

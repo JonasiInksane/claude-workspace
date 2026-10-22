@@ -181,6 +181,30 @@ test('setupWorktree adds a detached worktree, runs install then generate, and wr
   assert.match(st.text, /example-run is ready at [0-9a-f]{7}/);
 });
 
+test('setupWorktree sets the tree up at the integration branch, not at the branch the checkout is on', async t => {
+  const fx = fixture(t);
+  // You work on a branch of your own whose files differ from the integration branch.
+  sh(fx.main, ['switch', '-q', '-c', 'mine']);
+  writeFiles(fx.main, { 'apps/api/src/a.txt': 'my branch\n' });
+  const mine = commitAll(fx.main, 'my work');
+  const { record, lines } = await setUp(fx);
+  assert.equal(record.status, 'ready');
+  assert.equal(sh(fx.run, ['rev-parse', 'HEAD']), fx.base, 'at the tip of main, the integration branch');
+  assert.equal(text(fx.run, 'apps/api/src/a.txt'), 'a\n');
+  assert.ok(lines.some(l => /git worktree add --detach .*example-run main$/.test(l)), lines.join('\n'));
+  assert.equal(sh(fx.main, ['rev-parse', 'HEAD']), mine, 'your checkout did not move');
+
+  // A reused tree that sits elsewhere (detached at your branch) is moved to the integration branch.
+  sh(fx.run, ['checkout', '-q', '--detach', mine]);
+  const again = await setUp(fx);
+  assert.equal(again.record.status, 'ready');
+  assert.equal(sh(fx.run, ['rev-parse', 'HEAD']), fx.base);
+
+  // A profile whose integration branch is missing is refused before anything runs.
+  const missing = { ...fx, profile: { ...fx.profile, git: { ...fx.profile.git, integrationBranch: 'gone' } } };
+  await assert.rejects(setUp(missing), /integration branch gone \(git\.integrationBranch in the profile\) is not in/);
+});
+
 test('setupWorktree refuses an existing folder that is not a worktree, and paths inside the checkout', async t => {
   const fx = fixture(t);
   mkdirSync(fx.run);

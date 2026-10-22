@@ -8,7 +8,7 @@
 // Everything is written under os.tmpdir(); nothing starts a real claude or touches a real repo.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as store from './store.mjs';
@@ -63,6 +63,8 @@ async function harness(t, opts = {}) {
   for (const d of [h.data, h.main, h.tree, join(h.hub, 'inbox', 'attachments')]) mkdirSync(d, { recursive: true });
   cpSync(join(HUB, 'pipelines', 'app'), join(h.hub, 'pipelines', 'app'), { recursive: true });
   h.profile = fakeProfile(opts.profile || {});
+  // The main checkout has the profile's workspace folders, as a checkout the profile describes does.
+  for (const w of h.profile.workspaces || []) if (w.dir && w.dir !== '.') mkdirSync(join(h.main, ...w.dir.split('/')), { recursive: true });
   const calls = h.calls = new Proxy({}, { get: (o, k) => (o[k] = o[k] || []) });
   const world = h.world = {
     changed: [], atBase: { 'CLAUDE.md': '# Example\nUse small functions.\n', 'AGENTS.md': '# Agents\nReview rules here.\n' },
@@ -1215,6 +1217,27 @@ test('architecture with nothing new skips triage and decide', async t => {
   assert.equal(run.status, 'passed');
   assert.deepEqual(['triage', 'decide'].map(id => stageOf(run, id).status), ['skipped', 'skipped']);
   assert.match(stageOf(run, 'scan').meta, /0 new candidates \(first scan: nothing to compare\)/);
+});
+
+test('architecture refuses a checkout the profile does not describe, and records nothing', async t => {
+  const h = await harness(t);
+  rmSync(join(h.main, 'apps', 'web'), { recursive: true });
+  const run = await h.drive(await h.newRun('architecture', {}));
+  assert.equal(run.status, 'failed');
+  assert.match(run.statusReason, /This checkout doesn't match the example profile: apps\/web is missing\. Is it on a branch the profile describes \(main\)\? Nothing was measured or recorded\./);
+  assert.equal(h.calls.scan.length, 0, 'no probe ran');
+  assert.equal(h.calls.recordScan.length, 0, 'no scan was kept');
+});
+
+test('architecture names the probes that failed in the scan line', async t => {
+  const h = await harness(t, { deps: { probes: {
+    scan: async o => ({ at: new Date().toISOString(), sha: o.sha, values: { todoCount: { value: 2 } }, details: {}, errors: { deepImports: 'apps/web/src/features is not a folder in this tree' } }),
+    recordScan: async () => ({ scanId: 's-1', wins: [], score: 50 }), loadMetrics: async () => ({ scans: [] }), loadDetails: async () => null,
+    newCandidates, appendWins: async (d, p, w) => w,
+  } } });
+  const run = await h.drive(await h.newRun('architecture', {}));
+  assert.equal(run.status, 'passed');
+  assert.match(stageOf(run, 'scan').meta, /0 new candidates \(first scan: nothing to compare\) · 1 of 2 probes failed: deepImports$/);
 });
 
 test('setup-worktree runs the setup gate and passes', async t => {

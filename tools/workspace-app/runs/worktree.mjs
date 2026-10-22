@@ -442,9 +442,21 @@ export async function worktreeStatus({ profile, mainDir, dataDir }) {
   return done(describeState(st, st.record, mainDir));
 }
 
-// Creates (or repairs) the run tree and writes its record. Throws a plain message on a refusal
-// or a failed command; the record then says "failed". Returns the record.
-// runCommand defaults to gates/commands.mjs; proc and signal are passed through to it.
+// The commit a run tree is set up at: the tip of the profile's integration branch, which every
+// run checks out as its base, so install and generate prepare the tree the runs will use (not
+// whatever branch the main checkout happens to be on). Without one in the profile: HEAD.
+async function setupBase(main, profile) {
+  const branch = profile?.git?.integrationBranch;
+  if (!branch) return { rev: 'HEAD', label: 'HEAD' };
+  const sha = await commitSha(main, branch);
+  if (!sha) throw new Error(`The integration branch ${branch} (git.integrationBranch in the profile) is not in ${main}; fetch it, or fix the profile.`);
+  return { rev: sha, label: branch };
+}
+
+// Creates (or repairs) the run tree at the integration branch (setupBase) and writes its record.
+// Throws a plain message on a refusal or a failed command; the record then says "failed".
+// Returns the record. runCommand defaults to gates/commands.mjs; proc and signal are passed
+// through to it.
 export async function setupWorktree({ profile, mainDir, dataDir, onLine, signal, proc, runCommand }) {
   const { project, iso, path, name } = isolationOf(profile);
   const main = await checkMainDir(mainDir);
@@ -460,6 +472,7 @@ export async function setupWorktree({ profile, mainDir, dataDir, onLine, signal,
     if (!s.detached) throw new Error(`${name} is on branch ${s.branch}; run git switch --detach in ${path} first.`);
   }
   const steps = unique((iso.setup || []).map(e => commandIdFor(profile, e)));
+  const base = await setupBase(main, profile);
   const recordFile = worktreeRecordFile(dataDir, project);
   const log = makeLogger(setupLogFile(dataDir, project), onLine);
   const prev = await loadWorktreeRecord(dataDir, project).catch(() => null);
@@ -472,10 +485,11 @@ export async function setupWorktree({ profile, mainDir, dataDir, onLine, signal,
   try {
     await log(`Setting up ${path} for ${project}`);
     if (registered) {
-      await log(`${path} is already a worktree of ${main}; reusing it.`);
+      await log(`${path} is already a worktree of ${main}; reusing it at ${base.label} (${short(base.rev)}).`);
+      await git(path, ['checkout', '-q', '--detach', base.rev], { signal });
     } else {
-      await log(`git worktree add --detach ${path} HEAD`);
-      await git(main, ['worktree', 'add', '--detach', path, 'HEAD'], { timeoutMs: WORKTREE_ADD_MS, signal });
+      await log(`git worktree add --detach ${path} ${base.label}`);
+      await git(main, ['worktree', 'add', '--detach', path, base.rev], { timeoutMs: WORKTREE_ADD_MS, signal });
     }
     const ran = await runSteps(steps, { profile, tree: path, runCommand, proc, signal, log });
     await assertCleanAfter(path, steps, name, 'set it up again');

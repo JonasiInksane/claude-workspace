@@ -1,0 +1,6 @@
+Move cart totals into a cents helper
+
+Record: docs/records/CART-CENTS.md
+Checked by the app at standard level: 0 new · 0 known
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

@@ -109,7 +109,7 @@ test('stops, partial runs and background tasks map to their rows', () => {
   assert.match(bg.state.result.structured_output.summary, /after the background task/, 'the last result wins');
   const n = createNormalizer();
   assert.deepEqual(n.push(JSON.stringify({ type: 'system', subtype: 'task_started', description: 'watch', is_backgrounded: true })).map(r => r.msg), ['Background task started: watch']);
-  assert.match(normalize('login-needed').rows.at(-1).msg, /^Ended with success \(error\): Invalid API key/);
+  assert.match(normalize('login-needed').rows.at(-1).msg, /^Ended with an error: Invalid API key/, 'subtype "success" with is_error reads as an error');
 });
 
 test('thinking, rate limits, tool_progress and unknown lines produce no rows', () => {

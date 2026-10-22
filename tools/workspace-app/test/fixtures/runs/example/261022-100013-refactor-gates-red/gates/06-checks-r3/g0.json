@@ -1,0 +1,195 @@
+{
+  "version": 1,
+  "at": "2026-10-22T08:18:58.435Z",
+  "baseSha": "3509c76000eee69a52b6d914c94e88d29bb0bbe7",
+  "head": null,
+  "pipeline": "refactor",
+  "rows": [
+    {
+      "id": "g0.diffcheck",
+      "group": "G0",
+      "label": "Whitespace (git diff --check)",
+      "command": "git diff --check 3509c76",
+      "status": "pass",
+      "reason": "",
+      "durationMs": 96,
+      "log": null,
+      "details": {
+        "problems": []
+      }
+    },
+    {
+      "id": "g0.format",
+      "group": "G0",
+      "label": "Format with the project's own config",
+      "command": "format:changed on 2 files",
+      "status": "pass",
+      "reason": "",
+      "durationMs": 69,
+      "log": "g0.format.log",
+      "details": {
+        "files": [
+          "apps/web/src/features/cart/total.mjs",
+          "apps/web/src/features/cart/total.pin.test.mjs"
+        ],
+        "exitCode": 0
+      }
+    },
+    {
+      "id": "g0.lint",
+      "group": "G0",
+      "label": "Lint on changed files",
+      "command": "lint:web on 2 files",
+      "status": "pass",
+      "reason": "",
+      "durationMs": 104,
+      "log": "g0.lint.lint-web.log",
+      "details": {
+        "commands": [
+          {
+            "id": "lint:web",
+            "files": 2,
+            "status": "pass",
+            "exitCode": 0,
+            "reason": "",
+            "errors": [],
+            "log": "g0.lint.lint-web.log",
+            "durationMs": 104
+          }
+        ]
+      }
+    },
+    {
+      "id": "g0.secrets",
+      "group": "G0",
+      "label": "Secret scan of the diff",
+      "command": "secret scan of the added lines",
+      "status": "pass",
+      "reason": "",
+      "durationMs": 0,
+      "log": null,
+      "details": {
+        "found": []
+      }
+    },
+    {
+      "id": "g0.fences",
+      "group": "G0",
+      "label": "Scope fence",
+      "command": "fences from the profile",
+      "status": "pass",
+      "reason": "",
+      "durationMs": 47,
+      "log": null,
+      "details": {
+        "summary": "Pass",
+        "scope": {
+          "inPlan": 2,
+          "total": 2,
+          "allowedByUser": [],
+          "outside": []
+        }
+      }
+    },
+    {
+      "id": "g0.ratchets.tests",
+      "group": "G0",
+      "label": "Ratchet: test counts, .skip, .only, todo",
+      "command": "test counts in 1 test file at base and head",
+      "status": "pass",
+      "reason": "",
+      "durationMs": 1,
+      "log": null,
+      "details": {
+        "ok": true,
+        "lost": [],
+        "newSkips": [],
+        "files": [
+          {
+            "path": "apps/web/src/features/cart/total.pin.test.mjs",
+            "before": 0,
+            "after": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "g0.ratchets.allowlist",
+      "group": "G0",
+      "label": "Ratchet: procedure allowlist",
+      "command": "",
+      "status": "skip",
+      "reason": "Not run: no router file changed.",
+      "durationMs": 0,
+      "log": "g0.ratchets.allowlist.log",
+      "details": {}
+    },
+    {
+      "id": "g0.ratchets.metrics",
+      "group": "G0",
+      "label": "Ratchet: cycles and deep imports",
+      "command": "deepImports at base and head",
+      "status": "pass",
+      "reason": "",
+      "durationMs": 49,
+      "log": null,
+      "details": {
+        "rows": [
+          {
+            "metric": "deepImports",
+            "before": 0,
+            "after": 0,
+            "change": 0,
+            "status": "same"
+          }
+        ],
+        "problems": []
+      }
+    },
+    {
+      "id": "g0.contract",
+      "group": "G0",
+      "label": "Contract: procedures, legacy router, queues",
+      "command": "",
+      "status": "skip",
+      "reason": "Not run: no router or queue file changed.",
+      "durationMs": 0,
+      "log": "g0.contract.log",
+      "details": {}
+    },
+    {
+      "id": "g0.tenant",
+      "group": "G0",
+      "label": "Tenant probes on changed files",
+      "command": "",
+      "status": "skip",
+      "reason": "Not run: no changed file is in the tenant probes' scope.",
+      "durationMs": 0,
+      "log": "g0.tenant.log",
+      "details": {}
+    }
+  ],
+  "fence": {
+    "ok": true,
+    "hardFail": false,
+    "needsYou": false,
+    "readOnly": false,
+    "forbidden": [],
+    "mustTick": [],
+    "pinnedChanged": [],
+    "existingTestChanged": [],
+    "outsidePlan": [],
+    "allowedByUser": [],
+    "scope": {
+      "inPlan": 2,
+      "total": 2,
+      "allowedByUser": [],
+      "outside": []
+    },
+    "messages": []
+  },
+  "secretsFound": 0,
+  "ok": true,
+  "failed": [],
+  "cancelled": false
+}

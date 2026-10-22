@@ -11,6 +11,15 @@
   <link rel="stylesheet" href="/css/projects.css">
   <link rel="stylesheet" href="/css/assets.css">
   <link rel="stylesheet" href="/css/images.css">
+  <link rel="stylesheet" href="/css/palette.css">
+  <link rel="stylesheet" href="/css/today.css">
+  <link rel="stylesheet" href="/css/cockpit.css">
+  <link rel="stylesheet" href="/css/health.css">
+  <link rel="stylesheet" href="/css/launcher.css">
+  <link rel="stylesheet" href="/css/run.css">
+  <link rel="stylesheet" href="/css/review.css">
+  <link rel="stylesheet" href="/css/runs.css">
+  <link rel="stylesheet" href="/css/tools.css">
 </head>
 <body>
   <div class="app">
@@ -22,24 +31,47 @@
           <p id="rootPath"></p>
         </div>
       </div>
-      <!-- main.js adds a button per view (VIEWS) -->
+      <button class="btn primary start" type="button" id="startSomething" aria-keyshortcuts="Control+K">
+        <span class="start-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Start something</span>
+        <kbd>Ctrl K</kbd>
+      </button>
+      <!-- main.js fills the nav (Today, profiled projects, Runs, Projects, Flows, Library, Images, Assets) -->
       <nav aria-label="Views"></nav>
       <div class="side-actions">
-        <span class="label">Hub</span>
-        <button class="btn primary" id="startHub">Start Claude in the hub</button>
-        <button class="btn" id="continueHub">Continue last hub session</button>
-        <button class="btn ghost" id="openNavigator">Open navigator</button>
+        <p class="side-note" id="toolsInfo" hidden></p>
+        <div class="split">
+          <button class="btn" type="button" id="startHub">Hub session</button>
+          <details class="menu up" id="hubMenu">
+            <summary class="btn" aria-label="More hub actions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary>
+            <div class="menu-list">
+              <button type="button" id="continueHub">Continue last hub session</button>
+              <button type="button" id="openNavigator">Open navigator</button>
+            </div>
+          </details>
+        </div>
       </div>
       <div class="side-foot">
-        <span id="toolsInfo"></span>
-        <button class="icon-btn" id="refresh" title="Refresh">Refresh</button>
+        <span id="sideDate"></span>
+        <button class="icon-btn" type="button" id="themeToggle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor"/></svg><span id="themeText">System</span></button>
       </div>
     </aside>
-    <!-- main.js adds a <section class="view" id="view-<id>"> per view -->
-    <main></main>
+    <main>
+      <!-- Shown while the live-update stream is down (main.js); polling covers meanwhile -->
+      <div class="live-pill" id="livePill" hidden>Live updates paused, retrying <span>The page refreshes by polling meanwhile.</span></div>
+      <!-- main.js adds a <section class="view" id="view-<id>"> per view -->
+    </main>
   </div>
   <div id="toasts" aria-live="polite"></div>
-  <dialog id="dialog"></dialog>
+  <!-- The announcer: says "waiting for you" changes and nothing else (lib.js announce) -->
+  <div id="announcer" class="sr-only" aria-live="polite"></div>
+  <div class="flash" id="flash" aria-hidden="true"></div>
+  <dialog id="dialog" aria-labelledby="dialogTitle" aria-modal="true"></dialog>
+  <dialog id="palette" aria-label="Jump or start" aria-modal="true">
+    <input id="palInput" type="text" placeholder="Jump to a screen or start a pipeline…" aria-label="Search screens, runs and pipelines" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="palList" aria-autocomplete="list">
+    <ul class="pal-list" id="palList" role="listbox" aria-label="Results"></ul>
+  </dialog>
+  <!-- Wave 3b (UI-REVIEW, parts/commit-dialog.js) fills this one -->
+  <dialog id="commitDialog" aria-labelledby="commitDialogTitle" aria-modal="true"></dialog>
   <script type="module" src="/main.js"></script>
 </body>
 </html>

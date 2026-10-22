@@ -10,7 +10,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
   appendJsonl, canonicalJson, defaultDataDir, JSON_PARSE_CODE, jsonHash, PROJECT_RE, projectPaths, readJson, readJsonl, readJsonSync,
-  sha256File, sha256Text, writeJsonAtomic, writeJsonAtomicSync,
+  RENAME_RETRIES, sha256File, sha256Text, writeJsonAtomic, writeJsonAtomicSync,
 } from './datadir.mjs';
 import { tempDir } from '../test/helpers.mjs';
 
@@ -75,14 +75,15 @@ test('writeJsonAtomic retries a rename refused with EBUSY (50, then 100 ms) and 
   assert.deepEqual(fs.readdirSync(dir), ['x.json']);
 });
 
-test('writeJsonAtomic gives up after 5 retries (50..800 ms), removes the temp file and keeps the old file', async t => {
+test('writeJsonAtomic gives up after about 10 s of retries (50..800 ms, then 1 s each), removes the temp file and keeps the old file', async t => {
   const dir = tempDir('ws-datadir-', t);
   const file = join(dir, 'x.json');
   await writeJsonAtomic(file, { old: true });
   const shim = { ...fsp, rename: async () => { throw busy('EPERM'); } };
   const waits = [];
   await assert.rejects(writeJsonAtomic(file, { new: true }, { fs: shim, sleep: async ms => { waits.push(ms); } }), { code: 'EPERM' });
-  assert.deepEqual(waits, [50, 100, 200, 400, 800]);
+  assert.deepEqual(waits, [50, 100, 200, 400, 800, ...Array(RENAME_RETRIES - 5).fill(1000)]);
+  assert.ok(waits.reduce((a, b) => a + b, 0) >= 10_000, 'long enough for a busy reader or a virus scanner');
   assert.deepEqual(await readJson(file), { old: true });
   assert.deepEqual(fs.readdirSync(dir), ['x.json']);
 });

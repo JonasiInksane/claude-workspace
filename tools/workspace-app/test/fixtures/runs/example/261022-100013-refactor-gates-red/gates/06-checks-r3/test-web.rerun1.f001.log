@@ -1,0 +1,36 @@
+TAP version 13
+# Subtest: total pins the sum
+not ok 1 - total pins the sum
+  ---
+  duration_ms: 5.3357
+  location: 'C:\\dev\\example-run\\apps\\web\\src\\features\\cart\\total.pin.test.mjs:5:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    600 !== 6
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 6
+  actual: 600
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/dev/example-run/apps/web/src/features/cart/total.pin.test.mjs:6:10)
+    Test.runInAsyncScope (node:async_hooks:206:9)
+    Test.run (node:internal/test_runner/test:764:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:492:18)
+    node:internal/test_runner/harness:247:12
+    node:internal/process/task_queues:140:7
+    AsyncResource.runInAsyncScope (node:async_hooks:206:9)
+    AsyncResource.runMicrotask (node:internal/process/task_queues:137:8)
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 0
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 130.1651

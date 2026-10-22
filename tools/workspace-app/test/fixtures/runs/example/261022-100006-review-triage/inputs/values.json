@@ -1,0 +1,10 @@
+{
+  "target": "uncommitted",
+  "n": "",
+  "branch": "",
+  "focus": [
+    "correctness",
+    "tests"
+  ],
+  "depth": "quick"
+}

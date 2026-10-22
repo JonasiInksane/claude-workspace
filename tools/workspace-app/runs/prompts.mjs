@@ -79,10 +79,10 @@ export function renderPrompt(tpl, vars = {}) {
 }
 
 // Text that is data, never instructions. "</data" inside it is escaped so it can't close the
-// block early.
+// block early, and "<project_instructions" so it can't pose as the trusted block (ADDENDUM A5).
 export function dataBlock(name, text) {
   const n = String(name || 'data').toLowerCase().replace(/[^a-z0-9._-]/g, '-').slice(0, 60) || 'data';
-  const body = String(text == null ? '' : text).replace(/<\/data/gi, '<\\/data');
+  const body = String(text == null ? '' : text).replace(/<\/data/gi, '<\\/data').replace(/<(\/?)project_instructions/gi, '<\\$1project_instructions');
   return `<data name="${n}">\n${body}\n</data>`;
 }
 
@@ -113,12 +113,19 @@ export function instructionsBlock(file, sha, text, cap = INSTRUCTIONS_CAP) {
 
 // CLAUDE.md and AGENTS.md at the base commit, through git (so a run can't change them), as
 // <project_instructions> blocks. `git.fileAt(dir, sha, path)` returns the text, or null when the
-// file isn't there (or throws).
+// file isn't there. When it throws, the file may well exist: the stage is told it could not be
+// read and to Read it itself, never that the project has none (A5).
 export async function projectInstructions({ git, dir, sha, files = INSTRUCTION_FILES, cap = INSTRUCTIONS_CAP }) {
   const blocks = [];
   for (const file of files) {
     let text = null;
-    try { text = git && typeof git.fileAt === 'function' ? await git.fileAt(dir, sha, file) : null; } catch { text = null; }
+    try {
+      text = git && typeof git.fileAt === 'function' ? await git.fileAt(dir, sha, file) : null;
+    } catch (e) {
+      const why = String((e && e.message) || e).replace(/\s+/g, ' ').slice(0, 200);
+      blocks.push(`(${file} could not be read at the base commit ${String(sha || '').slice(0, 7)}: ${why}. Read ${file} in your working folder before you start; it holds the project's own rules.)`);
+      continue;
+    }
     if (Buffer.isBuffer(text)) text = text.toString('utf8');
     if (typeof text === 'string' && text.trim()) blocks.push(instructionsBlock(file, sha, text, cap));
   }

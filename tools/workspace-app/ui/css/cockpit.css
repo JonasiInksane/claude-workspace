@@ -1,0 +1,94 @@
+/* The project cockpit (UI-COCKPIT, views/cockpit.js and parts/kanban.js; mockup #v-cockpit). Linked after app.css in index.html; narrow-screen rules for this view go here too.
+   Generic names from the mockup (.col, .more, .phase, .span2) are scoped to their parent, since
+   every view's CSS is global. Status and severity colours always sit next to words. */
+
+/* ---------- Header */
+.ck-title { min-width: 0; }
+.ck-title .mono { overflow-wrap: anywhere; }
+
+/* ---------- Facts bar and the Setup checklist */
+.factsbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 10px var(--s4); margin-bottom: var(--s4); }
+.factsbar .badge svg { width: 13px; height: 13px; }
+.factsbar .badge.wrap { white-space: normal; border-radius: 10px; }
+.factsbar details.setup { margin-left: auto; font-size: var(--t-md); }
+.factsbar details.setup[open] { flex-basis: 100%; margin-left: 0; }
+.factsbar .setup summary { cursor: pointer; font-weight: 600; color: var(--green); width: max-content; }
+.factsbar .setup summary.todo { color: var(--amber); }
+.factsbar .setup ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.factsbar .setup li { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.factsbar .setup li .text { flex: 1; min-width: 220px; color: var(--muted); overflow-wrap: anywhere; }
+
+/* ---------- Notes under the facts bar (no profile, a broken profile, a lock held for days) */
+.ck-notes { display: grid; gap: var(--s2); margin-bottom: var(--s4); }
+.ck-notes > .note { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ck-notes > .note > span { flex: 1; min-width: 220px; }
+.ck-notes .ck-profile { display: block; }
+.ck-profile ul { margin: 4px 0 0; padding-left: 18px; }
+.ck-profile code { overflow-wrap: anywhere; }
+.ck-error { display: flex; gap: 6px; flex-wrap: wrap; align-items: baseline; margin-bottom: var(--s2); }
+
+/* ---------- Card grid */
+.cgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s4); margin-top: var(--s4); }
+.cgrid > .span2 { grid-column: 1 / -1; }
+.cgrid .card-head .grow { min-width: 180px; }
+.cgrid .list .title .link { font-weight: 600; text-align: left; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cgrid .list .title .run-link { color: var(--text); }
+.cgrid .list .title .run-link:hover { color: var(--accent); }
+
+/* ---------- Audit progress: the phase bar and the board */
+.audit .phase { display: flex; gap: var(--s3); align-items: center; margin-bottom: var(--s2); font-size: var(--t-md); flex-wrap: wrap; }
+.audit .phase .bar { flex: 1; min-width: 120px; }
+.audit .phase-later { margin-bottom: var(--s3); }
+.audit .note { margin-bottom: var(--s3); }
+.kanban { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s3); margin-top: var(--s2); }
+.kanban .col { background: var(--panel); border-radius: 10px; padding: var(--s2); min-width: 0; }
+.kanban .col h4 { margin: 0 0 4px; font-size: var(--t-sm); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); display: flex; justify-content: space-between; gap: 6px; }
+.fcard {
+  display: block; width: 100%; text-align: left; background: var(--card); border: 1px solid var(--border); border-left: 3px solid var(--muted);
+  border-radius: 8px; padding: 6px 8px; margin-top: 6px; font-size: var(--t-md); cursor: pointer; overflow-wrap: anywhere;
+}
+.fcard:hover { border-color: var(--accent); }
+.fcard.high { border-left-color: var(--red); }
+.fcard.med { border-left-color: var(--amber); }
+.fcard.done { border-left-color: var(--green); }
+.fcard b { font-family: var(--mono); font-size: var(--t-sm); }
+.fcard .sev { font-size: var(--t-sm); color: var(--muted); display: block; }
+.kanban .more { font-size: var(--t-sm); color: var(--muted); padding: 6px 4px 0; }
+.kanban .more-toggle { font-size: var(--t-sm); padding: 4px; }
+
+/* ---------- Checks */
+.res-link { text-align: left; }
+.res-link:hover { text-decoration: none; }
+.res-link:hover .res { text-decoration: underline; }
+
+/* ---------- Health card */
+.ck-score { display: flex; gap: var(--s4); align-items: center; flex-wrap: wrap; margin-bottom: var(--s3); }
+.ck-score .grow { min-width: 140px; }
+.ck-tiles { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: var(--t-md); }
+.ck-tiles li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: baseline; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.ck-tiles li:last-child { border-bottom: 0; }
+.ck-tiles .label { color: var(--muted); overflow-wrap: anywhere; }
+.ck-tiles .value { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+
+/* ---------- Dialogs: Check my work, accept a baseline, import findings */
+.ck-sub { margin: var(--s2) 0 0; font-size: var(--t-md); }
+.ck-preview .list li { padding: 6px 0; }
+.ck-commands .title { white-space: normal; }
+.ck-ids { list-style: none; margin: 0; padding: 8px 10px; max-height: 220px; overflow: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; display: grid; gap: 2px; }
+.ck-ids li { overflow-wrap: anywhere; }
+table.ck-import td:first-child, table.ck-import th:first-child { width: 1%; }
+table.ck-import td { overflow-wrap: anywhere; }
+details.ck-same summary { cursor: pointer; color: var(--muted); font-size: var(--t-md); padding: 4px 0; }
+dialog .dialog-actions .reason { margin-right: auto; align-self: center; }
+
+/* ---------- Narrow screens (app.css breakpoints: 1180, 1080, 760) */
+@media (max-width: 1180px) {
+  .kanban { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 1080px) {
+  .cgrid { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  .kanban { grid-template-columns: 1fr; }
+  .factsbar details.setup { margin-left: 0; }
+}

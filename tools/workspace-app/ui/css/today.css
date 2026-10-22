@@ -1,0 +1,52 @@
+/* Today (UI-TODAY, views/today.js; mockup #v-today). Linked after app.css in index.html; narrow-screen rules for this view go here too.
+   Built on the shared parts of app.css (.view-head, .intent, .sec, .rows/.row, .grid3, .grid2, .card, .list, .kv, .big, .trend, .note).
+   Every rule is scoped to the view's section (#view-today, made by main.js), so no other screen is touched. */
+
+/* The "Jump to Ctrl K" button: the key hint sits a little apart from the words. */
+#view-today .view-head .btn kbd { margin-left: 2px; }
+
+/* A failed load and the "Link your existing checkout" cards sit between the heading and the intent box. */
+#view-today .today-notices { display: grid; gap: var(--s3); }
+#view-today .today-notices:not(:empty) { margin-bottom: var(--s4); }
+#view-today .today-notice.note { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* Section heading counts, and the line that replaces an empty list. */
+#view-today .today-count { display: inline-flex; align-items: center; }
+#view-today .today-none { font-size: var(--t-md); padding: 2px 2px 0; }
+
+/* Waiting and running rows: the meta line wraps instead of running off the card. */
+#view-today .row .sub { overflow-wrap: anywhere; }
+#view-today .row .badge { flex: none; }
+
+/* Health per project: the score, its sparkline, then the key-value lines. */
+#view-today .big + .spark { margin: 6px 0 8px; }
+#view-today .today-noscan { margin-bottom: 6px; }
+#view-today .kv b { text-align: right; min-width: 0; overflow-wrap: anywhere; }
+
+/* Today so far (mockup .mini-stats). */
+#view-today .today-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s2); }
+#view-today .today-stats > div { background: var(--panel); border-radius: 8px; padding: 8px 10px; min-width: 0; }
+#view-today .today-stats b { display: block; font-size: var(--t-xl); font-variant-numeric: tabular-nums; line-height: 1.3; }
+#view-today .today-stats span { font-size: var(--t-sm); color: var(--muted); }
+
+/* Card footers: a disabled button's reason wraps under it on narrow cards. A button busy with its
+   own request keeps the focus (aria-disabled), so it only looks disabled. */
+#view-today .card-foot .reason { flex: 1 1 140px; }
+#view-today .btn[aria-disabled="true"] { opacity: .5; cursor: progress; }
+
+/* The empty state of Recent results ("No runs yet. Try Explain: 3 minutes, read-only."). */
+#view-today .empty { padding: 20px 12px; }
+
+@media (max-width: 1080px) {
+  #view-today .today-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Narrow: a row puts its badge and Open button on a second line, under the text. */
+@media (max-width: 760px) {
+  #view-today .today-results { grid-template-columns: minmax(0, 1fr); }
+  #view-today .row { flex-wrap: wrap; row-gap: 6px; }
+  #view-today .row .main { flex: 1 1 calc(100% - 30px); }
+  #view-today .row .badge { margin-left: 21px; }
+  #view-today .row .btn { margin-left: auto; }
+  #view-today .view-head .btn { align-self: flex-start; }
+}

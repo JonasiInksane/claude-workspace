@@ -54,7 +54,7 @@ function checkTable(c) {
   return h('div', {},
     h('p', { class: 'muted small-text' }, [c.checkedAt ? `Checked ${fmtTime(c.checkedAt)}` : '', c.triangles != null ? `${c.triangles} triangles` : '',
       c.dimensionsM ? `${['width', 'depth', 'height'].map(k => Number(c.dimensionsM[k] ?? 0).toFixed(3)).join(' × ')} m (w × d × h)` : ''].filter(Boolean).join(' · ')),
-    h('table', { class: 'checks' }, h('tbody', {}, c.checks.map(k => h('tr', { class: k.status },
+    h('table', { class: 'ctable asset-checks' }, h('tbody', {}, c.checks.map(k => h('tr', { class: k.status },
       h('td', {}, h('span', { class: `badge ${k.status === 'pass' ? 'ok' : 'warn'}` }, k.status)),
       h('td', { class: 'mono' }, k.id),
       h('td', { class: 'msg' }, k.message))))));

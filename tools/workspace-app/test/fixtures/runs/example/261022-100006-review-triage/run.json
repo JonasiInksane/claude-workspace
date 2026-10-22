@@ -1,0 +1,267 @@
+{
+  "version": 1,
+  "id": "261022-100006-review-triage",
+  "project": "example",
+  "pipeline": "review",
+  "parent": null,
+  "title": "Review: uncommitted changes",
+  "values": {
+    "target": "uncommitted",
+    "n": "",
+    "branch": "",
+    "focus": [
+      "correctness",
+      "tests"
+    ],
+    "depth": "quick"
+  },
+  "level": "standard",
+  "levelReason": [],
+  "reviewEffort": "high",
+  "createdAt": "2026-10-22T08:18:33.985Z",
+  "updatedAt": "2026-10-22T08:18:35.125Z",
+  "endedAt": null,
+  "status": "waiting",
+  "statusReason": "",
+  "current": {
+    "stage": "triage",
+    "index": 3,
+    "attempt": 1,
+    "round": 1
+  },
+  "waiting": {
+    "kind": "triage",
+    "since": "2026-10-22T08:18:35.121Z",
+    "detail": {
+      "findings": 2
+    }
+  },
+  "isolation": {
+    "mode": "none",
+    "tree": "C:\\dev\\claude-workspace\\projects\\example",
+    "mainDir": "C:\\dev\\claude-workspace\\projects\\example",
+    "treeMode": "main"
+  },
+  "base": {
+    "branch": "",
+    "sha": "3509c76000eee69a52b6d914c94e88d29bb0bbe7",
+    "head": null
+  },
+  "branch": null,
+  "commit": null,
+  "versions": {
+    "node": "20.15.1",
+    "claudeCode": "2.1.307"
+  },
+  "lockHeld": false,
+  "plan": null,
+  "allowances": [],
+  "pins": [],
+  "redTests": [],
+  "inputsHashes": {
+    "diff.patch": "sha256:69696446514e4abb6db10b2540ce522c4e9d4d758e29a91dc0f1c6980ebbcfa1",
+    "stat.txt": "sha256:65234b81bece56bd2639c147c7b2fa24ce9c3ed000e9c18e037255b883d0b3ed",
+    "changed.json": "sha256:e93f0fb3893a567287c8a99c2ae89887f48dd16579e290bf32bf9c40e5a85b1f",
+    "g0.json": "sha256:663a12498ae0ced34b4427ad7704aafce746ca30b8371a243f133270cca7d6ec",
+    "request.md": "sha256:44a918a654b845cb65195f081365c6b89ba15fcb56cba69f8fb2dc50199e0f6c",
+    "values.json": "sha256:c4052b1d9c3e0547836b8e4b903a1d18b8c960f6cda48739952cb64ad80bb134"
+  },
+  "fixRounds": {
+    "auto": 0,
+    "user": 0,
+    "maxAuto": 2,
+    "maxUser": 2
+  },
+  "gatedTree": null,
+  "stages": [
+    {
+      "id": "collect",
+      "n": 0,
+      "kind": "gate",
+      "status": "done",
+      "rounds": 1,
+      "startedAt": "2026-10-22T08:18:34.003Z",
+      "gate": "gates/00-collect",
+      "endedAt": "2026-10-22T08:18:34.686Z",
+      "meta": "1 file · base 3509c76"
+    },
+    {
+      "id": "review",
+      "n": 1,
+      "kind": "claude",
+      "status": "done",
+      "attempts": [
+        {
+          "k": 1,
+          "folder": "stages/01-review",
+          "sessionId": "b09e0565-d5ee-4877-8808-d6199d5de045",
+          "name": "261022-100006-review-triage-review",
+          "startedAt": "2026-10-22T08:18:34.845Z",
+          "model": "sonnet",
+          "effort": "high",
+          "profile": "READ",
+          "mode": "manual",
+          "maxTurns": 40,
+          "cwd": "C:\\dev\\claude-workspace\\projects\\example",
+          "why": "fresh",
+          "proc": {
+            "pid": 15052,
+            "image": "node.exe",
+            "startedAt": 1792657114874
+          },
+          "endedAt": "2026-10-22T08:18:35.097Z",
+          "status": "done",
+          "turns": 5,
+          "numTurns": 5,
+          "subtype": "success",
+          "durationMs": 243,
+          "estUsd": 0.00161092,
+          "denials": 0,
+          "ccVersion": "2.1.307",
+          "initModel": "claude-sonnet-5-5",
+          "init": "ok",
+          "autoResumed": false
+        }
+      ],
+      "startedAt": "2026-10-22T08:18:34.845Z",
+      "endedAt": "2026-10-22T08:18:35.097Z",
+      "meta": "5 turns"
+    },
+    {
+      "id": "verify",
+      "n": 2,
+      "kind": "claude",
+      "status": "skipped",
+      "attempts": [],
+      "endedAt": "2026-10-22T08:18:35.113Z",
+      "meta": "Not needed for this run"
+    },
+    {
+      "id": "triage",
+      "n": 3,
+      "kind": "human",
+      "status": "waiting",
+      "startedAt": "2026-10-22T08:18:35.121Z"
+    }
+  ],
+  "takeover": null,
+  "error": null,
+  "riskTags": [],
+  "findingId": null,
+  "owner": {
+    "pid": 9184,
+    "image": "node.exe",
+    "startedAt": 1792657106225
+  },
+  "outputs": {
+    "collect": {
+      "files": 1,
+      "g0": [
+        {
+          "id": "g0.diffcheck",
+          "label": "Whitespace (git diff --check)",
+          "status": "pass",
+          "reason": ""
+        },
+        {
+          "id": "g0.format",
+          "label": "Format with the project's own config",
+          "status": "skip",
+          "reason": "Not run for a read-only review"
+        },
+        {
+          "id": "g0.lint",
+          "label": "Lint on changed files",
+          "status": "skip",
+          "reason": "Not run for a read-only review"
+        },
+        {
+          "id": "g0.secrets",
+          "label": "Secret scan of the diff",
+          "status": "pass",
+          "reason": ""
+        },
+        {
+          "id": "g0.fences",
+          "label": "Scope fence",
+          "status": "pass",
+          "reason": ""
+        },
+        {
+          "id": "g0.ratchets.tests",
+          "label": "Ratchet: test counts, .skip, .only, todo",
+          "status": "skip",
+          "reason": "Not run: no test files changed."
+        },
+        {
+          "id": "g0.ratchets.allowlist",
+          "label": "Ratchet: procedure allowlist",
+          "status": "skip",
+          "reason": "Not run: no router file changed."
+        },
+        {
+          "id": "g0.ratchets.metrics",
+          "label": "Ratchet: cycles and deep imports",
+          "status": "pass",
+          "reason": ""
+        },
+        {
+          "id": "g0.contract",
+          "label": "Contract: procedures, legacy router, queues",
+          "status": "skip",
+          "reason": "Not run: no router or queue file changed."
+        },
+        {
+          "id": "g0.tenant",
+          "label": "Tenant probes on changed files",
+          "status": "skip",
+          "reason": "Not run: no changed file is in the tenant probes' scope."
+        }
+      ]
+    },
+    "review": {
+      "version": 1,
+      "verdict": "fix",
+      "notProven": [
+        "Expo totals"
+      ],
+      "verified": false,
+      "stage": "review",
+      "at": "2026-10-22T08:18:35.098Z",
+      "findings": [
+        {
+          "severity": "medium",
+          "kind": "issue",
+          "rule": "correctness",
+          "path": "apps/web/src/features/cart/total.mjs",
+          "line": 1,
+          "claim": "The * 1 does nothing and hides intent.",
+          "evidence": "line 1",
+          "suggestion": "Remove it.",
+          "id": "F1",
+          "source": "review"
+        },
+        {
+          "severity": "low",
+          "kind": "follow-up",
+          "rule": "tests",
+          "path": "apps/web/src/features/cart/total.mjs",
+          "line": 0,
+          "claim": "No test covers an empty cart.",
+          "evidence": "",
+          "suggestion": "Add one.",
+          "id": "F2",
+          "source": "review"
+        }
+      ]
+    }
+  },
+  "riskHits": [],
+  "rateLimit": {
+    "status": "allowed",
+    "type": "five_hour",
+    "utilization": 0.42,
+    "resetsAt": 1792674000,
+    "sevenDayUtilization": 0.17
+  }
+}

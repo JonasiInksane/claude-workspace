@@ -1,8 +1,8 @@
 // GET /api/state: everything the page shows, in one call (state.mjs builds it).
 import { buildState } from '../state.mjs';
 
-export function routes({ root, actions }) {
+export function routes({ root, actions, dataDir }) {
   return {
-    'GET /api/state': async () => ({ ok: true, ...(await buildState(root, actions.tools || {})) }),
+    'GET /api/state': async () => ({ ok: true, ...(await buildState(root, actions.tools || {}, { dataDir })) }),
   };
 }

@@ -1,0 +1,53 @@
+/* Health and wins (UI-COCKPIT, views/health.js; mockup #v-health). Linked after app.css in index.html; narrow-screen rules for this view go here too.
+   .tile is also the gallery tile in app.css (Images, Flows), so the metric tiles are scoped as
+   .tiles .tile and undo what they don't share. A tile's trend colour always sits next to its
+   trend in words (Better, Same, Worse). */
+
+/* ---------- Score row */
+.score-row { display: flex; gap: var(--s5); align-items: center; flex-wrap: wrap; padding: var(--s4) var(--s5); }
+.score-row .big { font-size: 26px; }
+
+/* ---------- Metric tiles */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--s3); }
+.tiles .tile {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 6px; box-shadow: var(--shadow); overflow: visible; min-width: 0;
+}
+.tiles .tile.worse { border-left: 3px solid var(--red); }
+.tiles .tile .t-top { display: flex; justify-content: space-between; gap: 8px; font-size: var(--t-md); color: var(--muted); }
+.tiles .tile .v { font-size: var(--t-xl); font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.tiles .tile details { font-size: var(--t-sm); color: var(--muted); }
+.tiles .tile details p { margin-top: 4px; }
+.tiles .tile summary { cursor: pointer; width: max-content; }
+.tiles .tile .note { font-size: var(--t-sm); overflow-wrap: anywhere; }
+.tiles .tile .t-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: auto; flex-wrap: wrap; }
+.tiles .tile.better .spark { color: var(--green); }
+.tiles .tile.worse .spark { color: var(--red); }
+.hl-allow { display: flex; gap: 6px; flex-wrap: wrap; align-items: baseline; }
+
+/* ---------- Lenses and candidates */
+#view-health .ctable .note { margin-top: 4px; }
+.hl-cand li { align-items: flex-start; }
+.hl-cand li > .badge { margin-top: 2px; }
+.hl-cand .sub.mono { overflow-wrap: anywhere; }
+.hl-cand .row-actions { flex-direction: column; align-items: stretch; }
+.hl-cand .sub .badge { margin-right: 4px; }
+fieldset.hl-choices { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; display: grid; gap: 6px; margin: 0; }
+fieldset.hl-choices legend { font-weight: 600; font-size: var(--t-md); padding: 0 4px; }
+
+/* ---------- Wins */
+#view-health .list .title.wrap { white-space: normal; overflow-wrap: anywhere; }
+.ach { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.ach li { border: 1px dashed var(--border); border-radius: 10px; padding: 8px 10px; font-size: var(--t-md); }
+.ach li b { display: block; }
+.ach li span { font-size: var(--t-sm); color: var(--muted); }
+.ach li.got { border-style: solid; border-color: var(--green); background: var(--green-soft); }
+.ach li.got span { color: var(--green); font-weight: 600; }
+.boss { display: grid; gap: 6px; }
+.boss .bar { height: 14px; }
+
+/* ---------- Narrow screens (app.css breakpoints: 1180, 1080, 760) */
+@media (max-width: 760px) {
+  .score-row { padding: var(--s4); gap: var(--s4); }
+  .tiles { grid-template-columns: 1fr; }
+}

@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "id": "261022-100005-explain-running",
+  "project": "example",
+  "pipeline": "explain",
+  "parent": null,
+  "title": "Explain: How do sessions work?",
+  "values": {
+    "what": "How do sessions work?",
+    "where": ""
+  },
+  "level": "standard",
+  "levelReason": [],
+  "reviewEffort": null,
+  "createdAt": "2026-10-22T08:18:31.892Z",
+  "updatedAt": "2026-10-22T08:18:32.225Z",
+  "endedAt": null,
+  "status": "running",
+  "statusReason": "",
+  "current": {
+    "stage": "answer",
+    "index": 0,
+    "attempt": 1,
+    "round": 1
+  },
+  "waiting": null,
+  "isolation": {
+    "mode": "none",
+    "treeMode": "main",
+    "tree": "C:\\dev\\claude-workspace\\projects\\example",
+    "mainDir": "C:\\dev\\claude-workspace\\projects\\example"
+  },
+  "base": {
+    "branch": "",
+    "sha": "3509c76000eee69a52b6d914c94e88d29bb0bbe7"
+  },
+  "branch": null,
+  "commit": null,
+  "versions": {
+    "node": "20.15.1",
+    "claudeCode": null
+  },
+  "lockHeld": false,
+  "plan": null,
+  "allowances": [],
+  "pins": [],
+  "redTests": [],
+  "inputsHashes": {
+    "request.md": "sha256:d1aa11fd47a1c294d49c7096e2e051d3d4c8f764fe945f2d860b30b6cbdef2de",
+    "values.json": "sha256:f42733b64c1e5d3c4813adbc29918d1ffdbcce9eda7d5cec29452ffff224c325"
+  },
+  "fixRounds": {
+    "auto": 0,
+    "user": 0,
+    "maxAuto": 2,
+    "maxUser": 2
+  },
+  "gatedTree": null,
+  "stages": [
+    {
+      "id": "answer",
+      "n": 0,
+      "kind": "claude",
+      "status": "running",
+      "attempts": [
+        {
+          "k": 1,
+          "folder": "stages/00-answer",
+          "sessionId": "0b921855-44c1-45dd-890d-ff8752f74d84",
+          "name": "261022-100005-explain-running-answer",
+          "startedAt": "2026-10-22T08:18:32.225Z",
+          "model": "sonnet",
+          "effort": "high",
+          "profile": "READ",
+          "mode": "manual",
+          "maxTurns": 40,
+          "cwd": "C:\\dev\\claude-workspace\\projects\\example",
+          "why": "fresh"
+        }
+      ],
+      "startedAt": "2026-10-22T08:18:32.225Z"
+    }
+  ],
+  "takeover": null,
+  "error": null,
+  "riskTags": [],
+  "findingId": null,
+  "owner": {
+    "pid": 9184,
+    "image": "node.exe",
+    "startedAt": 1792657106225
+  },
+  "outputs": {}
+}

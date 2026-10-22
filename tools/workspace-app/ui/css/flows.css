@@ -16,6 +16,12 @@ details.launch[open] summary { margin-bottom: 8px; }
 .drop.compact { padding: 14px 16px; margin: 6px 0 10px; }
 .drop.compact b { margin-top: 0; font-size: 14px; }
 #view-flows > details.archived { margin-top: 18px; }
+/* A disabled Run button says why on its own line in the card head */
+.flow-reason { flex-basis: 100%; }
+/* The editor's Ask row: the question, and "Required" with its explanation */
+.ask-required { display: grid; gap: 4px; align-content: end; padding-bottom: 6px; }
+.ask-required small { font-weight: 400; color: var(--muted); font-size: var(--t-md); }
+.ask-required label.check:has(input:disabled) { opacity: .6; cursor: not-allowed; }
 
 @media (max-width: 760px) {
   .flow-form .two-col { grid-template-columns: 1fr; }

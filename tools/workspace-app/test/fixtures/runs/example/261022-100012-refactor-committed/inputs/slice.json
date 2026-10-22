@@ -1,0 +1,29 @@
+{
+  "slice": {
+    "title": "Cents",
+    "goal": "total sums in cents",
+    "files": [
+      "apps/web/src/features/cart/total.mjs",
+      "apps/web/src/features/cart/extra.mjs",
+      "package.json"
+    ],
+    "tests": [
+      "apps/web/src/features/cart/total.pin.test.mjs"
+    ],
+    "outOfScope": [
+      "Expo"
+    ],
+    "estLines": 10
+  },
+  "testsFromProve": [
+    {
+      "path": "apps/web/src/features/cart/total.pin.test.mjs",
+      "name": "total pins the sum",
+      "proves": "the sum stays the same"
+    }
+  ],
+  "pins": [
+    "apps/web/src/features/cart/total.pin.test.mjs"
+  ],
+  "redTests": []
+}

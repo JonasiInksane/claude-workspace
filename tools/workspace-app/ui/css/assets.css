@@ -31,16 +31,17 @@ dialog.asset { width: min(1240px, calc(100vw - 48px)); }
   background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
 }
 .verdict p { margin: 0; }
-table.checks { width: 100%; border-collapse: collapse; font-size: 13px; }
-table.checks td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
-table.checks td:first-child { width: 1%; }
-table.checks td.mono { white-space: nowrap; width: 1%; color: var(--muted); }
-table.checks td.msg { width: 100%; }
-table.checks tr.pass td:last-child { color: var(--muted); }
+/* The check table builds on the shared table.ctable (app.css) */
+table.asset-checks td { padding: 6px 8px; }
+table.asset-checks td:first-child { width: 1%; }
+table.asset-checks td.mono { white-space: nowrap; width: 1%; color: var(--muted); }
+table.asset-checks td.msg { width: 100%; }
+table.asset-checks tr.pass td:last-child { color: var(--muted); }
 .strip .pic { border: 1px solid var(--border); border-radius: 8px; padding: 0; overflow: hidden; background: var(--code-bg); cursor: zoom-in; aspect-ratio: 1; }
 .strip .pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
-ul.log { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--muted); display: flex; flex-direction: column; gap: 6px; }
-ul.log li:first-child { color: var(--text); }
+/* Scoped to the asset dialogs: the live run's timeline is also a .log (css/run.css) */
+.asset-detail ul.log { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--muted); display: flex; flex-direction: column; gap: 6px; }
+.asset-detail ul.log li:first-child { color: var(--text); }
 
 /* Sprites (sprite-dialog.js, sprite-viewer.js): pixel art is never smoothed. */
 .asset-thumb img.pixel { object-fit: contain; image-rendering: pixelated; }

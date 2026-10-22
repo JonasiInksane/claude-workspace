@@ -24,8 +24,9 @@
 // Every dependency is injected (createExecutor(deps)), so tests run with fakes; defaultDeps()
 // loads the real modules for the wiring and the integration test.
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, extname, join, posix, win32 } from 'node:path';
+import { mkdir, readFile, stat } from 'node:fs/promises';
+import { writeJsonAtomic, writeTextAtomic } from '../core/datadir.mjs';
+import { basename, extname, join, posix, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as catalogModule from './catalog.mjs';
 import * as promptsModule from './prompts.mjs';
@@ -160,6 +161,20 @@ export function sanitizeOutput(schema, out, tree = '') {
     for (const f of asList(o.findings)) f.path = clean(f.path);
   } else if (schema === 'answer.v1') {
     o.sources = asList(o.sources).map(s => ({ ...s, path: clean(s.path) })).filter(s => s.path);
+  } else if (schema === 'diagnosis.v1') {
+    // Evidence such as "C:\...\src\a.ts:12 (the call)": an absolute path inside the tree becomes
+    // relative (the line and the rest are kept), one outside the tree drops the item. Other
+    // evidence text stays as it is.
+    for (const h of asList(o.hypotheses)) {
+      if (!h || typeof h !== 'object') continue;
+      h.evidence = asList(h.evidence).map(e => {
+        const str = String(e).trim();
+        const m = /^([A-Za-z]:[\\/]|[\\/])/.test(str) ? /^(\S+?)((?::\d+){1,2})?(?=$|[\s,;])([\s\S]*)$/.exec(str) : null;
+        if (!m) return str;
+        const rel = clean(m[1]);
+        return rel ? `${rel}${m[2] || ''}${m[3]}` : '';
+      }).filter(Boolean);
+    }
   }
   return { output: o, dropped };
 }
@@ -213,6 +228,19 @@ export function commitDraft(run) {
 // Turns evidence strings such as "src/a.ts:12" into clean paths.
 export function evidencePaths(evidence) {
   return unique(asList(evidence).map(e => catalogModule.cleanRelPath(String(e).trim().split(/[\s,;]/)[0].replace(/:\d+(?::\d+)?$/, ''))));
+}
+
+// The profile's workspace folders (other than ".") that are not folders in `tree`: a checkout
+// on a branch the profile doesn't describe.
+export async function missingWorkspaces(profile, tree) {
+  const out = [];
+  for (const w of asList(profile && profile.workspaces)) {
+    const dir = w && typeof w.dir === 'string' ? w.dir.replace(/\\/g, '/').replace(/\/+$/, '') : '';
+    if (!dir || dir === '.' || dir.split('/').includes('..')) continue;
+    const st = await stat(join(tree, ...dir.split('/'))).catch(() => null);
+    if (!st || !st.isDirectory()) out.push(dir);
+  }
+  return out;
 }
 
 // Ratchet wins from the G0 metric rows ({metric, before, after}), lower is better.
@@ -289,6 +317,7 @@ export function buildHypothesisPlan(diagnosis, payload = {}, { mustTickFor = () 
   if (!Number.isInteger(index) || index < 0 || index >= list.length) httpFail(400, `Pick a hypothesis from 1 to ${list.length}.`);
   const hypothesis = list[index];
   const files = evidencePaths(hypothesis.evidence);
+  if (!files.length) httpFail(400, 'This hypothesis names no file in the tree, so the plan would allow no edits; revise it instead.');
   const ticked = pickPaths(payload.ticked, mustTickFor(files), 'a must-tick file of this hypothesis');
   return finishPlan({
     schema: 'diagnosis.v1', approvedAt: at, slice: index, files, removedFiles: [], ticked, tests: [], answers: [],
@@ -399,25 +428,15 @@ export function createExecutor(deps = {}) {
     };
   }
 
-  async function writeJsonFile(file, data) {
-    await mkdir(dirname(file), { recursive: true });
-    const tmp = `${file}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
-    await writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`);
-    for (let i = 0; ; i++) {
-      try { await rename(tmp, file); return; } catch (e) {
-        if (i >= 4 || !['EPERM', 'EBUSY', 'EACCES'].includes(e.code)) throw e;
-        await sleep(50 * 2 ** i);
-      }
-    }
-  }
+  // Atomic, with core/datadir's retries: the page may be reading the same file.
+  const writeJsonFile = (file, data) => writeJsonAtomic(file, data);
   async function readJsonFile(file, fallback = null) {
     try { return JSON.parse(await readFile(file, 'utf8')); } catch { return fallback; }
   }
+  // final/ files are what the page shows (proof, review, commit message), so they are written whole.
   async function writeFinal(run, name, data) {
-    if (typeof data === 'string') {
-      await mkdir(dirname(finalFile(run, name)), { recursive: true });
-      await writeFile(finalFile(run, name), data);
-    } else await writeJsonFile(finalFile(run, name), data);
+    if (typeof data === 'string') await writeTextAtomic(finalFile(run, name), data);
+    else await writeJsonFile(finalFile(run, name), data);
   }
   const input = (run, name, data) => d.store.writeInput(dataDir, run, name, data);
   async function nonEmptyFile(file) {
@@ -509,27 +528,41 @@ export function createExecutor(deps = {}) {
   const ownsTree = run => !!(run.treeReady && run.isolation && run.isolation.tree && run.base && run.base.sha &&
     (run.isolation.treeMode === 'run' || run.isolation.mode === 'branch'));
   const branchMode = run => !!(run.isolation && run.isolation.mode === 'branch');
+  // For resets and patches: in branch mode the main checkout is allowed, but only while the
+  // branch mode record of this run still counts (worktree.mjs assertRunTree).
+  const mainCheckoutOpts = run => (branchMode(run) ? { allowMain: true, runId: run.id } : { allowMain: false });
 
   // Saves the tree's changes to final/stopped.patch (when asked), resets the tree to its base and,
-  // in branch mode, switches the main checkout back to where it was.
+  // in branch mode, switches the main checkout back to where it was. When the patch can't be
+  // saved nothing is reset, since the reset would lose the changes: the tree (and the caller's
+  // lock) stay as they are, and it returns { kept: true }.
   async function tidyTree(run, { patch }) {
-    if (!ownsTree(run)) return;
+    if (!ownsTree(run)) return { kept: false };
     const { tree } = run.isolation;
     const base = run.base.sha;
     const { profile } = await context(run);
     if (patch) {
+      run.patch = '';
       try {
         const r = await dep('worktree.savePatch')(tree, base, finalFile(run, 'stopped.patch'), { exclude: secretExcludes(profile) });
         run.patch = r && r.empty ? '' : 'final/stopped.patch';
-      } catch (e) { await row(run, 'error', `Could not save the patch: ${e.message}`); }
+      } catch (e) {
+        await row(run, 'error', `Could not save the changes to final/stopped.patch, so ${basename(tree)} was not reset and keeps them: ${e.message}`);
+        return { kept: true };
+      }
     }
-    try { await dep('worktree.resetTree')(tree, base, { allowMain: branchMode(run) }); } catch (e) { await row(run, 'error', `Could not reset the tree: ${e.message}`); }
+    try { await dep('worktree.resetTree')(tree, base, mainCheckoutOpts(run)); } catch (e) { await row(run, 'error', `Could not reset the tree: ${e.message}`); }
     await leaveBranchMode(run);
     run.treeReady = false;
+    return { kept: false };
   }
+  const keptText = run => `The changes could not be saved to final/stopped.patch, so ${basename(run.isolation.tree)} was not reset and keeps them`;
   async function leaveBranchMode(run) {
     if (!branchMode(run) || !run.treeReady) return;
-    try { await dep('worktree.finishBranchMode')({ mainDir: run.isolation.mainDir, original: run.isolation.original || null }); } catch (e) {
+    try {
+      const r = await dep('worktree.finishBranchMode')({ mainDir: run.isolation.mainDir, original: run.isolation.original || null, runId: run.id });
+      if (r && r.switched === false) await row(run, 'info', 'Your checkout is no longer where the run left it, so the app left it as it is.');
+    } catch (e) {
       await row(run, 'error', `Could not switch your checkout back: ${e.message}`);
     }
   }
@@ -541,7 +574,7 @@ export function createExecutor(deps = {}) {
     const base = run.base.sha;
     try {
       if (branchMode(run)) {
-        const b = await dep('worktree.prepareBranchMode')({ profile, mainDir, baseSha: base });
+        const b = await dep('worktree.prepareBranchMode')({ profile, mainDir, baseSha: base, runId: run.id });
         run.isolation = { ...run.isolation, tree: (b && b.tree) || mainDir, original: (b && b.original) || run.isolation.original || null };
       } else {
         const prep = await dep('worktree.prepareRunTree')({ profile, mainDir, dataDir, baseSha: base, onLine: lineSink(run), proc: d.proc, runCommand: d.checks && d.checks.runCommand });
@@ -549,7 +582,7 @@ export function createExecutor(deps = {}) {
       }
       run.treeReady = true;
       const patch = finalFile(run, 'stopped.patch');
-      if (await nonEmptyFile(patch)) await dep('worktree.applyPatch')(run.isolation.tree, patch, { allowMain: branchMode(run) });
+      if (await nonEmptyFile(patch)) await dep('worktree.applyPatch')(run.isolation.tree, patch, mainCheckoutOpts(run));
     } catch (e) {
       if (run.treeReady) await tidyTree(run, { patch: false });
       await releaseLock(run);
@@ -639,8 +672,10 @@ export function createExecutor(deps = {}) {
   }
 
   // Ends the run. The tree is reset and the lock released; a failed editing run keeps its work in
-  // final/stopped.patch, which Retry stage brings back. After a commit the run tree is already
-  // clean and detached, so only branch mode switches back.
+  // final/stopped.patch, which Retry stage brings back. When that can't be saved the run does not
+  // end: it is interrupted with its changes in the tree and the lock held, so Retry, Stop and
+  // Cancel stay on. After a commit the run tree is already clean and detached, so only branch
+  // mode switches back.
   async function endRun(run, status, reason = '') {
     const p = def(run);
     run.status = status;
@@ -648,7 +683,14 @@ export function createExecutor(deps = {}) {
     run.waiting = null;
     run.endedAt = iso();
     if (status === 'committed') await leaveBranchMode(run);
-    else await tidyTree(run, { patch: status === 'failed' && p.editing });
+    else if ((await tidyTree(run, { patch: status === 'failed' && p.editing })).kept) {
+      run.status = 'interrupted';
+      run.statusReason = `${reason ? `${reason} ` : ''}${keptText(run)}.`;
+      run.endedAt = null;
+      await row(run, 'status', `Run interrupted: ${run.statusReason}`);
+      await save(run);
+      return;
+    }
     run.treeReady = status === 'committed' ? false : run.treeReady;
     await releaseLock(run);
     if (status === 'failed') await moveFinding(run, 'open', { reason: 'the run failed' });
@@ -680,7 +722,8 @@ export function createExecutor(deps = {}) {
     if (kind === 'hypothesis') {
       const { profile } = await context(run);
       const files = unique(asList((out.investigate || {}).hypotheses).flatMap(h => evidencePaths(h.evidence)));
-      return { pinnable: (out.investigate || {}).pinnable !== false, mustTick: await mustTickOf(profile, files) };
+      const mustTick = await mustTickOf(profile, files);
+      return { pinnable: (out.investigate || {}).pinnable !== false, mustTick, editInTakeOver: mustTick.filter(protectedPath) };
     }
     if (kind === 'review') {
       const r = out.review || {};
@@ -747,10 +790,35 @@ export function createExecutor(deps = {}) {
         continue;
       }
       if (s.kind === 'human' || s.kind === 'git') { await waitFor(run, i, s.waits); return; }
+      if (s.kind === 'claude' && s.profile === 'EDIT' && (await topUpBaseline(run, i, s, sig)).stop) return;
       const r = s.kind === 'gate' ? await runGate(run, i, s, sig) : await runClaude(run, i, s, sig);
       if (!r || r.stop) return;
     }
     throw new Error('The run went round its stages 300 times.');
+  }
+
+  // The level can rise after preflight (scope paths, the approved plan), and the commands the
+  // higher level adds would then have no baseline, so every failure they find would count as new.
+  // Before an edit stage, while the tree is still at base, the baseline is topped up for them.
+  // Once the tree has changed that can't be done honestly; the timeline says so instead.
+  async function topUpBaseline(run, i, s, sig) {
+    if (!run.baselineLevel || run.baselineLevel === run.level || !run.treeReady) return {};
+    const { profile } = await context(run);
+    const { tree, treeMode } = run.isolation;
+    if ((await changedOf(tree, run.base.sha)).length) {
+      await row(run, 'info', `The level rose to ${run.level} after the tree changed, so the checks it adds have no baseline: their failures count as new.`);
+    } else {
+      const rel = gateRel(i, `baseline-${run.level}`);
+      const gateDir = join(runDir(run), ...rel.split('/'));
+      await mkdir(gateDir, { recursive: true });
+      await row(run, 'stage', `The level rose to ${run.level}; the baseline is topped up before ${s.label}`, { stage: s.id });
+      const b = await ensureBaseline(run, { profile, tree, treeMode, baseSha: run.base.sha, level: run.level, gateDir, signal: sig, stage: s.id });
+      if (b.cancelled || sig.aborted) return { stop: true };
+      if (b.error) await row(run, 'error', `The baseline for ${run.level} could not be made, so the checks it adds count every failure as new: ${b.error}`);
+    }
+    run.baselineLevel = run.level;
+    await save(run);
+    return {};
   }
 
   // ---------- Gates
@@ -842,7 +910,9 @@ export function createExecutor(deps = {}) {
   async function ensureBaseline(run, { profile, tree, treeMode, baseSha, level, gateDir, signal, stage }) {
     const key = baselineKeyFor(baseSha, treeMode);
     run.baselineKey = key;
-    const planned = asList(await dep('checks.planChecks')({ profile, level, changed: [], what: 'everything' }))
+    // Without the listening ports G4 always plans as "not run", and its baseline would never be made.
+    const listening = asList(await dep('checks.listeningPorts')({ profile, level }));
+    const planned = asList(await dep('checks.planChecks')({ profile, level, changed: [], what: 'everything', listening }))
       .filter(c => c.commandId && !c.skipReason).map(c => c.commandId);
     if (!planned.length) return { cached: true, key };
     const existing = await loadBaselineSafe(run);
@@ -850,7 +920,7 @@ export function createExecutor(deps = {}) {
     const release = await takeSlot('checks', run, stage, signal);
     try {
       const s = await dep('checks.runChecks')({ profile, project: run.project, dataDir, tree, treeMode, baseSha, changed: [], level,
-        what: 'everything', role: 'base', gateDir, signal, onRow: gateSink(run), proc: d.proc, baselineKey: key, git: d.git, runId: run.id });
+        what: 'everything', role: 'base', gateDir, signal, onRow: gateSink(run), proc: d.proc, baselineKey: key, git: d.git, runId: run.id, listening });
       if (signal.aborted || s.result === 'cancelled') return { cancelled: true };
       if (s.result === 'refused') return { error: s.refusal || 'The checks refused this tree.' };
       return { cached: false, key, chip: s.chip || '' };
@@ -862,7 +932,12 @@ export function createExecutor(deps = {}) {
   };
 
   // Runs the given test files with their workspace's test command; returns one merged TAP result.
-  async function runTests(run, profile, paths, gateDir, signal) {
+  // Takes the check slot itself (one check at a time, R20), so callers must not hold it.
+  async function runTests(run, profile, paths, gateDir, signal, stage) {
+    const release = await takeSlot('checks', run, stage, signal);
+    try { return await runTestGroups(run, profile, paths, gateDir, signal); } finally { release(); }
+  }
+  async function runTestGroups(run, profile, paths, gateDir, signal) {
     const groups = new Map();
     const owner = optFn('profileLib.workspaceOf');
     for (const p of unique(paths)) {
@@ -908,7 +983,7 @@ export function createExecutor(deps = {}) {
           proc: d.proc, runCommand: d.checks && d.checks.runCommand });
         run.isolation = { mode, tree: prep.tree, mainDir, treeMode: 'run', ...(prep.refreshed ? { refreshed: asList(prep.ran) } : {}) };
       } else {
-        const b = await dep('worktree.prepareBranchMode')({ profile, mainDir, baseSha });
+        const b = await dep('worktree.prepareBranchMode')({ profile, mainDir, baseSha, runId: run.id });
         run.isolation = { mode: 'branch', tree: (b && b.tree) || mainDir, mainDir, treeMode: 'main', original: (b && b.original) || null };
       }
       run.base = { ...(run.base || {}), branch: inherit.branch || integration, sha: baseSha };
@@ -928,6 +1003,7 @@ export function createExecutor(deps = {}) {
         gateDir: g.gateDir, signal: g.signal, stage: s.id });
       if (b.cancelled) return { status: 'cancelled' };
       if (b.error) return failed(b.error);
+      run.baselineLevel = run.level;
       await baseScan(run, profile, g.signal);
       const where = run.isolation.treeMode === 'run' ? `${basename(run.isolation.tree)} clean` : 'branch mode';
       return done(`${where} · base ${sha7(baseSha)} · baseline ${b.cached ? 'cached' : 'computed'}`);
@@ -942,7 +1018,7 @@ export function createExecutor(deps = {}) {
       const baseline = await loadBaselineSafe(run);
       const r = await dep('stagegates.gateB')({
         kind: proveDef.proveKind, tests, baseline, readAtBase: readAtBase(run), sha256: sha256Of(run), changed, plan: run.plan,
-        testPattern: (profile.fences || {}).testPattern || null, runFiles: files => runTests(run, profile, files, g.gateDir, g.signal),
+        testPattern: (profile.fences || {}).testPattern || null, runFiles: files => runTests(run, profile, files, g.gateDir, g.signal, s.id),
       });
       if (g.signal.aborted) return { status: 'cancelled' };
       if (!r || !r.ok) {
@@ -965,6 +1041,10 @@ export function createExecutor(deps = {}) {
       const bad = [];
       const changed = await changedOf(tree, base, { bad });
       applyRisk(run, riskOf(profile, changed.flatMap(c => [c.path, c.oldPath])));
+      if (run.baselineLevel && run.baselineLevel !== run.level) {
+        await row(run, 'info', `The changed files raise the level to ${run.level}, so the checks it adds have no baseline: their failures count as new.`);
+        run.baselineLevel = run.level;
+      }
       const diff = String(await dep('git.diffText')(tree, base, { includeUntracked: true, exclude: secretExcludes(profile) }) || '');
       await input(run, 'diff.patch', diff);
       await input(run, 'changed.json', JSON.stringify(changed, null, 2));
@@ -996,11 +1076,15 @@ export function createExecutor(deps = {}) {
         for (const x of asList(fence[bucket])) red.push(`${label}: ${pathOf(x)}`);
       }
       const failing = asList(summary.checks).filter(c => (c.status === 'fail' || c.status === 'error') && c.id !== 'g0.fences');
+      // A level without G0 leaves runG0 to the fallback above, so runChecks never saw its rows
+      // (secrets, format, ratchets): they count here, or a planted key could go green.
+      const seen = new Set(asList(summary.checks).map(c => c.id));
+      failing.push(...asList(g0res && g0res.rows).filter(r => r && !seen.has(r.id) && r.id !== 'g0.fences' && (r.status === 'fail' || r.status === 'error')));
       red.push(...failing.map(c => `${c.label || c.id}: ${c.reason || c.status}`));
       if (!failing.length && summary.result === 'error') red.push(`The checks could not run: ${firstProblem(summary)}`);
       let pinsState = null;
       if (run.pins.length) {
-        const tap = await runTests(run, profile, run.pins.map(p => p.path), g.gateDir, g.signal);
+        const tap = await runTests(run, profile, run.pins.map(p => p.path), g.gateDir, g.signal, s.id);
         pinsState = await dep('stagegates.pinsIntact')({ pins: run.pins, readBytes: p => readFile(join(tree, ...p.split('/'))), tap });
         if (!pinsState.ok) {
           const what = [...asList(pinsState.changed).map(x => `${pathOf(x)} changed`), ...asList(pinsState.failed).map(x => `${x.name || pathOf(x)} ${x.status || 'failed'}`)];
@@ -1008,7 +1092,7 @@ export function createExecutor(deps = {}) {
         }
       }
       if (run.redTests.length) {
-        const tap = await runTests(run, profile, run.redTests.map(t => t.path), g.gateDir, g.signal);
+        const tap = await runTests(run, profile, run.redTests.map(t => t.path), g.gateDir, g.signal, s.id);
         const r = await dep('stagegates.redNowPasses')({ redTests: run.redTests, tap });
         if (!r.ok) red.push(`red test still fails: ${asList(r.stillFailing).map(x => x.name || pathOf(x)).join(', ') || 'see the log'}`);
       }
@@ -1091,6 +1175,13 @@ export function createExecutor(deps = {}) {
       const sha = await revParse(mainDir, 'HEAD');
       run.isolation = { mode: 'none', tree: mainDir, mainDir, treeMode: 'main' };
       run.base = { branch: '', sha };
+      // A checkout on a branch the profile doesn't describe (other folders) scans as zeros that
+      // look real, and would be kept as a scan: refuse it before anything is measured.
+      const missing = await missingWorkspaces(profile, mainDir);
+      if (missing.length) {
+        return failed(`This checkout doesn't match the ${run.project} profile: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} missing. `
+          + `Is it on a branch the profile describes (${(profile.git || {}).integrationBranch || 'its integration branch'})? Nothing was measured or recorded.`);
+      }
       const before = (await dep('probes.loadMetrics')(dataDir, run.project)) || { scans: [] };
       const scans = asList(before.scans);
       const ref = v.compare === 'commit' ? [...scans].reverse().find(x => String(x.sha || '').startsWith(v.commit)) : scans[scans.length - 1];
@@ -1107,7 +1198,10 @@ export function createExecutor(deps = {}) {
       run.outputs.scan = { scanId: recorded && recorded.scanId, candidates: candidates.length, wins: asList(recorded && recorded.wins).length,
         errors: Object.keys(result.errors || {}), score: recorded ? recorded.score ?? null : null, since: ref ? ref.sha || null : null };
       const since = ref ? ` since ${sha7(ref.sha)}` : prevDetails ? '' : ' (first scan: nothing to compare)';
-      return done(`${plural(candidates.length, 'new candidate')}${since}`);
+      const bad = Object.keys(result.errors || {});
+      const total = bad.length + Object.keys(result.values || {}).length;
+      const failedNote = bad.length ? ` · ${bad.length} of ${total} probes failed: ${bad.join(', ')}` : '';
+      return done(`${plural(candidates.length, 'new candidate')}${since}${failedNote}`);
     },
 
     // Check my work: the run worktree when it is ready (your changes copied in, a baseline at
@@ -1612,11 +1706,14 @@ export function createExecutor(deps = {}) {
     return typeof out === 'string' ? { ok: true, message: out, run } : { ok: true, ...out, run };
   }
 
+  // Trust of the folder Take over opens the terminal in: the run's tree (the run worktree, or the
+  // main checkout in branch mode), the same folder the manager's button check asks about.
   async function trustedFor(run) {
     if (typeof d.trustFor === 'function') { try { return await d.trustFor(run); } catch { return undefined; } }
     if (typeof d.trustState !== 'function') return undefined;
     try {
-      const where = (run.isolation && run.isolation.mainDir) || (d.mainDirFor ? await d.mainDirFor(run.project) : '');
+      const iso = run.isolation || {};
+      const where = iso.tree || iso.mainDir || (d.mainDirFor ? await d.mainDirFor(run.project) : '');
       if (!where) return undefined;
       const t = await d.trustState(where);
       return t && t.state === 'trusted' ? true : t && t.state === 'not-trusted' ? false : undefined;
@@ -1740,8 +1837,15 @@ export function createExecutor(deps = {}) {
       if (payload.treeSha !== undefined && payload.treeSha !== gated.treeSha) httpFail(409, 'The gates ran again since you opened the dialog; reload the review.');
       const { tree, mainDir } = run.isolation;
       const base = run.base.sha;
-      const changedNow = treeFiles(await changedOf(tree, base));
-      const shaNow = await dep('git.treeHash')(tree, base, gated.files, join(runDir(run), 'tmp', `index-commit-${now()}`));
+      // A tree git can no longer read (moved, deleted, broken) is a refusal, not a crash.
+      let changedNow;
+      let shaNow;
+      try {
+        changedNow = treeFiles(await changedOf(tree, base));
+        shaNow = await dep('git.treeHash')(tree, base, gated.files, join(runDir(run), 'tmp', `index-commit-${now()}`));
+      } catch (e) {
+        httpFail(409, `Nothing was committed: the run tree can't be checked (${e.message}).`);
+      }
       if (shaNow !== gated.treeSha || changedNow.join('\n') !== gatedFiles.join('\n')) return treeMoved(run);
       const messageFile = finalFile(run, 'commit-msg.txt');
       await writeFinal(run, 'commit-msg.txt', `${message}\n`);
@@ -1749,7 +1853,8 @@ export function createExecutor(deps = {}) {
       const branch = dep('worktree.branchName')(await branchText(run), new Date(now()), existing);
       let r;
       try {
-        r = await dep('worktree.commitInTree')({ tree, base, branch, files: gated.files, messageFile, gatedTreeSha: gated.treeSha });
+        // In branch mode the commit gate needs this run's own branch mode record (viaRecord).
+        r = await dep('worktree.commitInTree')({ tree, base, branch, files: gated.files, messageFile, gatedTreeSha: gated.treeSha, runId: run.id });
       } catch (e) {
         if (e.status === 409 || e.code === 'TREE_CHANGED') return treeMoved(run);
         await row(run, 'error', e.message);
@@ -1781,12 +1886,12 @@ export function createExecutor(deps = {}) {
     },
 
     async stop(run) {
-      await cancelPath(run, 'stopped by you');
-      return 'Stopped. Your changes are in final/stopped.patch and the tree is reset.';
+      const out = await cancelPath(run, 'stopped by you');
+      if (out.run.status !== 'cancelled') return out.message;
+      return out.run.patch ? 'Stopped. Your changes are in final/stopped.patch and the tree is reset.' : 'Stopped. There were no changes to keep, and the tree is reset.';
     },
     async cancel(run) {
-      await cancelPath(run, 'cancelled by you');
-      return 'Cancelled.';
+      return (await cancelPath(run, 'cancelled by you')).message;
     },
 
     async retry(run, p) {
@@ -1826,7 +1931,8 @@ export function createExecutor(deps = {}) {
       const sid = lastSessionId(run, idx);
       const att = [...st.attempts].reverse().find(a => a.sessionId === sid) || {};
       const unpinnable = isUnpinnableEnd(run, p);
-      if (unpinnable) await restoreTree(run);
+      // Everything that can refuse comes before restoreTree, which takes the lock and the tree of
+      // an ended run: after it, only a terminal that fails to open needs undoing (below).
       const startClaude = optFn('startClaude', 'launcher.startClaude', 'actions.startClaude');
       if (!startClaude) httpFail(500, 'The executor was started without startClaude, so it cannot open a terminal.');
       const stageDir = join(runDir(run), ...String(att.folder || stageRel(idx, s.id, 1)).split('/'));
@@ -1835,6 +1941,7 @@ export function createExecutor(deps = {}) {
       if (!base) httpFail(409, `The settings of ${s.label} are missing, so it can't be taken over.`);
       const settingsFile = join(stageDir, 'settings.takeover.json');
       await writeJsonFile(settingsFile, dep('claudeSettings.takeoverSettings')(base));
+      if (unpinnable) await restoreTree(run);
       const dir = run.isolation.tree || att.cwd;
       try {
         await startClaude({ dir, title: `${run.title || run.id} (take over)`, resume: sid, launch: { permissionMode: mode, settingsFile }, kind: 'takeover', project: run.project });
@@ -1852,10 +1959,13 @@ export function createExecutor(deps = {}) {
 
     async back(run, p) {
       const t = run.takeover || {};
+      if (t.unpinnable && (await tidyTree(run, { patch: true })).kept) {
+        await save(run);
+        httpFail(409, `Still in the terminal. ${keptText(run)}; close programs that use it, then use Back to app again.`);
+      }
       run.takeovers = [...asList(run.takeovers), { ...t, endedAt: iso() }];
       run.takeover = null;
       if (t.unpinnable) {
-        await tidyTree(run, { patch: true });
         await releaseLock(run);
         run.status = 'passed';
         await row(run, 'you', 'You came back from the terminal.');
@@ -1880,7 +1990,10 @@ export function createExecutor(deps = {}) {
     async park(run) {
       const waiting = run.waiting;
       const index = currentIndex(run);
-      await tidyTree(run, { patch: true });
+      if ((await tidyTree(run, { patch: true })).kept) {
+        await save(run);
+        httpFail(409, `Not parked. ${keptText(run)}; close programs that use it, then try again.`);
+      }
       await releaseLock(run);
       run.parked = { at: iso(), waiting, index, patch: run.patch || '', gatedTreeSha: (run.gatedTree || {}).treeSha || '' };
       run.status = 'parked';
@@ -1996,7 +2109,7 @@ export function createExecutor(deps = {}) {
     try {
       await dep('worktree.savePatch')(run.isolation.tree, r.sha, finalFile(run, 'leftover.patch'), { exclude: secretExcludes(profile) });
       run.leftoverPatch = 'final/leftover.patch';
-      await dep('worktree.resetTree')(run.isolation.tree, r.sha, { allowMain: branchMode(run) });
+      await dep('worktree.resetTree')(run.isolation.tree, r.sha, mainCheckoutOpts(run));
     } catch (e) { await row(run, 'error', `The hook left changes that could not be set aside: ${e.message}`); }
   }
 
@@ -2021,7 +2134,9 @@ export function createExecutor(deps = {}) {
 
   // Cancel or stop: kill, keep the patch when the run owns a tree, reset, release, cancelled.
   // The manager has already aborted the driver and stopped the registered processes; this also
-  // works on its own (then it aborts and waits up to 10 s for the loop).
+  // works on its own (then it aborts and waits up to 10 s for the loop). When the patch can't be
+  // saved nothing is reset and the run is not cancelled: a run that waited for you still waits,
+  // and one whose stage was running is interrupted, both with the tree and the lock kept.
   async function cancelPath(run, reason = 'cancelled by you') {
     cancelling.add(run.id);
     try {
@@ -2031,15 +2146,32 @@ export function createExecutor(deps = {}) {
       if (pending) await Promise.race([pending.catch(() => {}), sleep(CANCEL_WAIT_MS)]);
       const p = def(run);
       ensureStages(run, p);
+      const lastOf = st => asList(st.attempts)[asList(st.attempts).length - 1];
       for (const st of run.stages) {
-        const last = asList(st.attempts)[asList(st.attempts).length - 1];
+        const last = lastOf(st);
         if (st.status === 'running' && last && last.proc && d.proc && typeof d.proc.safeKill === 'function') {
           try { await d.proc.safeKill(last.proc); } catch { /* already gone */ }
         }
-        if (['running', 'waiting'].includes(st.status)) { st.status = 'cancelled'; st.endedAt = iso(); }
-        if (last && last.status === 'running') last.status = 'cancelled';
       }
-      await tidyTree(run, { patch: p.editing });
+      // After the kills, so no stage writes into the tree while its patch is saved.
+      const { kept } = await tidyTree(run, { patch: p.editing });
+      const stageEnd = kept ? { running: 'interrupted' } : { running: 'cancelled', waiting: 'cancelled' };
+      let stopped = false;
+      for (const st of run.stages) {
+        const last = lastOf(st);
+        if (stageEnd[st.status]) { stopped = stopped || st.status === 'running'; st.status = stageEnd[st.status]; st.endedAt = iso(); }
+        if (last && last.status === 'running') last.status = stageEnd.running;
+      }
+      if (kept) {
+        if (stopped || run.status === 'running') {
+          run.status = 'interrupted';
+          run.statusReason = `${reason}, but ${keptText(run).replace(/^The/, 'the')}`;
+          run.waiting = null;
+          await row(run, 'status', `Run interrupted: ${run.statusReason}`);
+        }
+        await save(run);
+        return { message: `Not cancelled. ${keptText(run)}; close programs that use it, then try again.`, run };
+      }
       await releaseLock(run);
       await moveFinding(run, 'open', { reason });
       run.status = 'cancelled';
@@ -2048,8 +2180,8 @@ export function createExecutor(deps = {}) {
       run.endedAt = iso();
       await row(run, 'status', `Run cancelled: ${reason}`);
       await save(run);
-      const kept = run.patch ? ' Your changes are in final/stopped.patch.' : '';
-      return { message: `Cancelled.${kept}`, run };
+      const saved = run.patch ? ' Your changes are in final/stopped.patch.' : '';
+      return { message: `Cancelled.${saved}`, run };
     } finally { cancelling.delete(run.id); }
   }
 
@@ -2152,7 +2284,7 @@ export const DEP_FUNCTIONS = Object.freeze([
   'locks.acquire', 'locks.release',
   'claudeStage.runClaudeStage', 'claudeStage.claudeEnv',
   'claudeSettings.stageSettings', 'claudeSettings.guardConfig', 'claudeSettings.takeoverSettings', 'shim.writeShim',
-  'checks.runChecks', 'checks.planChecks', 'checks.runCommand', 'checks.mainCheckoutRefusal', 'g0.runG0',
+  'checks.runChecks', 'checks.planChecks', 'checks.listeningPorts', 'checks.runCommand', 'checks.mainCheckoutRefusal', 'g0.runG0',
   'stagegates.gateB', 'stagegates.pinsIntact', 'stagegates.redNowPasses', 'stagegates.denialTestPresent',
   'fences.mustTickFiles', 'fences.editableInStage',
   'worktree.worktreeStatus', 'worktree.setupWorktree', 'worktree.prepareRunTree', 'worktree.applyChanges', 'worktree.savePatch',
@@ -2182,7 +2314,8 @@ export async function defaultDeps({ hubRoot, dataDir, ...overrides } = {}) {
   ]);
   return {
     hubRoot, dataDir, git, worktree, claudeStage, claudeSettings, argv, shim, g0, stagegates, fences, baseline, findings, reports: report, store, locks, proc,
-    checks: { runChecks: check.runChecks, mainCheckoutRefusal: check.mainCheckoutRefusal, planChecks: commands.planChecks, runCommand: commands.runCommand },
+    checks: { runChecks: check.runChecks, mainCheckoutRefusal: check.mainCheckoutRefusal, listeningPorts: check.listeningPorts, planChecks: commands.planChecks,
+      runCommand: commands.runCommand },
     probes: { scan: scan.scan, recordScan: metrics.recordScan, loadMetrics: metrics.loadMetrics, loadDetails: metrics.loadDetails,
       newCandidates: metrics.newCandidates, detectWins: metrics.detectWins, appendWins: metrics.appendWins },
     profileLib: profile, riskTags: profile.riskTags,

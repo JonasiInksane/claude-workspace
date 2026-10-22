@@ -8,7 +8,7 @@
 // Everything is written under os.tmpdir(); nothing starts a real claude or touches a real repo.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as store from './store.mjs';
@@ -23,7 +23,7 @@ import { checkValues, computeLevel, needsLock, pipelineById, runTitle } from './
 import { allowedActions } from './actions.mjs';
 import { FENCE_PARAGRAPH } from './prompts.mjs';
 import {
-  buildPlan, commitDraft, createExecutor, mergeVerify, modelLabel, normChanged, outputRelPath, proofMarkdown, sanitizeOutput, sessionName,
+  buildHypothesisPlan, buildPlan, commitDraft, createExecutor, mergeVerify, modelLabel, normChanged, outputRelPath, proofMarkdown, sanitizeOutput, sessionName,
   winsFromMetricRows,
 } from './executor.mjs';
 import { fakeProfile, tempDir, waitFor } from '../test/helpers.mjs';
@@ -63,6 +63,8 @@ async function harness(t, opts = {}) {
   for (const d of [h.data, h.main, h.tree, join(h.hub, 'inbox', 'attachments')]) mkdirSync(d, { recursive: true });
   cpSync(join(HUB, 'pipelines', 'app'), join(h.hub, 'pipelines', 'app'), { recursive: true });
   h.profile = fakeProfile(opts.profile || {});
+  // The main checkout has the profile's workspace folders, as a checkout the profile describes does.
+  for (const w of h.profile.workspaces || []) if (w.dir && w.dir !== '.') mkdirSync(join(h.main, ...w.dir.split('/')), { recursive: true });
   const calls = h.calls = new Proxy({}, { get: (o, k) => (o[k] = o[k] || []) });
   const world = h.world = {
     changed: [], atBase: { 'CLAUDE.md': '# Example\nUse small functions.\n', 'AGENTS.md': '# Agents\nReview rules here.\n' },
@@ -100,7 +102,7 @@ async function harness(t, opts = {}) {
       async diffText(dir, base, o) { calls.diffText.push([dir, base, o]); return world.diff || world.changed.map(c => `diff --git a/${c.path} b/${c.path}\n+x\n`).join(''); },
       async diffNames() { return []; },
       async fileAt(dir, sha, path) { calls.fileAt.push([dir, sha, path]); return world.atBase[path] ?? null; },
-      async treeHash(dir, base, files, tmp) { calls.treeHash.push([dir, base, files, tmp]); return world.treeSha; },
+      async treeHash(dir, base, files, tmp) { calls.treeHash.push([dir, base, files, tmp]); if (world.treeHashError) throw new Error(world.treeHashError); return world.treeSha; },
       async appBranches() { return world.branches || []; },
     },
     worktree: {
@@ -110,6 +112,7 @@ async function harness(t, opts = {}) {
       async applyChanges(o) { calls.applyChanges.push(o); return { applied: true }; },
       async savePatch(tree, base, file, o) {
         calls.savePatch.push([tree, base, file, o]);
+        if (world.savePatchError) throw new Error(world.savePatchError);
         mkdirSync(dirname(file), { recursive: true });
         writeFileSync(file, world.patchText);
         return { file, bytes: world.patchText.length, empty: !world.patchText };
@@ -127,11 +130,12 @@ async function harness(t, opts = {}) {
       branchName,
     },
     checks: {
-      planChecks: () => [{ id: 'test:api', group: 'G2', commandId: 'test:api' }],
+      planChecks: o => { calls.planChecks.push(o); return [{ id: 'test:api', group: 'G2', commandId: 'test:api' }]; },
+      async listeningPorts(o) { calls.listeningPorts.push(o); return world.listening || []; },
       async runChecks(o) {
         calls.runChecks.push(o);
         if (o.role === 'base') return { result: 'pass', chip: '0 known in the baseline', checks: [], counts: {} };
-        if (o.runG0) await o.runG0({ gateDir: o.gateDir, signal: o.signal, runCommand: deps.checks.runCommand });
+        if (o.runG0 && !world.levelWithoutG0) await o.runG0({ gateDir: o.gateDir, signal: o.signal, runCommand: deps.checks.runCommand });
         const s = typeof world.checks === 'function' ? world.checks(o) : world.checks;
         return s || { result: 'pass', chip: '0 new · 0 known', counts: { new: 0, known: 0, flaky: 0 }, tests: { new: [] },
           checks: [{ id: 'g0.fences', group: 'G0', label: 'Scope fence', status: 'pass' }, { id: 'test:api', group: 'G2', label: 'Unit tests: API', status: 'pass', durationMs: 1200 }] };
@@ -253,6 +257,16 @@ async function seedFinding(h, status = 'open') {
 const findingStatus = async h => (await findingsStore.loadFindings(h.data, PROJECT)).findings[0].status;
 const stageOf = (run, id) => run.stages.find(s => s.id === id);
 
+// Waits (polling run.json) until implement has a process recorded; a timeout says where the run is.
+async function untilImplementRuns(h, run, ms = 15_000) {
+  try {
+    await waitFor(async () => stageOf(await h.reload(run), 'implement').attempts[0]?.proc, ms);
+  } catch (e) {
+    const r = await h.reload(run);
+    throw new Error(`${e.message}; the run is ${r.status} (${r.statusReason || 'no reason'}); stages ${r.stages.map(s => `${s.id}:${s.status}`).join(' ')}`);
+  }
+}
+
 // Drives a refactor (or fix/debug) run from start to the review gate with default outputs.
 async function toReviewGate(h, pipeline = 'refactor', values = { what: 'Move cart totals into cents' }) {
   let run = await h.newRun(pipeline, values);
@@ -279,6 +293,14 @@ test('pure helpers: paths, names, labels, verify merge, wins and drafts', () => 
   assert.deepEqual(bad, ['../x']);
   const s = sanitizeOutput('plan.v1', { files: [{ path: '../x' }, { path: 'ok.ts' }], slices: [{ files: ['/abs', 'ok.ts'], tests: [] }] });
   assert.deepEqual(s, { output: { files: [{ path: 'ok.ts' }], slices: [{ files: ['ok.ts'], tests: [] }] }, dropped: 2 });
+  // diagnosis.v1 evidence: in-tree absolute paths become relative (line kept), outside ones go.
+  const diag = sanitizeOutput('diagnosis.v1', { hypotheses: [{ claim: 'c', evidence: [
+    'C:\\tree\\src\\a.ts:12 (the call)', 'C:\\tree\\src\\b.ts', 'D:\\elsewhere\\x.ts:3', 'src/c.ts:4', 'the console shows a TypeError',
+  ] }] }, 'C:\\tree');
+  assert.deepEqual(diag.output.hypotheses[0].evidence, ['src/a.ts:12 (the call)', 'src/b.ts', 'src/c.ts:4', 'the console shows a TypeError']);
+  assert.equal(diag.dropped, 1);
+  assert.throws(() => buildHypothesisPlan({ hypotheses: [{ claim: 'c', evidence: [] }] }, {}, { at: 'now' }),
+    err => err.status === 400 && /names no file in the tree/.test(err.message));
   const merged = mergeVerify({ verdict: 'ship', findings: [{ id: 'F1', severity: 'high' }, { id: 'F2', severity: 'low' }, { id: 'F3', severity: 'medium' }] },
     { verdict: 'fix', findings: [{ ref: 'f1', status: 'confirmed', evidence: 'seen' }, { claim: 'new one', severity: 'low' }] });
   assert.deepEqual(merged.findings.map(f => [f.id, f.status || '']), [['F1', 'confirmed'], ['F2', ''], ['F3', 'unconfirmed'], ['F4', 'confirmed']]);
@@ -428,7 +450,7 @@ test('review with nothing to review passes at once', async t => {
 // ---------------------------------------------------------------- the refactor spine
 
 test('refactor: spine to the plan gate, approve with a removed and a ticked file, then to the review gate and commit', async t => {
-  const h = await harness(t);
+  const h = await harness(t, { world: { listening: [55001] } });
   h.claude('scope', () => ({ output: { ...OUT.scope(), questions: ['Keep the old name?'], files: [{ path: TOTAL, why: 'm' }, { path: 'apps/web/src/features/cart/extra.mjs', why: 'x' }, { path: 'package.json', why: 'script' }],
     slices: [{ title: 'Cents', goal: 'g', files: [TOTAL, 'apps/web/src/features/cart/extra.mjs', 'package.json'], tests: [TOTAL_TEST], outOfScope: [], estLines: 10 }] },
     paths: { unknown: ['apps/web/src/features/cart/extra.mjs'], outside: [] } }));
@@ -443,6 +465,11 @@ test('refactor: spine to the plan gate, approve with a removed and a ticked file
   assert.equal(h.calls.runChecks[0].role, 'base');
   assert.equal(h.calls.runChecks[0].what, 'everything');
   assert.equal(run.baselineKey, `${SHA.slice(0, 12)}-run-node${process.versions.node}`);
+  // The baseline plan knows which ports answer (else G4 never gets a baseline), and the base run
+  // gets the same answer.
+  assert.deepEqual(h.calls.listeningPorts.map(o => o.level), [h.calls.runChecks[0].level]);
+  assert.deepEqual(h.calls.planChecks[0].listening, [55001]);
+  assert.deepEqual(h.calls.runChecks[0].listening, [55001]);
   // scope in the run tree, read-only, then the plan gate
   const scope = h.claudeCalls('scope')[0];
   assert.deepEqual([scope.spec.model, scope.spec.effort, scope.spec.cwd, scope.spec.profile], ['opus', 'high', h.tree, 'READ']);
@@ -602,6 +629,19 @@ test('send back at the fence gate resumes implement with the note and the files 
   assert.equal(run.waiting.kind, 'review');
 });
 
+test('a level without G0: the executor runs G0 itself, and a failed secrets row turns the gates red', async t => {
+  const h = await harness(t, { world: { levelWithoutG0: true, g0: () => ({
+    rows: [{ id: 'g0.fences', status: 'pass' }, { id: 'g0.secrets', label: 'Secrets', status: 'fail', reason: '1 secret-shaped value' }],
+    fence: { forbidden: [], mustTick: [], pinnedChanged: [], existingTestChanged: [], outsidePlan: [] }, ok: false, secretsFound: 1,
+  }) } });
+  let run = await h.drive(await h.newRun('refactor', { what: 'Move cart totals into cents' }));
+  run = (await h.act(run, 'approve')).run;
+  assert.equal(run.status, 'gates-red', run.statusReason);
+  assert.ok(h.calls.g0.length >= 1, 'the fallback ran G0');
+  const impl = h.claudeCalls('implement');
+  assert.match(impl[1].prompt, /<data name="gate-summary">[\s\S]*Secrets: 1 secret-shaped value/);
+});
+
 test('red checks resume implement twice automatically, then the run is gates-red; Fix starts a user round', async t => {
   let red = true;
   const h = await harness(t, { world: { checks: () => (red
@@ -646,6 +686,16 @@ test('Fix at the review gate resumes implement with the ticked findings, then a 
   assert.notEqual(reviews[1].spec.sessionId, reviews[0].spec.sessionId);
   assert.equal(run.fixRounds.user, 1);
   assert.equal(run.waiting.kind, 'review');
+});
+
+test('commit on a run tree git can no longer read: 409 with a plain reason, nothing committed', async t => {
+  const h = await harness(t);
+  const run = await toReviewGate(h);
+  h.world.treeHashError = 'git write-tree failed in C:\\gone: not a git repository';
+  await assert.rejects(h.act(run, 'commit', { message: 'Do it' }),
+    err => err.status === 409 && /^Nothing was committed: the run tree can't be checked \(git write-tree failed/.test(err.message));
+  assert.equal(h.calls.commit.length, 0);
+  assert.equal((await h.reload(run)).status, 'waiting');
 });
 
 test('commit after the tree changed: 409, and the checks run again', async t => {
@@ -728,7 +778,7 @@ test('cancel during implement: kill, patch, reset, lock released, finding back t
   await h.ex.handle(fresh, 'approve', {});
   const ctl = new AbortController();
   const driving = h.ex.advance(fresh, { signal: ctl.signal });
-  await waitFor(async () => stageOf(await h.reload(run), 'implement').attempts[0]?.proc);
+  await untilImplementRuns(h, run);
   ctl.abort();
   await driving;
   run = await h.reload(run);
@@ -755,6 +805,45 @@ test('stop keeps the patch and resets the tree', async t => {
   assert.equal(run.status, 'cancelled');
   assert.equal(run.statusReason, 'stopped by you');
   assert.ok(existsSync(h.file(run, 'final/stopped.patch')));
+  assert.equal(world(h).lock, null);
+});
+
+test('a patch that cannot be saved stops the reset: stop, park and cancel keep the tree and the lock', async t => {
+  const h = await harness(t);
+  let run = await toReviewGate(h);
+  h.world.savePatchError = 'EBUSY: resource busy or locked';
+  await assert.rejects(h.act(run, 'park'), err => err.status === 409 && /^Not parked\. The changes could not be saved .* example-run was not reset/.test(err.message));
+  run = await h.reload(run);
+  assert.equal(run.status, 'waiting', 'still at the review gate');
+  assert.equal(h.calls.resetTree.length, 0, 'nothing was reset');
+  assert.equal(world(h).lock, run.id);
+
+  const stop = await h.act(run, 'stop');
+  assert.match(stop.out.message, /^Not cancelled\. The changes could not be saved to final\/stopped\.patch, so example-run was not reset/);
+  run = stop.run;
+  assert.equal(run.status, 'waiting', 'a run that waited for you still waits');
+  assert.equal(run.waiting.kind, 'review');
+  assert.ok(run.stages.some(s => s.status === 'waiting'), 'its gate still waits');
+  assert.ok(!run.stages.some(s => s.status === 'cancelled'));
+  assert.equal(h.calls.resetTree.length, 0);
+  assert.equal(world(h).lock, run.id, 'the lock stays with the changes');
+  assert.equal(run.lockHeld, true);
+  assert.equal(run.patch, '', 'no stale patch name');
+
+  // A stage that fails while the save fails: interrupted, not failed, so Stop and Cancel stay on.
+  h.claude('implement', () => ({ status: 'failed', reason: 'boom', output: null }));
+  run = (await h.act(run, 'sendback', { notes: 'again' })).run;
+  assert.equal(run.status, 'interrupted');
+  assert.match(run.statusReason, /could not be saved to final\/stopped\.patch, so example-run was not reset and keeps them\.$/);
+  assert.equal(run.endedAt, null);
+  assert.equal(world(h).lock, run.id);
+  assert.equal(h.calls.resetTree.length, 0);
+
+  // Once the save works, Stop goes through and says what it kept.
+  h.world.savePatchError = '';
+  const again = await h.act(run, 'stop');
+  assert.equal(again.out.message, 'Stopped. Your changes are in final/stopped.patch and the tree is reset.');
+  assert.equal(again.run.status, 'cancelled');
   assert.equal(world(h).lock, null);
 });
 
@@ -790,6 +879,21 @@ test('unpark with a tree that hashes differently reruns the checks', async t => 
   assert.equal(stageOf(run, 'checks').rounds, 2);
 });
 
+test('take over checks the trust of the folder its terminal opens in: the run tree, not the main checkout', async t => {
+  const trusted = {};
+  const deps = { trustState: async p => ({ state: p === trusted.dir ? 'trusted' : 'not-trusted' }) };
+  const h = await harness(t, { deps });
+  trusted.dir = h.tree;
+  let run = await toReviewGate(h);
+  run = (await h.act(run, 'takeover')).run;
+  assert.equal(run.status, 'in-terminal', 'the run worktree is trusted, so Take over works');
+
+  const h2 = await harness(t, { deps });
+  trusted.dir = h2.main;
+  const other = await toReviewGate(h2);
+  await assert.rejects(h2.act(other, 'takeover'), err => err.status === 400 && /trust/.test(err.message), 'only the main checkout is trusted');
+});
+
 test('take over and back: the stage session in a terminal, then the checks and a fresh review', async t => {
   const h = await harness(t);
   let run = await toReviewGate(h);
@@ -819,7 +923,7 @@ test('recovery after a crash: an interrupted implement resumes its session', asy
   await h.ex.handle(fresh, 'approve', {});
   const ctl = new AbortController();
   const driving = h.ex.advance(fresh, { signal: ctl.signal });
-  await waitFor(async () => stageOf(await h.reload(run), 'implement').attempts[0]?.proc);
+  await untilImplementRuns(h, run);
   ctl.abort(); // the app died: nothing more is saved
   await driving;
   // What manager.recover() does on the next start.
@@ -924,6 +1028,13 @@ test('debug unpinnable: the run passes with the diagnosis and still offers take 
   assert.equal(stageOf(run, 'prove').status, 'skipped');
   assert.equal(world(h).lock, null);
   assert.deepEqual(run.plan.files, [TOTAL]);
+  // A take over that is refused leaves no lock and no tree behind on the ended run.
+  const settings = h.file(run, 'stages/01-investigate/settings.json');
+  renameSync(settings, `${settings}.bak`);
+  await assert.rejects(h.act(run, 'takeover'), err => err.status === 409 && /settings of Investigate are missing/.test(err.message));
+  assert.equal(world(h).lock, null);
+  assert.equal((await h.reload(run)).treeReady, false);
+  renameSync(`${settings}.bak`, settings);
   run = (await h.act(run, 'takeover')).run;
   assert.equal(run.status, 'in-terminal');
   assert.equal(world(h).lock, run.id, 'take over takes the lock again');
@@ -983,6 +1094,41 @@ test('a money path in the request raises the level and the review tier', async t
   assert.deepEqual([h.claudeCalls('review')[0].spec.effort, h.claudeCalls('verify')[0].spec.effort], ['xhigh', 'xhigh']);
 });
 
+test('Gate B tests and the pin reruns take the check slot too (one check at a time, R20)', async t => {
+  const h = await harness(t);
+  const run = await toReviewGate(h);
+  assert.ok(run.pins.length, 'the refactor pinned its tests');
+  assert.ok(h.calls.slotChecks.includes('gate-b'), 'Gate B ran its tests in the slot');
+  assert.ok(h.calls.slotChecks.filter(s => s === 'checks').length >= 2, 'the checks, then the pin rerun, each in the slot');
+});
+
+test('a level that rises after preflight tops up the baseline before the first edit stage', async t => {
+  const h = await harness(t);
+  h.claude('scope', () => ({ output: { ...OUT.scope(), files: [{ path: MONEY, why: 'the charge' }],
+    slices: [{ title: 'Charge', goal: 'g', files: [MONEY], tests: [TOTAL_TEST], outOfScope: [], estLines: 5 }] } }));
+  let run = await h.drive(await h.newRun('refactor', { what: 'Tidy charge()', care: 'quick' }));
+  assert.equal(run.level, 'standard', 'scope named a money path');
+  assert.equal(run.baselineLevel, 'quick', 'preflight made the quick baseline');
+  run = (await h.act(run, 'approve')).run;
+  const bases = h.calls.runChecks.filter(c => c.role === 'base');
+  assert.deepEqual(bases.map(c => c.level), ['quick', 'standard'], 'topped up before prove, on the tree at base');
+  assert.match(bases[1].gateDir.replace(/\\/g, '/'), /\/gates\/\d{2}-baseline-standard$/);
+  assert.equal(run.baselineLevel, 'standard');
+  assert.ok((await h.timeline(run)).some(r => /The level rose to standard; the baseline is topped up before Prove/.test(r.msg)));
+});
+
+test('a level that rises once the tree has changed gets no baseline, and the timeline says so', async t => {
+  const h = await harness(t);
+  h.claude('implement', (a, hh) => { hh.world.changed = [{ path: MONEY, status: 'M' }]; return { keepWorld: true }; });
+  h.claude('implement', (a, hh) => { hh.world.changed = [{ path: MONEY, status: 'M' }]; return { keepWorld: true }; });
+  let run = await h.drive(await h.newRun('refactor', { what: 'Tidy totals', care: 'quick' }));
+  run = (await h.act(run, 'approve')).run;
+  assert.equal(run.level, 'standard', 'the checks saw a money path');
+  assert.equal(h.calls.runChecks.filter(c => c.role === 'base').length, 1, 'no baseline on a changed tree');
+  assert.equal(run.baselineLevel, run.level);
+  assert.ok((await h.timeline(run)).some(r => /The changed files raise the level to standard, so the checks it adds have no baseline/.test(r.msg)));
+});
+
 test('tenant paths need a denial test; without one the checks are red', async t => {
   const h = await harness(t, { world: { denial: { ok: false, reason: 'Tenant paths changed, but no changed test checks a denial (heuristic).' } } });
   h.claude('implement', (a, hh) => { hh.world.changed = [{ path: 'apps/api/src/auth/session.mjs', status: 'M' }]; return { keepWorld: true }; });
@@ -1001,9 +1147,10 @@ test('branch mode works in your checkout and switches back at the end', async t 
   assert.equal(run.isolation.tree, h.main);
   assert.deepEqual(run.isolation.original, { branch: 'main', sha: SHA });
   assert.equal(h.calls.prepare.length, 0);
+  assert.equal(h.calls.prepareBranch[0].runId, run.id, 'the branch mode record names this run');
   run = (await h.act(run, 'stop')).run;
-  assert.deepEqual(h.calls.resetTree[0], [h.main, SHA, { allowMain: true }]);
-  assert.deepEqual(h.calls.finishBranch[0], { mainDir: h.main, original: { branch: 'main', sha: SHA } });
+  assert.deepEqual(h.calls.resetTree[0], [h.main, SHA, { allowMain: true, runId: run.id }], 'a reset only while that record counts');
+  assert.deepEqual(h.calls.finishBranch[0], { mainDir: h.main, original: { branch: 'main', sha: SHA }, runId: run.id });
 });
 
 test('a worktree that is not set up fails preflight with a plain reason', async t => {
@@ -1072,6 +1219,27 @@ test('architecture with nothing new skips triage and decide', async t => {
   assert.match(stageOf(run, 'scan').meta, /0 new candidates \(first scan: nothing to compare\)/);
 });
 
+test('architecture refuses a checkout the profile does not describe, and records nothing', async t => {
+  const h = await harness(t);
+  rmSync(join(h.main, 'apps', 'web'), { recursive: true });
+  const run = await h.drive(await h.newRun('architecture', {}));
+  assert.equal(run.status, 'failed');
+  assert.match(run.statusReason, /This checkout doesn't match the example profile: apps\/web is missing\. Is it on a branch the profile describes \(main\)\? Nothing was measured or recorded\./);
+  assert.equal(h.calls.scan.length, 0, 'no probe ran');
+  assert.equal(h.calls.recordScan.length, 0, 'no scan was kept');
+});
+
+test('architecture names the probes that failed in the scan line', async t => {
+  const h = await harness(t, { deps: { probes: {
+    scan: async o => ({ at: new Date().toISOString(), sha: o.sha, values: { todoCount: { value: 2 } }, details: {}, errors: { deepImports: 'apps/web/src/features is not a folder in this tree' } }),
+    recordScan: async () => ({ scanId: 's-1', wins: [], score: 50 }), loadMetrics: async () => ({ scans: [] }), loadDetails: async () => null,
+    newCandidates, appendWins: async (d, p, w) => w,
+  } } });
+  const run = await h.drive(await h.newRun('architecture', {}));
+  assert.equal(run.status, 'passed');
+  assert.match(stageOf(run, 'scan').meta, /0 new candidates \(first scan: nothing to compare\) · 1 of 2 probes failed: deepImports$/);
+});
+
 test('setup-worktree runs the setup gate and passes', async t => {
   const h = await harness(t);
   const run = await h.drive(await h.newRun('setup-worktree', {}));
@@ -1130,6 +1298,12 @@ test('a ticked must-tick file that headless stages cannot edit is flagged for Ta
   const run = await h.drive(await h.newRun('refactor', { what: 'Move cart totals into cents' }));
   assert.deepEqual(run.waiting.detail.mustTick, ['.husky/pre-commit']);
   assert.deepEqual(run.waiting.detail.editInTakeOver, ['.husky/pre-commit']);
+
+  // The same at the hypothesis gate of a debug run.
+  h.claude('investigate', () => ({ output: { ...OUT.investigate(), hypotheses: [{ claim: 'the hook', evidence: ['.husky/pre-commit:2', `${TOTAL}:1`], confidence: 'high', howToProve: 'x' }] } }));
+  const debug = await h.drive(await h.newRun('debug', { what: 'The hook rewrites totals' }));
+  assert.equal(debug.waiting.kind, 'hypothesis', debug.statusReason);
+  assert.deepEqual(debug.waiting.detail.editInTakeOver, ['.husky/pre-commit']);
 });
 
 test('worktree mode never changes your main checkout (R18)', async t => {

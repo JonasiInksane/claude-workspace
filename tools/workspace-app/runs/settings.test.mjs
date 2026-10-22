@@ -8,7 +8,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  BASH_DENIES, GUARD_FILE, GUARD_SCRIPT, HOOK_TIMEOUT_SEC, PROTECTED_IN_TREE, TG_CHECK_ALLOW,
+  BASH_DENIES, CHECK_PROGRAMS_IN_TREE, GUARD_FILE, GUARD_SCRIPT, HOOK_TIMEOUT_SEC, PROTECTED_IN_TREE, TG_CHECK_ALLOW,
   absRule, guardConfig, isInside, rulePath, sameDir, stageSettings, takeoverSettings, writeStageFiles,
 } from './settings.mjs';
 import { tempDir } from '../test/helpers.mjs';
@@ -52,6 +52,8 @@ const EDIT_PROTECTED = [
   'Edit(//d/work/tree/AGENTS.md)', 'Write(//d/work/tree/AGENTS.md)',
   'Edit(//d/work/tree/.github/**)', 'Write(//d/work/tree/.github/**)',
   'Edit(//d/work/tree/.gitignore)', 'Write(//d/work/tree/.gitignore)',
+  'Edit(//d/work/tree/node_modules/**)', 'Write(//d/work/tree/node_modules/**)',
+  'Edit(//d/work/tree/**/node_modules/**)', 'Write(//d/work/tree/**/node_modules/**)',
 ];
 const SHELL_DENIES = [
   'Bash(git push *)', 'Bash(git commit *)', 'Bash(git stash *)', 'Bash(git reset *)', 'Bash(git checkout *)',
@@ -88,7 +90,7 @@ test('the CHECK template, pinned in full: tg-check allowed, the guard hook on Ba
   });
 });
 
-test('the EDIT template, pinned in full: also denies CLAUDE.md, AGENTS.md, .github and .gitignore (A6)', () => {
+test('the EDIT template, pinned in full: also denies CLAUDE.md, AGENTS.md, .github, .gitignore (A6) and node_modules', () => {
   assert.deepEqual(stageSettings({ ...base(), profile: 'EDIT' }), {
     autoMemoryEnabled: false,
     permissions: {
@@ -99,6 +101,7 @@ test('the EDIT template, pinned in full: also denies CLAUDE.md, AGENTS.md, .gith
     hooks: HOOKS,
   });
   assert.deepEqual([...PROTECTED_IN_TREE], ['CLAUDE.md', 'AGENTS.md', '.github/**', '.gitignore']);
+  assert.deepEqual([...CHECK_PROGRAMS_IN_TREE], ['node_modules/**', '**/node_modules/**']);
 });
 
 test('R6: every profile keeps memory off, blocks outside reads and has the required denies', () => {
@@ -135,12 +138,13 @@ test('the guard hook runs this folder\'s guard.mjs, which exists', () => {
 
 test('the main checkout gets an edit deny only when the stage works in another tree', () => {
   const same = stageSettings({ ...base({ mainDir: 'D:\\work\\tree' }), profile: 'EDIT' }).permissions.deny;
-  assert.ok(!same.some(r => r.startsWith('Edit(//d/work/tree/**')), 'the tree itself stays editable');
+  assert.ok(!same.some(r => /^(Edit|Write)\(\/\/d\/work\/tree\/\*\*\)$/.test(r)), 'the tree itself stays editable');
+  assert.ok(same.includes('Edit(//d/work/tree/**/node_modules/**)'), 'only its node_modules folders are not');
   assert.ok(!same.some(r => r.includes('//d/work/main')));
   const noMain = stageSettings({ ...base({ mainDir: undefined }), profile: 'EDIT' }).permissions.deny;
   assert.deepEqual(noMain, same, 'mainDir defaults to the tree');
   const caseOnly = stageSettings({ ...base({ mainDir: 'd:/WORK/tree/' }), profile: 'EDIT' }).permissions.deny;
-  assert.ok(!caseOnly.some(r => r.startsWith('Edit(//d/WORK/tree/**')), 'paths compare without case');
+  assert.ok(!caseOnly.some(r => /^(Edit|Write)\(\/\/d\/work\/tree\/\*\*\)$/i.test(r)), 'paths compare without case');
 });
 
 test('a run folder outside the data folder gets its own edit deny', () => {

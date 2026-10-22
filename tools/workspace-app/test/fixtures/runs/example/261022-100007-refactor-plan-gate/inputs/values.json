@@ -1,0 +1,13 @@
+{
+  "what": "Move cart totals into a cents helper",
+  "where": "",
+  "kind": "auto",
+  "care": "standard",
+  "keep": [
+    "trpc",
+    "legacy",
+    "queues",
+    "ui"
+  ],
+  "out": ""
+}

@@ -1,0 +1,2 @@
+{"seq":1,"t":"2026-10-22T08:18:31.913Z","kind":"status","stage":null,"attempt":null,"msg":"Started: Explain: How do sessions work?"}
+{"seq":2,"t":"2026-10-22T08:18:32.230Z","kind":"stage","stage":"answer","attempt":1,"msg":"Read and answer started (sonnet/high, READ)"}

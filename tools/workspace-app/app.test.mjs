@@ -4,7 +4,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, request } from 'node:http';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -14,11 +14,12 @@ import { listUiFiles } from './http.mjs';
 import { buildState, invalidateState } from './state.mjs';
 import * as stateRoutes from './routes/state.mjs';
 import { localDate } from './uploads.mjs';
+import { installRunFixtures } from './test/fixtures/runs/install.mjs';
 
 
 const PNG = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000000', 'hex');
 const TOKEN = 'test-token-123';
-let root, server, port, calls, cookie;
+let root, dataDir, server, port, calls, cookie;
 
 function put(rel, text) {
   const f = join(root, ...rel.split('/'));
@@ -76,7 +77,9 @@ before(async () => {
     openEditor: rec('openEditor'), openNavigator: rec('openNavigator'), openWindow: rec('openWindow'),
     newProject: rec('newProject'), cloneProject: rec('cloneProject'), runTool: rec('runTool', { status: 1, output: '1 error' }),
   };
-  server = createServer(createApp({ root, token: TOKEN, actions, workspaceTag: 'tag123', getPort: () => port }));
+  // A data folder of its own, so /api/state never reads the real %LOCALAPPDATA% run index.
+  dataDir = mkdtempSync(join(tmpdir(), 'ws-app-data-'));
+  server = createServer(createApp({ root, token: TOKEN, actions, workspaceTag: 'tag123', getPort: () => port, dataDir }));
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   port = server.address().port;
 });
@@ -84,6 +87,7 @@ before(async () => {
 after(() => {
   server.close();
   rmSync(root, { recursive: true, force: true });
+  rmSync(dataDir, { recursive: true, force: true });
 });
 
 test('sign-in: wrong host, missing cookie and wrong token are refused; the token sets a strict cookie', async () => {
@@ -149,6 +153,25 @@ test('state lists projects, agents, active reports and the inbox', async () => {
   assert.deepEqual(s.reports.map(r => r.id), ['r1', 'evil']);
   assert.equal(s.inbox.total, 2);
   assert.equal(s.tools.editor, 'Cursor');
+});
+
+test('state: run counts per project and in all, profiles, and where a linked project really is', async t => {
+  const empty = (await call('GET', '/api/state')).json;
+  assert.deepEqual(empty.runs, { waiting: 0, running: 0, atReviewGate: [] });
+  assert.deepEqual(['linked', 'realPath', 'hasProfile', 'waiting', 'running'].map(k => empty.projects.find(p => p.name === 'Tattoo')[k]),
+    [false, join(root, 'projects', 'Tattoo'), false, 0, 0]);
+  const target = mkdtempSync(join(tmpdir(), 'ws-app-link-'));
+  t.after(() => { rmdirSync(join(root, 'projects', 'example')); rmSync(target, { recursive: true, force: true }); });
+  symlinkSync(target, join(root, 'projects', 'example'), 'junction');
+  await installRunFixtures(dataDir);
+  assert.equal((await call('POST', '/api/ping')).status, 200, 'a POST makes the next state fresh, run counts included');
+  const s = (await call('GET', '/api/state')).json;
+  assert.deepEqual(s.runs.waiting, 4);
+  assert.deepEqual(s.runs.running, 1);
+  assert.deepEqual(s.runs.atReviewGate, [{ id: '261022-100010-refactor-review-gate', project: 'example', title: 'Refactor: Move cart totals into a cents helper', waiting: 'review' }]);
+  const example = s.projects.find(p => p.name === 'example');
+  assert.deepEqual([example.linked, example.realPath, example.hasProfile, example.waiting, example.running], [true, realpathSync.native(target), true, 4, 1]);
+  rmSync(join(dataDir, 'runs'), { recursive: true, force: true });
 });
 
 test('uploads go to the chosen agent folder; non-images, unknown agents and huge files are refused', async () => {
@@ -613,6 +636,13 @@ test('routes: keys are "GET|POST /api/...", none is defined twice, and every rou
     'POST /api/launch', 'POST /api/open', 'GET /api/flow', 'POST /api/flows', 'POST /api/flows/caption', 'POST /api/flows/run',
     'POST /api/flows/archive', 'POST /api/flows/restore', 'POST /api/skill', 'POST /api/command', 'POST /api/repos/clone',
     'POST /api/repos/add', 'POST /api/projects', 'POST /api/projects/link', 'POST /api/projects/unlink',
+    'GET /api/pipelines', 'POST /api/runs', 'GET /api/runs', 'GET /api/run', 'GET /api/run-review', 'GET /api/run-diff', 'GET /api/run-file',
+    'POST /api/runs/approve', 'POST /api/runs/commit', 'POST /api/runs/cancel', 'POST /api/runs/next-slice', 'GET /api/events',
+    'GET /api/project', 'POST /api/project/run-tg', 'POST /api/project/archive-branch', 'POST /api/project/profile-init',
+    'POST /api/project/worktree-setup', 'POST /api/project/isolation', 'POST /api/checks', 'GET /api/checks', 'GET /api/baseline',
+    'POST /api/baseline/accept', 'POST /api/baseline/recompute', 'GET /api/findings', 'POST /api/findings/import',
+    'POST /api/findings/import/apply', 'POST /api/findings/status', 'POST /api/findings/reconcile', 'POST /api/findings/propose',
+    'GET /api/metrics', 'POST /api/allowlist', 'GET /api/today', 'POST /api/today/handoff', 'GET /api/settings', 'POST /api/settings',
   ]) assert.ok(keys.includes(key), key);
 });
 

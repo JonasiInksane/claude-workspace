@@ -1,0 +1,100 @@
+/* The review gate and the commit dialog (UI-REVIEW: views/review.js, parts/diff.js,
+   parts/commit-dialog.js, parts/checks-table.js; mockup #v-review and #commit-dlg). Linked after
+   app.css in index.html. View rules are scoped to #view-review (the section main.js makes), so
+   they can't clash with other views; the checks-table rules are global because the live run
+   view renders the same table. Narrow-screen rules are at the end. */
+
+/* ---------- Checks table extras (parts/checks-table.js; table.ctable and .res are in app.css) */
+.ctable-group { display: inline-block; min-width: 2.4em; margin-right: 6px; font-size: var(--t-sm); font-weight: 600; color: var(--muted); }
+table.ctable .res.long { white-space: normal; align-items: flex-start; }
+.ctable-took { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ctable-fail { margin-top: 4px; font-size: var(--t-sm); }
+.ctable-fail summary { cursor: pointer; color: var(--muted); }
+.ctable-fail ul { margin: 4px 0 0; padding-left: 16px; display: grid; gap: 4px; }
+.ctable-fail code { overflow-wrap: anywhere; }
+.ctable-msg { display: block; color: var(--muted); overflow-wrap: anywhere; }
+pre.output.ctable-log { max-height: 65vh; }
+
+/* ---------- State notes and the action bar */
+#view-review .rv-state { margin-bottom: var(--s3); }
+#view-review .actionbar { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; padding: var(--s3) var(--s4); margin-bottom: var(--s4); }
+#view-review .rv-reasons { flex-basis: 100%; display: grid; gap: 2px; margin-top: 2px; }
+#view-review .rv-reasons .reason { font-size: var(--t-md); }
+#view-review .rv-menu-why { padding: 0 10px 6px; max-width: 280px; }
+#view-review .rv-more .menu-list { min-width: 260px; left: 0; right: auto; }
+
+/* ---------- Two stacks: proof and checks, findings and not proven */
+#view-review .review-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--s4); margin-bottom: var(--s4); align-items: start; }
+#view-review .cannot { margin: 0; padding-left: 18px; font-size: var(--t-md); display: grid; gap: 2px; }
+
+/* ---------- Findings */
+#view-review .rv-verify { margin-bottom: var(--s2); }
+#view-review .findings { list-style: none; margin: 0; padding: 0; }
+#view-review .finding { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; padding: var(--s3) 0; border-bottom: 1px solid var(--border); }
+#view-review .finding:last-child { border-bottom: 0; }
+#view-review .finding input { margin-top: 4px; }
+#view-review .finding .f-head { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; cursor: pointer; min-width: 0; }
+#view-review .finding .f-head code { overflow-wrap: anywhere; }
+#view-review .finding .claim, #view-review .finding .ev, #view-review .finding .f-act { grid-column: 2; }
+#view-review .finding .ev { font-family: var(--mono); font-size: var(--t-sm); background: var(--code-bg); border-radius: 6px; padding: 4px 8px; overflow-wrap: anywhere; white-space: pre-wrap; }
+#view-review .finding .f-act { font-size: var(--t-md); color: var(--muted); }
+#view-review .finding .f-links { display: flex; gap: var(--s3); flex-wrap: wrap; }
+#view-review .finding.unconfirmed .claim, #view-review .finding.unconfirmed .ev { color: var(--muted); }
+#view-review .rv-keys { font-size: var(--t-sm); gap: 4px; }
+
+/* ---------- Changes: file chips and the diff (parts/diff.js) */
+#view-review .rv-note { margin: var(--s3) var(--s4) 0; }
+#view-review .rv-pad { padding: var(--s3) var(--s4); }
+#view-review .rv-more-lines { padding-top: 0; font-size: var(--t-md); color: var(--muted); }
+#view-review .filechips { display: flex; flex-wrap: wrap; gap: 6px; padding: var(--s3) var(--s4) 0; }
+#view-review .filechip {
+  border: 1px solid var(--border); background: var(--bg); border-radius: 8px; padding: 4px 10px; font-size: var(--t-sm);
+  cursor: pointer; display: inline-flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; font-family: var(--mono); max-width: 100%; text-align: left;
+}
+#view-review .filechip:hover { border-color: var(--accent); }
+#view-review .filechip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+#view-review .filechip.flag { border-color: var(--red); }
+#view-review .filechip.flag[aria-pressed="true"] { box-shadow: inset 0 0 0 1px var(--red); }
+#view-review .filechip .fname { overflow-wrap: anywhere; }
+#view-review .filechip .plus { color: var(--green); }
+#view-review .filechip .minus { color: var(--red); }
+#view-review .filechip .ftag { font-family: inherit; color: var(--muted); }
+#view-review .filechip.flag .ftag:first-of-type { color: var(--red); }
+#view-review .diff-meta { padding: 0 var(--s4); font-size: var(--t-md); color: var(--muted); margin-top: var(--s2); overflow-wrap: anywhere; }
+#view-review pre.diff {
+  margin: var(--s3) var(--s4) var(--s4); font-family: var(--mono); font-size: 12.5px; line-height: 1.5; border: 1px solid var(--border);
+  border-radius: 8px; overflow: auto; max-height: min(60vh, 560px); background: var(--bg); padding: 6px 0;
+}
+/* Each line is a block as wide as its text, so a coloured line stays coloured when scrolled sideways */
+#view-review pre.diff span { display: block; padding: 0 12px; white-space: pre; min-width: 100%; width: max-content; }
+#view-review pre.diff .add { background: var(--green-soft); }
+#view-review pre.diff .del { background: var(--red-soft); }
+#view-review pre.diff .hunk { color: var(--blue); }
+#view-review pre.diff .meta { color: var(--muted); }
+#view-review pre.diff .note { color: var(--muted); font-style: italic; }
+#view-review pre.diff .mark { box-shadow: inset 3px 0 0 var(--amber); background: var(--amber-soft); }
+
+/* ---------- The commit dialog (<dialog id="commitDialog">) */
+#commitDialog .commit-field { font-weight: 600; font-size: var(--t-md); }
+#commitDialog textarea.commit-msg { min-height: 150px; max-height: 45vh; }
+#commitDialog .commit-files { margin: 4px 0 0; padding-left: 18px; font-size: 12.5px; display: grid; gap: 2px; overflow-wrap: anywhere; max-height: 180px; overflow: auto; }
+#commitDialog .commit-tree { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+#commitDialog .form-error { margin-top: 0; }
+#commitDialog .card-foot .reason { margin-right: auto; }
+
+/* ---------- Narrow screens (app.css breakpoints: 1080 single-column grids, 760 stacked) */
+@media (max-width: 1080px) {
+  #view-review .review-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  #view-review .actionbar { padding: var(--s3); }
+  #view-review .actionbar > .btn, #view-review .actionbar > .menu { flex: 1 1 auto; }
+  #view-review .actionbar > .menu > summary { width: 100%; }
+  #view-review .filechips { padding: var(--s3) var(--s3) 0; }
+  #view-review .diff-meta { padding: 0 var(--s3); }
+  #view-review pre.diff { margin: var(--s3); font-size: var(--t-sm); max-height: 70vh; }
+  #view-review .rv-note { margin: var(--s3) var(--s3) 0; }
+  #view-review .rv-pad { padding: var(--s3); }
+  #commitDialog .card-foot { flex-wrap: wrap; }
+  #commitDialog .card-foot .reason { flex-basis: 100%; }
+}

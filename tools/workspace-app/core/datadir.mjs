@@ -24,8 +24,13 @@ import { dirname, join, resolve } from 'node:path';
 export const PROJECT_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 // A name used as a file name inside a project folder (a baseline key, a scan id, a report slug).
 const FILE_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/;
+// Windows refuses a rename onto a file that a reader (the page polling a run), a virus scanner or
+// the search indexer has open. That passes in milliseconds, or seconds on a busy PC, so a refused
+// rename is tried again with pauses of 50 to 800 ms, then 1 s each: about 10 s in all.
 const RETRY_CODES = new Set(['EPERM', 'EBUSY', 'EACCES']);
 const BACKOFF_MS = [50, 100, 200, 400, 800];
+export const RENAME_RETRIES = 14;
+const pauseFor = attempt => (attempt < BACKOFF_MS.length ? BACKOFF_MS[attempt] : 1000);
 
 // %LOCALAPPDATA%\claude-workspace, or ~/AppData/Local/claude-workspace when the variable is unset.
 export function defaultDataDir(env = process.env) {
@@ -89,14 +94,11 @@ function jsonText(data) {
 const tmpName = file => `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// Writes JSON (pretty, with a final newline) through a temporary file and a rename.
-// `fs` and `sleep` can be replaced in tests; `retries` is how many times a refused rename is tried
-// again.
-export async function writeJsonAtomic(file, data, { retries = 5, fs: io = fsp, sleep: pause = sleep } = {}) {
-  const text = jsonText(data);
-  await io.mkdir(dirname(file), { recursive: true });
-  const tmp = tmpName(file);
-  await io.writeFile(tmp, text);
+// Renames a finished temporary file onto `file`, trying again while Windows refuses it (above).
+// When it gives up, the temporary file is removed and the error thrown; the old file is untouched.
+// Every atomic write in the app goes through here. `fs` and `sleep` can be replaced in tests;
+// `retries` is how many times a refused rename is tried again.
+export async function renameRetry(tmp, file, { retries = RENAME_RETRIES, fs: io = fsp, sleep: pause = sleep } = {}) {
   for (let attempt = 0; ; attempt++) {
     try {
       await io.rename(tmp, file);
@@ -106,16 +108,31 @@ export async function writeJsonAtomic(file, data, { retries = 5, fs: io = fsp, s
         await io.rm(tmp, { force: true }).catch(() => {});
         throw err;
       }
-      await pause(BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)]);
+      await pause(pauseFor(attempt));
     }
   }
+}
+
+// Writes text through a temporary file next to `file` and renameRetry. A failed write removes the
+// temporary file too.
+export async function writeTextAtomic(file, text, opts = {}) {
+  const io = opts.fs || fsp;
+  await io.mkdir(dirname(file), { recursive: true });
+  const tmp = tmpName(file);
+  try { await io.writeFile(tmp, text); } catch (err) { await io.rm(tmp, { force: true }).catch(() => {}); throw err; }
+  return renameRetry(tmp, file, opts);
+}
+
+// Writes JSON (pretty, with a final newline) through a temporary file and a rename.
+export async function writeJsonAtomic(file, data, opts = {}) {
+  return writeTextAtomic(file, jsonText(data), opts);
 }
 
 // A blocking pause for the sync writer (Atomics.wait is allowed on Node's main thread).
 const sleepSync = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 // The same as writeJsonAtomic, for callers that can't await (startup, small settings writes).
-export function writeJsonAtomicSync(file, data, { retries = 5, fs: io = fs, sleep: pause = sleepSync } = {}) {
+export function writeJsonAtomicSync(file, data, { retries = RENAME_RETRIES, fs: io = fs, sleep: pause = sleepSync } = {}) {
   const text = jsonText(data);
   io.mkdirSync(dirname(file), { recursive: true });
   const tmp = tmpName(file);
@@ -129,7 +146,7 @@ export function writeJsonAtomicSync(file, data, { retries = 5, fs: io = fs, slee
         try { io.rmSync(tmp, { force: true }); } catch { /* best effort */ }
         throw err;
       }
-      pause(BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)]);
+      pause(pauseFor(attempt));
     }
   }
 }

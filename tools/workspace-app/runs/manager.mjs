@@ -57,6 +57,8 @@ export const PROCESS_KINDS = ['claude', 'check', 'gate'];
 const ACTION_RE = /^[a-z][a-z-]{0,19}$/;
 const CANCEL_SETTLE_MS = 10_000;
 const SHUTDOWN_SETTLE_MS = 3_000;
+const TRUST_CACHE_MS = 10_000;
+const ACTION_SETTLE_MS = 3_000;
 const STAGE_FOLDER_RE = /^stages\/\d{2}-[a-z0-9-]+$/;
 const GATE_FOLDER_RE = /^gates\/\d{2}-[a-z0-9-]+$/;
 const realClock = { now: () => Date.now() };
@@ -71,10 +73,12 @@ function samePath(a, b) {
   return process.platform === 'win32' ? norm(a).toLowerCase() === norm(b).toLowerCase() : norm(a) === norm(b);
 }
 
-// True when `promise` settles within `ms`.
-function settlesWithin(promise, ms) {
+// True when `promise` settles within `ms`. The timer doesn't keep Node alive unless `hold`:
+// shutdown holds it for its few seconds, so the process can't exit before the runs it stops are
+// marked interrupted.
+function settlesWithin(promise, ms, { hold = false } = {}) {
   let timer;
-  const timeout = new Promise(r => { timer = setTimeout(() => r(false), ms); timer.unref?.(); });
+  const timeout = new Promise(r => { timer = setTimeout(() => r(false), ms); if (!hold) timer.unref?.(); });
   return Promise.race([promise.then(() => true, () => true), timeout]).finally(() => clearTimeout(timer));
 }
 
@@ -157,7 +161,7 @@ export function defaultTreeMode(need, isolationMode) {
 
 const fieldOfKind = (def, kind) => (def.fields || []).find(f => f.kind === kind);
 
-export function createManager({ root, dataDir, deps = {}, clock = realClock, limits = {} } = {}) {
+export function createManager({ root, dataDir, deps = {}, clock = realClock, limits = {}, actionSettleMs = ACTION_SETTLE_MS } = {}) {
   if (!dataDir) throw new Error('createManager needs the data folder (dataDir).');
   const store = deps.store || realStore;
   const locks = deps.locks || realLocks;
@@ -376,14 +380,22 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
     } catch { return null; }
   }
 
+  // Folder trust comes from ~/.claude.json, which can be large, and the run view asks for the
+  // actions on every 2 s poll: the answer is kept per tree for TRUST_CACHE_MS.
+  const trustCache = new Map(); // tree -> { at, value }
   async function trustFor(run) {
     if (deps.trustFor) return deps.trustFor(run);
     const tree = run.isolation && run.isolation.tree;
     if (!tree) return undefined;
+    const hit = trustCache.get(tree);
+    if (hit && now() - hit.at < TRUST_CACHE_MS) return hit.value;
+    let value;
     try {
       const t = await trustState(tree);
-      return t.state === 'trusted' ? true : t.state === 'not-trusted' ? false : undefined;
-    } catch { return undefined; }
+      value = t.state === 'trusted' ? true : t.state === 'not-trusted' ? false : undefined;
+    } catch { value = undefined; }
+    trustCache.set(tree, { at: now(), value });
+    return value;
   }
 
   // ---------- Drafts: what a start would create
@@ -468,7 +480,7 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
     const refusals = [...draft.refusals];
     if (!draft.error && draft.lock) {
       const busy = await lockBusy(draft);
-      if (busy) refusals.push(busy);
+      if (busy) refusals.unshift(busy); // first: it usually explains the others (see start)
     }
     const x = draft.extra || {};
     return {
@@ -524,6 +536,10 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
       guardOpen();
       const draft = await draftFor(req, internal);
       if (draft.error) throw new HttpError(400, draft.error);
+      // A run that holds the lock usually also explains the other refusals (its changes are in
+      // the run worktree), so "busy with <title>" comes first.
+      const busy = draft.lock ? await lockBusy(draft) : '';
+      if (busy) throw new HttpError(409, busy);
       if (draft.refusals.length) throw new HttpError(400, draft.refusals.join(' '));
       const slugText = draft.values.what || draft.findingId || draft.title.replace(/^[^:]*:\s*/, '');
       const id = await store.freeRunId(dataDir, draft.project, draft.pipeline, slugText, new Date(now()));
@@ -651,8 +667,8 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
   }
 
   // Applies one of your clicks. Checks it against allowedActions (400 with the reason), refuses
-  // while the run is driven or another action runs (409), then hands it to the executor and
-  // schedules the run when it should go on. Resolves to { message, run }.
+  // while another action runs or the run is still driven after actionSettleMs (409), then hands
+  // it to the executor and schedules the run when it should go on. Resolves to { message, run }.
   async function action(id, name, payload = {}) {
     guardOpen();
     if (!ACTION_RE.test(String(name ?? ''))) throw new HttpError(400, 'That is not an action.');
@@ -662,14 +678,22 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
       return cancel(id);
     }
     if (handling.has(id)) throw new HttpError(409, `The run is busy with ${handling.get(id).name}; try again in a moment.`);
-    if (drivers.has(id)) throw new HttpError(409, 'The run is busy with a stage. Wait for it, or cancel the run.');
     return track(id, name, async () => {
+      // run.json says "waiting" a moment before its driver has finished (the page shows the gate
+      // and you click at once), so a driver gets actionSettleMs to finish before the refusal.
+      const d = drivers.get(id);
+      if (d && !(await settlesWithin(d.promise, actionSettleMs, { hold: true }))) throw new HttpError(409, 'The run is busy with a stage. Wait for it, or cancel the run.');
       const run = await loadOr404(id);
       await checkAllowed(run, name);
       const out = await executor.handle(run, name, isPlainObject(payload) ? payload : {});
       const fresh = await findRunQuietly(id);
       if (fresh && fresh.status === 'running' && !closing) schedule(id);
-      return { message: (out && typeof out.message === 'string' && out.message) || 'Done.', run: fresh };
+      // What an action hands back besides its message: the child run of "Start next slice", the
+      // saved report of "Save as report".
+      const extra = {};
+      if (out && out.childRunId) extra.childRunId = out.childRunId;
+      if (out && out.report) extra.report = out.report;
+      return { message: (out && typeof out.message === 'string' && out.message) || 'Done.', ...extra, run: fresh };
     });
   }
 
@@ -894,7 +918,7 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
         addKills(await killEntries([...registered, ...registry.values(), ...gates].filter(e => !clicks.has(e.runId))));
       } catch (err) { report.errors.push(`Stopping processes failed: ${err.message}`); }
       const jobs = [...clicks.values()].map(job => job.promise.catch(() => {}));
-      await settlesWithin(Promise.all([...[...drivers.values()].map(d => d.promise), ...jobs]), settleMs);
+      await settlesWithin(Promise.all([...[...drivers.values()].map(d => d.promise), ...jobs]), settleMs, { hold: true });
       const unfinished = [...clicks].filter(([id, job]) => handling.get(id) === job).map(([id]) => id);
       if (unfinished.length) {
         try {

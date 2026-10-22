@@ -239,7 +239,11 @@ test('selfRecord describes this process the way a lookup sees it', winOnly, asyn
 test('procInfoMany looks up several pids in one go', winOnly, async t => {
   const a = idleChild(t);
   const b = idleChild(t);
-  const m = await procInfoMany([a.pid, b.pid, a.pid, 999_999_996, -1]);
+  // A lookup that takes longer than its 10 s (PowerShell starting on a PC busy with the whole
+  // suite) answers alive: null, "unknown"; that is the designed answer, so it is asked once more.
+  const ask = () => procInfoMany([a.pid, b.pid, a.pid, 999_999_996, -1]);
+  let m = await ask();
+  if (m.get(a.pid).alive === null) m = await ask();
   assert.deepEqual([...m.keys()].sort(), [a.pid, b.pid, 999_999_996].sort());
   assert.equal(m.get(a.pid).alive, true);
   assert.equal(m.get(b.pid).alive, true);

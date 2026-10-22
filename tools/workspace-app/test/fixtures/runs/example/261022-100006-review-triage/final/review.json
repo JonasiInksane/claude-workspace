@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "verdict": "fix",
+  "notProven": [
+    "Expo totals"
+  ],
+  "verified": false,
+  "stage": "review",
+  "at": "2026-10-22T08:18:35.098Z",
+  "findings": [
+    {
+      "severity": "medium",
+      "kind": "issue",
+      "rule": "correctness",
+      "path": "apps/web/src/features/cart/total.mjs",
+      "line": 1,
+      "claim": "The * 1 does nothing and hides intent.",
+      "evidence": "line 1",
+      "suggestion": "Remove it.",
+      "id": "F1",
+      "source": "review"
+    },
+    {
+      "severity": "low",
+      "kind": "follow-up",
+      "rule": "tests",
+      "path": "apps/web/src/features/cart/total.mjs",
+      "line": 0,
+      "claim": "No test covers an empty cart.",
+      "evidence": "",
+      "suggestion": "Add one.",
+      "id": "F2",
+      "source": "review"
+    }
+  ]
+}

@@ -146,6 +146,21 @@ test('createRun picks a free id when the same request comes twice in one second'
   assert.equal(await freeRunId(dataDir, 'example', 'explain', 'Login slow', new Date(c.now())), '261022-104212-explain-login-slow-3');
 });
 
+test('run ids are unique across projects, even for two creations at the same moment', async t => {
+  const dataDir = temp(t);
+  const c = clock();
+  const [a, b] = await Promise.all([
+    createRun(dataDir, { project: 'example', pipeline: 'explain', slugText: 'Same words' }, { now: c.now }),
+    createRun(dataDir, { project: 'other', pipeline: 'explain', slugText: 'Same words' }, { now: c.now }),
+  ]);
+  assert.notEqual(a.id, b.id);
+  assert.deepEqual([a.id, b.id].sort(), ['261022-104212-explain-same-words', '261022-104212-explain-same-words-2']);
+  assert.equal((await findRun(dataDir, a.id)).project, a.project);
+  assert.equal((await findRun(dataDir, b.id)).project, b.project);
+  // A given id taken in another project is refused too.
+  await assert.rejects(createRun(dataDir, { id: a.id, project: b.project, pipeline: 'explain' }), /already exists/);
+});
+
 test('loadRun returns null for a missing run and refuses a run.json that describes another run', async t => {
   const dataDir = temp(t);
   assert.equal(await loadRun(dataDir, 'example', 'nope'), null);

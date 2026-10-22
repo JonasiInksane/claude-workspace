@@ -14,6 +14,13 @@
 // 'METHOD /api/path' to an async handler (req, res, url). A handler returns the JSON body to
 // send with status 200, or undefined when it has answered itself (streaming). It refuses with
 // `throw new HttpError(status, message)`, which becomes { ok: false, error: message }.
+//
+// The run engine (runs/wiring.mjs: the run manager with the real executor) is made lazily:
+// ctx.getEngine() creates it on the first call and returns the same promise after that, so
+// creating an app never starts one. Route handlers call it inside a handler, never in routes(ctx).
+// server.mjs calls handler.getEngine() at startup (recovery before listening) and stops the
+// engine before every exit; handler.isBusy() is also true while the engine runs a stage or check
+// or applies a click.
 import { readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -23,6 +30,7 @@ import { assetFile } from './assets.mjs';
 import { cookies, HttpError, json, listUiFiles, sameToken, send, sendStatic } from './http.mjs';
 import { assetProjectOrThrow } from './lookup.mjs';
 import { invalidateState } from './state.mjs';
+import { createEngine } from './runs/wiring.mjs';
 import * as agentRoutes from './routes/agents.mjs';
 import * as assetRoutes from './routes/assets.mjs';
 import * as flowRoutes from './routes/flows.mjs';
@@ -31,10 +39,19 @@ import * as launchRoutes from './routes/launch.mjs';
 import * as projectRoutes from './routes/projects.mjs';
 import * as stateRoutes from './routes/state.mjs';
 import * as toolRoutes from './routes/tools.mjs';
+import * as runRoutes from './routes/runs.mjs';
+import * as eventRoutes from './routes/events.mjs';
+import * as cockpitRoutes from './routes/cockpit.mjs';
+import * as checkRoutes from './routes/checks.mjs';
+import * as findingRoutes from './routes/findings.mjs';
+import * as metricRoutes from './routes/metrics.mjs';
+import * as settingRoutes from './routes/settings.mjs';
+import * as todayRoutes from './routes/today.mjs';
 
 const appDir = dirname(fileURLToPath(import.meta.url));
 // A new routes/<area>.mjs goes in this list.
-export const ROUTE_MODULES = [stateRoutes, imageRoutes, agentRoutes, assetRoutes, launchRoutes, flowRoutes, toolRoutes, projectRoutes];
+export const ROUTE_MODULES = [stateRoutes, imageRoutes, agentRoutes, assetRoutes, launchRoutes, flowRoutes, toolRoutes, projectRoutes,
+  runRoutes, eventRoutes, cockpitRoutes, checkRoutes, findingRoutes, metricRoutes, settingRoutes, todayRoutes];
 const ROUTE_KEY = /^(GET|POST) \/api\/[a-z0-9/-]+$/;
 
 // Where the app keeps data that must not go into the (public) workspace repo:
@@ -72,13 +89,28 @@ function isFile(p) {
 //   dataDir       private data folder (default defaultDataDir()); tests pass a temp folder
 //   isBusy        optional () => boolean: true while work is running that must not be cut off
 //                 (server.mjs asks handler.isBusy() before an idle shutdown)
-// Returns the request handler, with handler.isBusy() attached.
+//   engineOptions for the run engine (runs/wiring.mjs createEngine): fakeClaude, claudeCommand,
+//                 limits, timing. Tests and the --fake-claude dev flag use them.
+// Returns the request handler, with handler.isBusy() and handler.getEngine() attached.
 export function createApp({
   root, token, actions, getPort, workspaceTag = '', onPing = () => {}, uiDir = join(appDir, 'ui'),
-  dataDir = defaultDataDir(), isBusy = null,
+  dataDir = defaultDataDir(), isBusy = null, engineOptions = {},
 }) {
   root = resolve(root);
-  const ctx = { root, actions, getPort, workspaceTag, dataDir: resolve(dataDir) };
+  dataDir = resolve(dataDir);
+  // The run engine, made on first use. A failed start is not kept, so the next call tries again.
+  let engine = null;
+  let enginePromise = null;
+  const getEngine = () => {
+    if (!enginePromise) {
+      enginePromise = createEngine({ root, dataDir, actions, engineOptions }).then(
+        m => { engine = m; return m; },
+        err => { enginePromise = null; throw err; },
+      );
+    }
+    return enginePromise;
+  };
+  const ctx = { root, actions, getPort, workspaceTag, dataDir, getEngine };
   const api = mergeRoutes([
     { 'POST /api/ping': async () => { onPing(); return { ok: true }; } },
     ...ROUTE_MODULES.map(m => m.routes(ctx)),
@@ -165,6 +197,9 @@ export function createApp({
     }
   }
 
-  handler.isBusy = () => !!(isBusy && isBusy());
+  // Busy: the caller's own work, or the engine running a stage or check or applying a click.
+  // Runs that only wait for you don't count (R21), so they never keep the app from closing.
+  handler.isBusy = () => !!(isBusy && isBusy()) || !!(engine && engine.isBusy());
+  handler.getEngine = getEngine;
   return handler;
 }

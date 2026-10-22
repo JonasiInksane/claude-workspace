@@ -123,21 +123,22 @@ test('a timeout or cancel ends the call even when git has exited and a backgroun
   const dir = join(tempRoot(t), 'r');
   makeRepo(dir, { 'a.txt': 'a\n' });
   // The alias's shell starts sleep in the background and exits at once, so git.exe is gone while
-  // sleep still holds git's stdout and stderr. Without closing the pipes the call would wait 3 s.
-  const bg = ['-c', 'alias.bg=!sleep 3 &', 'bg'];
+  // sleep still holds git's stdout and stderr. Without closing the pipes the call would wait 8 s.
+  // The bound leaves room for taskkill, which took about 4 s once while the whole suite ran.
+  const bg = ['-c', 'alias.bg=!sleep 8 &', 'bg'];
   let t0 = Date.now();
   await assert.rejects(git(dir, bg, { timeoutMs: 400 }), e => e.code === 'TIMEOUT' && /took longer than 400 ms/.test(e.message));
   const timedOut = Date.now() - t0;
-  assert.ok(timedOut < 2000, `the timeout ended the call after ${timedOut} ms`);
+  assert.ok(timedOut < 6000, `the timeout ended the call after ${timedOut} ms`);
   const ac = new AbortController();
   t0 = Date.now();
   const p = git(dir, bg, { signal: ac.signal });
   setTimeout(() => ac.abort(), 400);
   await assert.rejects(p, e => e.code === 'ABORTED');
   const cancelled = Date.now() - t0;
-  assert.ok(cancelled < 2000, `the cancel ended the call after ${cancelled} ms`);
-  // The orphaned sleep has the repo as its folder; let it finish before the temp folder goes.
-  await new Promise(r => setTimeout(r, 3200 - Math.min(timedOut, cancelled)));
+  assert.ok(cancelled < 6000, `the cancel ended the call after ${cancelled} ms`);
+  // The orphaned sleeps have the repo as their folder; let them finish before the temp folder goes.
+  await new Promise(r => setTimeout(r, 8200 - Math.min(timedOut, cancelled)));
 });
 
 test('allDone waits for every call before throwing the first error', async () => {

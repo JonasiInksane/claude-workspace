@@ -15,10 +15,10 @@
 //   last line (a crash mid-write) keeps its line number, and the next append starts a fresh line.
 // - inputs/ files are hashed when written; verifyInputs re-hashes them before a gate (R27).
 // Ids and names are checked by regex before any path is joined, so ".." can never reach out.
-import { appendFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
-import { appendJsonl, PROJECT_RE, readJson, readJsonl, sha256Text, writeJsonAtomic } from '../core/datadir.mjs';
+import { appendJsonl, PROJECT_RE, readJson, readJsonl, renameRetry, sha256Text, writeJsonAtomic } from '../core/datadir.mjs';
 
 export const RUN_ID_RE = /^[0-9a-z-]{1,64}$/;
 export const RUN_STATUSES = ['running', 'waiting', 'in-terminal', 'passed', 'failed', 'gates-red', 'capped', 'parked',
@@ -33,15 +33,13 @@ export const MSG_MAX = 300;
 const NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/; // pipeline and stage ids
 const INPUT_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const RUN_FOLDERS = ['inputs', 'stages', 'gates', 'final', 'tmp'];
-const RETRY_CODES = new Set(['EPERM', 'EBUSY', 'EACCES']);
 // Words that say little about a run, left out of its id.
 const STOP_WORDS = new Set(('the and for with into from that this these those then than when what where which who why how ' +
   'our all any its are was were not but out off onto over about also can could should would will make move fix add use ' +
   'using get set let new please some more less each every there their them they you your does did some way').split(' '));
 
 const iso = ms => new Date(ms).toISOString();
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-const cap = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+const cap =(s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 // Runs fn after every earlier call with the same key has finished (one writer per file).
 const queues = new Map();
@@ -150,9 +148,20 @@ async function listNames(dir, { dirs = true } = {}) {
   }
 }
 
-// newRunId, checked against the run folders that exist for the project.
+// The run ids in use in every project. Ids are global (findRun, the manager's drivers, the page's
+// #run/<id>), so two projects must never share one.
+async function takenIds(dataDir) {
+  const ids = new Set();
+  for (const p of (await listNames(runsRoot(dataDir))).filter(n => PROJECT_RE.test(n))) {
+    for (const id of await listNames(projectRunsDir(dataDir, p))) ids.add(id);
+  }
+  return ids;
+}
+
+// newRunId, checked against the run folders of every project.
 export async function freeRunId(dataDir, project, pipeline, text, date = new Date()) {
-  const existing = new Set(await listNames(projectRunsDir(dataDir, project)));
+  checkProject(project);
+  const existing = await takenIds(dataDir);
   return newRunId(pipeline, text, date, id => existing.has(id));
 }
 
@@ -196,6 +205,22 @@ function checkStatuses(run) {
   if (run.waiting && !WAITING_KINDS.includes(run.waiting.kind)) throw new Error(`"${run.waiting.kind}" is not a waiting kind.`);
 }
 
+// A free run id (init.id when given and free in every project), with its folder made.
+async function claimRunId(dataDir, init, now) {
+  const wanted = init.id ? checkRunId(init.id) : null;
+  if (wanted && (await takenIds(dataDir)).has(wanted)) throw new Error(`Run ${wanted} already exists.`);
+  for (let attempt = 0; ; attempt++) {
+    const candidate = wanted || await freeRunId(dataDir, init.project, init.pipeline, init.slugText ?? init.title, new Date(now()));
+    try {
+      await mkdir(runDir(dataDir, init.project, candidate)); // not recursive: fails if the id is taken
+      return candidate;
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+      if (wanted || attempt >= 3) throw new Error(`Run ${candidate} already exists.`);
+    }
+  }
+}
+
 // Creates the run folder (with inputs/, stages/, gates/, final/, tmp/) and run.json, and indexes
 // the run. `init` holds any run.json fields to set (project and pipeline are required; `id` is
 // optional and must be free). Returns the run.
@@ -203,18 +228,8 @@ export async function createRun(dataDir, init = {}, { now = Date.now } = {}) {
   checkProject(init.project);
   checkName(init.pipeline, 'pipeline id');
   await mkdir(projectRunsDir(dataDir, init.project), { recursive: true });
-  let id = init.id ? checkRunId(init.id) : null;
-  for (let attempt = 0; ; attempt++) {
-    const candidate = id || await freeRunId(dataDir, init.project, init.pipeline, init.slugText ?? init.title, new Date(now()));
-    try {
-      await mkdir(runDir(dataDir, init.project, candidate)); // not recursive: fails if the id is taken
-      id = candidate;
-      break;
-    } catch (err) {
-      if (err.code !== 'EEXIST') throw err;
-      if (init.id || attempt >= 3) throw new Error(`Run ${candidate} already exists.`);
-    }
-  }
+  // One creation at a time per data folder, so two projects can't pick the same free id at once.
+  const id = await serial(runsRoot(dataDir), () => claimRunId(dataDir, init, now));
   const dir = runDir(dataDir, init.project, id);
   for (const f of RUN_FOLDERS) await mkdir(join(dir, f), { recursive: true });
   const { slugText, ...fields } = init;
@@ -309,15 +324,6 @@ async function indexState(file) {
   return state;
 }
 
-async function renameWithRetry(from, to) {
-  for (let attempt = 0; ; attempt++) {
-    try { return await rename(from, to); } catch (err) {
-      if (!RETRY_CODES.has(err.code) || attempt >= 5) { await rm(from, { force: true }).catch(() => {}); throw err; }
-      await sleep(50 * 2 ** attempt);
-    }
-  }
-}
-
 async function compactUnlocked(file, { maxBytes = INDEX_MAX_BYTES, force = false } = {}) {
   const before = await fileSize(file);
   if (!force && before <= maxBytes) return { compacted: false, before, after: before, runs: null };
@@ -331,7 +337,7 @@ async function compactUnlocked(file, { maxBytes = INDEX_MAX_BYTES, force = false
   const text = [...latest.values()].map(r => JSON.stringify(r)).join('\n') + (latest.size ? '\n' : '');
   const tmp = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
   await writeFile(tmp, text);
-  await renameWithRetry(tmp, file);
+  await renameRetry(tmp, file);
   const keys = new Map([...latest.values()].map(r => [r.id, indexKey(r.status, r.stage, r.waiting)]));
   indexStates.set(file, { keys, size: Buffer.byteLength(text) });
   return { compacted: true, before, after: Buffer.byteLength(text), runs: latest.size };

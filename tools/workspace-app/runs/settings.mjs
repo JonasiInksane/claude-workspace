@@ -9,7 +9,8 @@
 //     .sentryclirc, the profile's secret files and the app's private data;
 //   - Edit (and, as untested defence in depth, Write) denies for the data folder, the hub, the
 //     main checkout when the stage works elsewhere, and for EDIT the files --restricted still
-//     lets acceptEdits change: CLAUDE.md, AGENTS.md, .github/** and .gitignore (spike A6);
+//     lets acceptEdits change: CLAUDE.md, AGENTS.md, .github/** and .gitignore (spike A6), plus
+//     every node_modules folder of the tree, where the gates run their check programs from;
 //   - Bash denies for git writes, npm, npx, uv, eas, curl and wget;
 //   - for CHECK and EDIT, `Bash(tg-check *)` and the PreToolUse guard hook (guard.mjs). Deny
 //     rules are no barrier for Bash (grep -r and globs leak, spike A8), so the hook is a strict
@@ -34,6 +35,9 @@ export const PRIVATE_READS = Object.freeze(['profiles/**', 'baselines/**', 'find
   'reports/**', 'checks/**', 'worktrees/**', 'settings.json', 'sessions.jsonl']);
 // Files --restricted acceptEdits may still change (spike E9); EDIT stages get denies for them.
 export const PROTECTED_IN_TREE = Object.freeze(['CLAUDE.md', 'AGENTS.md', '.github/**', '.gitignore']);
+// The gates run tsc, eslint, prettier and tsx from the tree's node_modules ({pkg:} in the
+// profile), so an EDIT stage that wrote there could swap a check for one that always passes.
+export const CHECK_PROGRAMS_IN_TREE = Object.freeze(['node_modules/**', '**/node_modules/**']);
 const GIT_WRITES = ['push', 'commit', 'stash', 'reset', 'checkout', 'switch', 'rebase', 'merge'];
 export const BASH_DENIES = Object.freeze([...GIT_WRITES.map(c => `Bash(git ${c} *)`),
   'Bash(npm *)', 'Bash(npx *)', 'Bash(uv *)', 'Bash(eas *)', 'Bash(curl *)', 'Bash(wget *)']);
@@ -119,7 +123,7 @@ export function stageSettings({ profile, hubRoot, dataDir, runDir, stageDir, tre
   if (!sameDir(tree, main)) noEdit.push(main);
   for (const dir of noEdit) deny.push(`Edit(${under(dir, '**')})`, `Write(${under(dir, '**')})`);
   if (profile === 'EDIT') {
-    for (const rel of PROTECTED_IN_TREE) deny.push(`Edit(${under(tree, rel)})`, `Write(${under(tree, rel)})`);
+    for (const rel of [...PROTECTED_IN_TREE, ...CHECK_PROGRAMS_IN_TREE]) deny.push(`Edit(${under(tree, rel)})`, `Write(${under(tree, rel)})`);
   }
   deny.push(...BASH_DENIES);
   const permissions = { blockReadsOutsideWorkingDirectories: true };

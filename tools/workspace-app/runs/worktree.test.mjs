@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { changedFiles, treeHash } from '../core/git.mjs';
 import {
   APP_PREFIX, BRANCH_MODE_FILE, STOP_WORDS, applyChanges, applyPatch, archiveBranch, branchModeCheck, branchModeState,
-  branchName, checkBranchName, commitInTree, finishBranchMode, loadWorktreeRecord, prepareBranchMode, prepareRunTree,
+  branchName, checkBranchName, commitInTree, finishBranchMode, gitReason, loadWorktreeRecord, prepareBranchMode, prepareRunTree,
   resetTree, runTreeHashes, samePath, savePatch, setupLogFile, setupWorktree, worktreeRecordFile, worktreeStatus,
 } from './worktree.mjs';
 
@@ -260,6 +260,10 @@ test('worktreeStatus and setupWorktree name a worktree whose folder is gone, and
 
 test('a run tree git can no longer read is failed, not ready, and nothing runs in it', async t => {
   const fx = fixture(t);
+  // Git must not look above the temp folder: a PC can have a repository there (even at C:\).
+  const ceiling = process.env.GIT_CEILING_DIRECTORIES;
+  process.env.GIT_CEILING_DIRECTORIES = dirname(fx.root);
+  t.after(() => { if (ceiling === undefined) delete process.env.GIT_CEILING_DIRECTORIES; else process.env.GIT_CEILING_DIRECTORIES = ceiling; });
   await setUp(fx);
   rmSync(join(fx.run, '.git')); // the tree's link to the repository is gone
   const st = await worktreeStatus({ ...fx, mainDir: fx.main });
@@ -282,6 +286,17 @@ test('a run tree git can no longer read is failed, not ready, and nothing runs i
   await assert.rejects(prepareRunTree({ ...fx, mainDir: fx.main, baseSha: fx.base, runCommand: runner.runCommand }), /lost its link/);
   await assert.rejects(resetTree(fx.run, fx.base), /not the top folder of a git checkout/);
   assert.equal(text(fx.run, 'apps/api/src/a.txt'), 'left in the broken tree\n', 'nothing was reset');
+});
+
+test('gitReason quotes git\'s fatal line, not the hint after it', () => {
+  // The shape git for Windows prints when a folder further up belongs to another user.
+  const dubious = [
+    "fatal: detected dubious ownership in repository at 'C:/'", "'C:/' is owned by:", '\tBUILTIN/Administrators (S-1-5-32-544)',
+    'but the current user is:', '\tPC/someone (S-1-5-21-1)', 'To add an exception for this directory, call:', '', '\tgit config --global --add safe.directory C:/', '',
+  ].join('\r\n');
+  assert.equal(gitReason(dubious), "fatal: detected dubious ownership in repository at 'C:/'");
+  assert.equal(gitReason('warning: one\nhint: two\nlast line\n'), 'hint: two / last line', 'no fatal line: the tail');
+  assert.equal(gitReason(''), '');
 });
 
 test('setupWorktree reuses a clean worktree, but refuses one with changes or on a branch', async t => {
@@ -496,11 +511,23 @@ test('resetTree and applyPatch refuse the main checkout unless branch mode allow
   assert.equal(text(fx.main, 'apps/api/src/a.txt'), 'user work\n');
   assert.equal(text(fx.main, 'notes.txt'), 'user notes\n');
 
-  // Branch mode: detached (as prepareBranchMode leaves it), and the caller says so explicitly.
+  // A HEAD the user detached is still their own work: allowMain needs a branch mode record too.
   sh(fx.main, ['switch', '-q', '--detach', fx.base]);
-  await resetTree(fx.main, fx.base, { allowMain: true });
+  await assert.rejects(resetTree(fx.main, fx.base, { allowMain: true }), /detached at [0-9a-f]+, but no branch mode run put it there/);
+  await assert.rejects(applyPatch(fx.main, p.file, { allowMain: true }), /no branch mode run put it there/);
+  assert.equal(text(fx.main, 'apps/api/src/a.txt'), 'user work\n');
+  assert.equal(text(fx.main, 'notes.txt'), 'user notes\n');
+
+  // Branch mode: detached by prepareBranchMode, and the caller says so explicitly (same run).
+  sh(fx.main, ['stash', 'push', '-q', '-u']); // test setup only: branch mode starts clean
+  sh(fx.main, ['switch', '-q', 'main']);
+  await prepareBranchMode({ profile: fx.profile, mainDir: fx.main, baseSha: fx.base, runId: 'r1' });
+  writeFiles(fx.main, { 'apps/api/src/a.txt': 'run edit\n' });
+  await assert.rejects(resetTree(fx.main, fx.base, { allowMain: true, runId: 'r2' }), /in branch mode for run r1, not run r2/);
+  assert.equal(text(fx.main, 'apps/api/src/a.txt'), 'run edit\n');
+  await resetTree(fx.main, fx.base, { allowMain: true, runId: 'r1' });
   assert.equal(porcelain(fx.main), '');
-  await applyPatch(fx.main, p.file, { allowMain: true });
+  await applyPatch(fx.main, p.file, { allowMain: true, runId: 'r1' });
   assert.equal(text(fx.main, 'notes.txt'), 'user notes\n');
 });
 
@@ -872,6 +899,20 @@ test('a crash-left branch mode record never lets the app touch a checkout the us
   sh(fx.main, ['add', 'y.txt']);
   sh(fx.main, ['commit', '-q', '-m', 'user commit on a detached head']);
   assert.equal(await branchModeState(fx.main), null);
+});
+
+test('finishBranchMode leaves alone a checkout you switched yourself, even with the original given', async t => {
+  const fx = fixture(t);
+  const p = await prepareBranchMode({ profile: fx.profile, mainDir: fx.main, baseSha: fx.base, runId: 'r1' });
+  // Another run's id: the record counts, but not for this caller.
+  assert.deepEqual(await finishBranchMode({ mainDir: fx.main, original: p.original, runId: 'r2' }), { branch: null, sha: fx.base, switched: false });
+  assert.ok(existsSync(join(fx.main, '.git', BRANCH_MODE_FILE)), 'a record that counts is kept');
+  // You switch to a branch of your own while the run waits, then the run is cancelled.
+  sh(fx.main, ['switch', '-q', '-c', 'mine']);
+  const r = await finishBranchMode({ mainDir: fx.main, original: p.original, runId: 'r1' });
+  assert.deepEqual(r, { branch: 'mine', sha: fx.base, switched: false });
+  assert.equal(sh(fx.main, ['rev-parse', '--abbrev-ref', 'HEAD']), 'mine', 'still on your branch');
+  assert.equal(existsSync(join(fx.main, '.git', BRANCH_MODE_FILE)), false, 'the stale record is gone');
 });
 
 test('commitInTree refuses a main checkout that is not in branch mode', async t => {

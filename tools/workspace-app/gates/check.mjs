@@ -39,6 +39,7 @@ import { appendHistory, historyLine } from './history.mjs';
 import { redact } from './secrets.mjs';
 
 const HUB_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const NOCASE = { nocase: true };
 const PROJECT_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const SHA_RE = /^[0-9a-f]{7,40}$/i;
 const WHATS = ['uncommitted', 'branch', 'everything'];
@@ -131,8 +132,11 @@ export async function refusalFor({ profile, tree, treeMode, baseSha, guardConten
 // ---------------------------------------------------------------------------------------------
 // runChecks: rows
 
-// The ports a level's groups need, asked of core/ports only when some group needs one.
-async function listeningPorts(opts, groups) {
+// The ports a level's groups need that answer now, asked of core/ports only when some group needs
+// one. opts = {profile, level?, listening?, ports?}; an explicit `listening` list wins. The
+// executor asks once and hands the answer to both planChecks and runChecks, so a baseline plans
+// and runs the same commands.
+export async function listeningPorts(opts, groups = levelGroups(opts.profile, opts.level)) {
   if (Array.isArray(opts.listening)) return opts.listening;
   const { profile } = opts;
   const need = new Set();
@@ -498,17 +502,18 @@ export function stageNotRunning(run, ctx, stageDir) {
 }
 
 // The first changed must-tick file that was not ticked, or ''. `mustTickNew` globs count for
-// added files only.
+// added files only. Case is ignored, as in gates/fences.mjs: Windows opens PACKAGE.JSON as
+// package.json, so a different spelling must not slip past R8.
 export function mustTickBlocked({ ticked, mustTick, mustTickNew }, changed) {
-  const tick = new Set((ticked || []).map(cleanRel).filter(Boolean));
+  const tick = new Set((ticked || []).map(cleanRel).filter(Boolean).map(p => p.toLowerCase()));
   for (const c of changed || []) {
     const e = typeof c === 'string' ? { path: c } : (c || {});
     const added = e.status === 'A' || e.status === '?';
     for (const p of [e.path, e.oldPath]) {
       const r = p ? cleanRel(p) : '';
-      if (!r || tick.has(r)) continue;
-      if (matchAny(mustTick || [], r)) return r;
-      if (added && p === e.path && matchAny(mustTickNew || [], r)) return r;
+      if (!r || tick.has(r.toLowerCase())) continue;
+      if (matchAny(mustTick || [], r, NOCASE)) return r;
+      if (added && p === e.path && matchAny(mustTickNew || [], r, NOCASE)) return r;
     }
   }
   return '';

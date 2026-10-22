@@ -15,12 +15,13 @@
 //
 // Safety: the app never stashes, never sends anything to a remote and never combines branches.
 // Resets and patches refuse a main checkout unless the caller says it is in branch mode
-// (allowMain), and even then only while its HEAD is detached, so a checkout on one of the user's
-// branches is never cleaned. In worktree mode nothing in the user's checkout changes except the
+// (allowMain), and even then only while its HEAD is detached and the branch mode record still
+// counts, so neither a checkout on one of the user's branches nor one the user detached somewhere
+// else is ever cleaned. In worktree mode nothing in the user's checkout changes except the
 // branch created at commit. prepareBranchMode also leaves a small record in the checkout's git
 // folder (finishBranchMode removes it). The record never allows a reset or a patch on its own: it
-// counts only while HEAD is still where that run put it, and then it only marks the checkout as
-// busy and lets the commit gate commit at exactly the recorded base.
+// counts only while HEAD is still where that run put it, and then it marks the checkout as busy,
+// backs the caller's allowMain, and lets the commit gate commit at exactly the recorded base.
 // Install and generate run through gates/commands.mjs (runCommand), which tests replace.
 import { createHash, randomBytes } from 'node:crypto';
 import { realpathSync } from 'node:fs';
@@ -139,9 +140,19 @@ async function readJsonFile(file) {
   }
 }
 
+const stderrLines = text => String(text || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+
 // The last lines of git's stderr, for a short error message.
 function stderrTail(text, n = 3) {
-  return String(text || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean).slice(-n).join(' / ').slice(0, 400);
+  return stderrLines(text).slice(-n).join(' / ').slice(0, 400);
+}
+
+// Why git could not read a folder: its fatal:/error: lines when it printed any, else the tail.
+// The lines after them are hints; a dubious ownership refusal ends with
+// "git config --global --add safe.directory C:/", which must not read as the app's advice.
+export function gitReason(text, n = 2) {
+  const errors = stderrLines(text).filter(s => /^(fatal|error):/.test(s));
+  return errors.length ? errors.slice(-n).join(' / ').slice(0, 400) : stderrTail(text, n);
 }
 
 async function branchExists(dir, name) {
@@ -194,15 +205,22 @@ async function recordAllowsCommit(tree, baseFull, runId) {
 // Resets, patches and commits belong in the app's run worktree. A main checkout is allowed only
 // in branch mode, and only when the caller says so: allowMain, or (for the commit gate) a check
 // that the branch mode record belongs to this run (viaRecord). Even then its HEAD must be
-// detached, since a checkout on a branch is the user's own work. `tree` must be the top folder
-// of its checkout, so a run tree that lost its link to the repository can't reach a parent repo.
-async function assertRunTree(tree, verb, { allowMain = false, viaRecord = null } = {}) {
+// detached, since a checkout on a branch is the user's own work. allowMain also needs a branch
+// mode record that still counts (HEAD where that run put it; branchModeState), and the same run
+// when runId is given: a HEAD the user detached somewhere else is their own work too. `tree` must
+// be the top folder of its checkout, so a run tree that lost its link to the repository can't
+// reach a parent repo.
+async function assertRunTree(tree, verb, { allowMain = false, viaRecord = null, runId = null } = {}) {
   const what = `The app does not ${verb} ${tree}`;
   if (!samePath(await toplevel(tree), tree)) throw new Error(`${what}: it is not the top folder of a git checkout.`);
   if ((await worktreeKind(tree)) !== 'main') return;
   if (!allowMain && !(viaRecord && await viaRecord())) throw new Error(`${what}: it is a main checkout, not the app's run worktree.`);
   const head = await headInfo(tree);
   if (!head.detached) throw new Error(`${what}: it is a main checkout on branch ${head.branch}, so it is not in branch mode.`);
+  if (!allowMain) return;
+  const rec = await branchModeState(tree);
+  if (!rec) throw new Error(`${what}: its HEAD is detached at ${head.short}, but no branch mode run put it there.`);
+  if (runId && rec.runId !== runId) throw new Error(`${what}: it is in branch mode for ${rec.runId ? `run ${rec.runId}` : 'another run'}, not run ${runId}.`);
 }
 
 // ---------------------------------------------------------------- record and log
@@ -261,7 +279,7 @@ async function checkRunTree(path, mainDir) {
 // deleted .git file, a corrupt index, an ownership refusal), or when the folder has lost its link
 // to the repository and git finds a checkout further up instead.
 async function treeStatus(path) {
-  const why = e => (e instanceof GitError && stderrTail(e.stderr, 2)) || e.message;
+  const why = e => (e instanceof GitError && gitReason(e.stderr)) || e.message;
   let top;
   try { top = await toplevel(path); } catch (e) {
     throw new Error(`Git can't read ${path} as a checkout (${why(e)}).`);
@@ -546,10 +564,10 @@ export async function prepareRunTree({ profile, mainDir, dataDir, baseSha, onLin
 const countPatchFiles = buf => (buf.toString('latin1').match(/^diff --git /gm) || []).length;
 
 // Applies a patch file (from savePatch or applyChanges) to the working files of a tree. A main
-// checkout is refused unless the caller passes allowMain (branch mode) and its HEAD is detached.
-// An empty patch is a no-op.
-export async function applyPatch(tree, file, { allowMain = false } = {}) {
-  await assertRunTree(tree, 'apply a patch to', { allowMain });
+// checkout is refused unless the caller passes allowMain (branch mode), its HEAD is detached and
+// a branch mode record (of runId, when given) still counts. An empty patch is a no-op.
+export async function applyPatch(tree, file, { allowMain = false, runId = null } = {}) {
+  await assertRunTree(tree, 'apply a patch to', { allowMain, runId });
   const abs = resolve(String(file || ''));
   const info = await stat(abs).catch(() => null);
   if (!info || !info.isFile()) throw new Error(`The patch file ${abs} does not exist.`);
@@ -599,11 +617,12 @@ export async function savePatch(tree, base, file, { exclude = [] } = {}) {
 
 // Puts the tree back to a clean, detached base: restore tracked files, remove untracked files
 // (git clean -fd; ignored files such as node_modules stay), then check out the base. A main
-// checkout is refused unless the caller passes allowMain (branch mode) and its HEAD is detached;
-// a branch mode record alone never allows it. Returns { tree, head }.
-export async function resetTree(tree, base, { allowMain = false } = {}) {
+// checkout is refused unless the caller passes allowMain (branch mode), its HEAD is detached and
+// a branch mode record (of runId, when given) still counts; a record alone never allows it.
+// Returns { tree, head }.
+export async function resetTree(tree, base, { allowMain = false, runId = null } = {}) {
   checkSha(base, 'base');
-  await assertRunTree(tree, 'clean up', { allowMain });
+  await assertRunTree(tree, 'clean up', { allowMain, runId });
   const name = basename(resolve(tree));
   // Exit code 1 here only means there was nothing tracked to restore; the status check below
   // catches anything that really stayed behind.
@@ -658,7 +677,7 @@ export async function commitInTree({ tree, base, branch, files, messageFile, gat
   const info = await stat(msg).catch(() => null);
   if (!info || !info.isFile() || info.size === 0) throw new Error(`The commit message file ${msg} is missing or empty.`);
   const viaRecord = async () => recordAllowsCommit(tree, await commitSha(tree, base), runId);
-  await assertRunTree(tree, 'commit in', { allowMain, viaRecord });
+  await assertRunTree(tree, 'commit in', { allowMain, viaRecord, runId });
   const name = basename(resolve(tree));
   const baseFull = (await git(tree, ['rev-parse', '--verify', `${base}^{commit}`])).trim();
   const head = await headInfo(tree);
@@ -746,16 +765,24 @@ export async function prepareBranchMode({ profile, mainDir, baseSha, runId = nul
 
 // Branch mode end: back to the branch (or commit) the checkout was on, then the branch mode
 // record is removed. Takes `original` ({ branch, sha }) or `branch`; without either (or with an
-// empty branch) it uses the record, but only one that still counts (branchModeState). The
-// checkout must be clean by then (the run's changes are committed, or saved and reset).
-// Returns { branch, sha }.
-export async function finishBranchMode({ mainDir, original = null, branch = '' }) {
+// empty branch) it uses the record. Either way it switches only while the record still counts
+// (branchModeState; of runId, when given): a checkout you switched or detached yourself is yours
+// again, so it is left alone (a stale record is removed) and the result says switched: false.
+// The checkout must be clean by then (the run's changes are committed, or saved and reset).
+// Returns { branch, sha } of the checkout afterwards, plus switched: false when it was left alone.
+export async function finishBranchMode({ mainDir, original = null, branch = '', runId = null }) {
   const main = requireDir(mainDir, 'The main checkout folder');
   const file = await branchModeFile(main);
-  const rec = original?.branch || original?.sha || branch ? null : await branchModeState(main);
-  const orig = original?.branch || original?.sha ? original : branch ? { branch, sha: null } : rec?.original;
+  const rec = await branchModeState(main);
+  const given = original?.branch || original?.sha ? original : branch ? { branch, sha: null } : null;
+  const orig = given || rec?.original;
   const target = orig?.branch || orig?.sha;
   if (!target) throw new Error('There is no recorded branch to switch back to.');
+  if (!rec || (runId && rec.runId !== runId)) {
+    if (!rec) await rm(file, { force: true });
+    const head = await headInfo(main);
+    return { branch: head.branch, sha: head.sha, switched: false };
+  }
   const s = await statusSummary(main);
   if (!s.clean) throw new Error(`${main} has ${plural(s.changed, 'changed file')}; save or drop them before switching back to ${target}.`);
   if (orig.branch) await git(main, ['switch', '-q', assertRev(orig.branch, 'branch')]);

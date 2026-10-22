@@ -71,10 +71,12 @@ function samePath(a, b) {
   return process.platform === 'win32' ? norm(a).toLowerCase() === norm(b).toLowerCase() : norm(a) === norm(b);
 }
 
-// True when `promise` settles within `ms`.
-function settlesWithin(promise, ms) {
+// True when `promise` settles within `ms`. The timer doesn't keep Node alive unless `hold`:
+// shutdown holds it for its few seconds, so the process can't exit before the runs it stops are
+// marked interrupted.
+function settlesWithin(promise, ms, { hold = false } = {}) {
   let timer;
-  const timeout = new Promise(r => { timer = setTimeout(() => r(false), ms); timer.unref?.(); });
+  const timeout = new Promise(r => { timer = setTimeout(() => r(false), ms); if (!hold) timer.unref?.(); });
   return Promise.race([promise.then(() => true, () => true), timeout]).finally(() => clearTimeout(timer));
 }
 
@@ -894,7 +896,7 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
         addKills(await killEntries([...registered, ...registry.values(), ...gates].filter(e => !clicks.has(e.runId))));
       } catch (err) { report.errors.push(`Stopping processes failed: ${err.message}`); }
       const jobs = [...clicks.values()].map(job => job.promise.catch(() => {}));
-      await settlesWithin(Promise.all([...[...drivers.values()].map(d => d.promise), ...jobs]), settleMs);
+      await settlesWithin(Promise.all([...[...drivers.values()].map(d => d.promise), ...jobs]), settleMs, { hold: true });
       const unfinished = [...clicks].filter(([id, job]) => handling.get(id) === job).map(([id]) => id);
       if (unfinished.length) {
         try {

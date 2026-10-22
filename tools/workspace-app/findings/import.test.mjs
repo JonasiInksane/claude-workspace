@@ -94,7 +94,7 @@ test('parseAudit ignores code blocks, rows without an id, id-like words without 
   assert.ok(!ids.includes('Z-1'), 'a table inside a fenced code block is quoted material');
   assert.ok(!ids.some(id => /LINT|loan|Stray/.test(id)));
   assert.equal(new Set(ids).size, ids.length, 'every id once');
-  const crlf = parseAudit(`\uFEFF${AUDIT.replace(/\n/g, '\r\n')}`);
+  const crlf = parseAudit(`\uFEFF${AUDIT.replace(/\r?\n/g, '\r\n')}`); // the fixture may already be CRLF (core.autocrlf)
   assert.deepEqual(crlf, parseAudit(AUDIT), 'a byte order mark and CRLF line ends change nothing');
 });
 

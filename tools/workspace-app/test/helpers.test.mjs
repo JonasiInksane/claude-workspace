@@ -166,18 +166,20 @@ test('tapLines quotes and escapes strings the way Node does', () => {
   assert.ok(lines.includes('  error: |-') && lines.includes('    one') && lines.includes('    two'), '\\r\\n splits lines');
 });
 
-// Node 20 nests a file's tests under a "# Subtest: <file>" wrapper (4 spaces deeper); Node 24
-// prints them at the top level with a location. Lines are compared without their indentation.
+// A file-wrapped shape would nest a file's tests 4 spaces deeper; Node 20.15.1 and 24 print them
+// at the top level. Lines are compared without their indentation.
 test('tapLines output has the same line shapes as real Node TAP for a passing and a failing test', async t => {
   const dir = tempDir('ws-tap-', t);
   writeFiles(dir, { 'a.test.mjs': "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('good', () => {});\ntest('bad', () => { assert.equal(1, 2); });\n" });
   const trimmed = text => text.split(/\r?\n/).map(l => l.trim());
   const real = trimmed((await runNode(['--test', '--test-reporter=tap', 'a.test.mjs'], dir)).stdout);
   const ours = trimmed(tapLines([{ name: 'good' }, { name: 'bad', ok: false }]));
-  for (const line of ['TAP version 13', '# Subtest: good', 'ok 1 - good', 'not ok 2 - bad', "failureType: 'testCodeFailure'", "code: 'ERR_ASSERTION'", "type: 'test'", '# pass 1', '# fail 1']) {
+  for (const line of ['TAP version 13', '# Subtest: good', 'ok 1 - good', 'not ok 2 - bad', "failureType: 'testCodeFailure'", "code: 'ERR_ASSERTION'", '# pass 1', '# fail 1']) {
     assert.ok(real.includes(line), `real TAP has: ${line}`);
     assert.ok(ours.includes(line), `tapLines has: ${line}`);
   }
+  // Node 24 marks each test with type: 'test'; Node 20.15.1 prints that line only for suites.
+  if (real.includes("type: 'test'")) assert.ok(ours.includes("type: 'test'"), "tapLines has: type: 'test'");
   // The location line: decode the path Node printed, give it to tapLines, and the line must come
   // back the same (on Windows that needs Node's doubled backslashes).
   const realLoc = real.find(l => /^location: '.*a\.test\.mjs:4:\d+'$/.test(l));

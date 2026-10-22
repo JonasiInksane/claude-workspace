@@ -1,12 +1,14 @@
 // TAP parser for `node --test --test-reporter=tap` output, so a check knows which tests failed,
 // in which file, and why, with ids that stay the same from run to run.
 //
-// Two shapes reach it (SPEC A16, checked against real output on Node 24.11.1):
-// - Node 20: every test file is a top-level subtest named by its absolute path, with that file's
-//   tests one level deeper.
-// - Node 24: no file wrapper. Failing tests carry a YAML `location` ('<file>:<line>:<col>');
-//   passing tests carry none. A file that can't load is one top-level test named by its relative
-//   path (location '<file>:1:1'), and its error text sits in `#` comment lines just before it.
+// Two shapes are handled (SPEC A16):
+// - File-wrapped: every test file is a top-level subtest named by its absolute path, with that
+//   file's tests one level deeper. The spec expected this from Node 20; its fixture is built by
+//   hand. Real Node 20.15.1 output (checked 2026-10-22) has the located shape below instead.
+// - Located (real output on Node 24.11.1 and 20.15.1): no file wrapper. Failing tests carry a YAML
+//   `location` ('<file>:<line>:<col>'); passing tests carry none. On Node 24 a file that can't load
+//   is one top-level test named by its relative path (location '<file>:1:1'), and its error text
+//   sits in `#` comment lines just before it.
 //
 // File identity, in this order: a top-level subtest whose name is one of `files` (or its own
 // location file); otherwise a `location` in the subtree that is one of `files`; otherwise, when
@@ -303,8 +305,8 @@ function ownFailure(node) {
   return node.ok === false && !node.directive && node.yaml.failureType !== 'subtestsFailed';
 }
 
-// The file a top-level node stands for, when it is a file wrapper (Node 20) or a file-level
-// failure (Node 24); null otherwise.
+// The file a top-level node stands for, when it is a file wrapper or a file-level failure;
+// null otherwise.
 function fileNodeOf(node, ctx) {
   const abs = absPath(node.name, ctx.cwd);
   const listed = ctx.files.get(caseKey(abs));
@@ -433,7 +435,7 @@ export function parseTap(text, { files = [], cwd = process.cwd(), redact, allow 
   if (lost) {
     parseErrors.push({
       line: null,
-      message: `${lost} test${lost === 1 ? ' has' : 's have'} no file in the TAP output (Node 24 prints a location only for failures); run one file per invocation to identify ${lost === 1 ? 'it' : 'them'}.`,
+      message: `${lost} test${lost === 1 ? ' has' : 's have'} no file in the TAP output (Node prints a location only for failures); run one file per invocation to identify ${lost === 1 ? 'it' : 'them'}.`,
     });
   }
   if (ctx.unsure) {

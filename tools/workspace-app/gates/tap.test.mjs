@@ -95,7 +95,7 @@ test('identity is the same for Node 20, Node 24 one file at a time, and repeated
   assert.deepEqual(failing(n24), FAILING);
   assert.deepEqual(failing(n20), FAILING);
   assert.deepEqual(parseTap(fixture('node24-location.tap'), { files: BOTH, cwd: CWD }), n24);
-  const crlf = fixture('node20-files-wrapped.tap').replace(/\n/g, '\r\n');
+  const crlf = fixture('node20-files-wrapped.tap').replace(/\r?\n/g, '\r\n'); // the fixture may already be CRLF (core.autocrlf)
   assert.deepEqual(parseTap(crlf, { files: BOTH, cwd: CWD }), n20);
 });
 

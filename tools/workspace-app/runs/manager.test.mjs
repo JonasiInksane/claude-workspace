@@ -423,6 +423,17 @@ test('a lock left by an ended or parked run is taken over; one kept by a failed 
     [409, 'tg-run is busy with Refactor: kept tree. Park it or wait.']);
 });
 
+test('a lock held by a run whose run.json cannot be read is never taken over', async t => {
+  const { mgr, dataDir } = setup(t, { behave: { refactor: waitAtHuman } });
+  const held = await store.createRun(dataDir, { project: 'example', pipeline: 'refactor', id: 'r-broken', status: 'waiting', lockHeld: true, title: 'Refactor: busy file' });
+  await locks.acquire(dataDir, 'example', { runId: held.id, holder: HOLDER, proc: { processState: async () => 'same' } });
+  writeFileSync(join(store.runDir(dataDir, held), 'run.json'), '{ "half written'); // a busy or broken file, not a missing one
+  const refusal = 'Could not read run r-broken, which holds the lock; try again in a moment.';
+  assert.deepEqual(await status(mgr.start({ project: 'example', pipeline: 'refactor', values: { what: 'New work' } })), [409, refusal]);
+  assert.ok((await mgr.preview({ project: 'example', pipeline: 'refactor', values: { what: 'New work' } })).refusals.includes(refusal));
+  assert.equal(lockOf(dataDir, 'example').runId, 'r-broken', 'the lock stays with the run that could not be read');
+});
+
 test('a lock held by an app that has died does not block a start', async t => {
   const { mgr, dataDir } = setup(t, { behave: { refactor: waitAtHuman } });
   await store.createRun(dataDir, { project: 'example', pipeline: 'refactor', id: 'r-crashed', status: 'running', lockHeld: true });
@@ -853,6 +864,61 @@ test('shutdown stops every Claude stage and gate check, marks the runs interrupt
   assert.deepEqual(await status(mgr.action(a.runId, 'retry', {})), [503, 'The app is closing.']);
   assert.equal(mgr.schedule(a.runId), false);
   assert.deepEqual(mgr.registered(), []);
+});
+
+test('shutdown lets a click being applied finish: its saves land, and a run it left running is interrupted', async t => {
+  const gates = new Map();
+  const handle = async (run, action, payload, { engine }) => {
+    await new Promise(r => gates.set(run.id, r));
+    run.status = payload.then;
+    if (payload.then === 'committed') run.commit = { sha: 'c'.repeat(40), branch: 'app/1022-commit-me' };
+    await engine.store.saveRun(engine.dataDir, run);
+    return { message: `Applied ${action}.` };
+  };
+  const { mgr, dataDir } = setup(t, { behave: { refactor: waitAtHuman, handle } });
+  const a = await mgr.start({ project: 'example', pipeline: 'refactor', values: { what: 'Commit me' } });
+  const b = await mgr.start({ project: 'beta', pipeline: 'refactor', values: { what: 'Go on' } });
+  await mgr.settled();
+  const clickA = mgr.action(a.runId, 'approve', { then: 'committed' });
+  const clickB = mgr.action(b.runId, 'approve', { then: 'running' });
+  await waitFor(() => gates.has(a.runId) && gates.has(b.runId));
+  assert.equal(mgr.isBusy(), true, 'a click being applied counts as busy');
+
+  const closing = mgr.shutdown({ settleMs: 2000 });
+  await tick();
+  for (const open of gates.values()) open();
+  const rep = await closing;
+  assert.deepEqual(rep.errors, []);
+  assert.equal((await clickA).message, 'Applied approve.');
+  const ra = await loadRun(dataDir, a.runId);
+  assert.equal(ra.status, 'committed', 'the click\'s save was not dropped');
+  assert.equal(ra.commit.branch, 'app/1022-commit-me');
+  await clickB;
+  assert.deepEqual(rep.interrupted, [b.runId], 'shutdown did not let it go on, and says so');
+  const rb = await loadRun(dataDir, b.runId);
+  assert.equal(rb.status, 'interrupted');
+  assert.equal((await timeline(dataDir, rb)).at(-1).msg, 'The app was closing, so the run did not go on after approve.');
+});
+
+test('shutdown reports a click that did not finish in time and leaves its run alone', async t => {
+  let open;
+  const handle = async (run, action, payload, { engine }) => {
+    await new Promise(r => { open = r; });
+    run.status = 'committed';
+    await engine.store.saveRun(engine.dataDir, run);
+    return { message: 'late' };
+  };
+  const { mgr, dataDir } = setup(t, { behave: { refactor: waitAtHuman, handle } });
+  const a = await mgr.start({ project: 'example', pipeline: 'refactor', values: { what: 'Slow commit' } });
+  await mgr.settled();
+  const click = mgr.action(a.runId, 'approve', {});
+  await waitFor(() => open);
+  const rep = await mgr.shutdown({ settleMs: 50 });
+  assert.deepEqual(rep.errors, [`${a.runId}: the app closed before approve finished; check the run when the app starts again.`]);
+  assert.deepEqual(rep.interrupted, []);
+  open();
+  await click;
+  assert.equal((await loadRun(dataDir, a.runId)).status, 'committed', 'its save still lands once it finishes');
 });
 
 test('shutdown with nothing running is quick and reports nothing', async t => {

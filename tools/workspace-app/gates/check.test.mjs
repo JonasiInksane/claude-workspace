@@ -18,7 +18,7 @@ import {
 } from '../test/fixtures/check/repo.mjs';
 import { baselineKey, loadBaseline, loadCandidate, typeErrorId } from './baseline.mjs';
 import {
-  NO_GUARD_MESSAGE, cliMain, envFilesIn, envFilesInAsync, inStage, mainCheckoutRefusal, mustTickBlocked, refusalFor, runChecks, samePath,
+  NO_GUARD_MESSAGE, cliMain, envFilesIn, envFilesInAsync, inStage, listeningPorts, mainCheckoutRefusal, mustTickBlocked, refusalFor, runChecks, samePath,
   stageNotRunning, stagePath, summaryText,
 } from './check.mjs';
 import { lastPerLevel, readHistory } from './history.mjs';
@@ -355,6 +355,19 @@ test('G4 runs when its port really listens, with the integration env', async t =
   assert.ok(down.counts.notRun >= 1);
 });
 
+test('listeningPorts asks only for the ports the level needs, and an explicit list wins', async () => {
+  const asked = [];
+  const ports = { anyListening: async list => { asked.push(list); return [list[0]]; } };
+  const profile = checkProfile();
+  assert.deepEqual(await listeningPorts({ profile, level: 'paranoid', ports }), [55001]);
+  assert.deepEqual(asked, [[55001]]);
+  assert.deepEqual(await listeningPorts({ profile, level: 'quick', ports }), [], 'no group of quick needs a port');
+  assert.deepEqual(await listeningPorts({ profile, level: 'paranoid', ports, listening: [7] }), [7]);
+  assert.equal(asked.length, 1);
+  const broken = { anyListening: async () => { throw new Error('probe failed'); } };
+  assert.deepEqual(await listeningPorts({ profile, level: 'paranoid', ports: broken }), []);
+});
+
 test('cancel: an aborted check stops and leaves no history line', async t => {
   const repo = await knownRepo(t);
   const h = harness(t);
@@ -495,6 +508,10 @@ test('mustTickBlocked looks at renames and at must-tick-new only for added files
   assert.equal(mustTickBlocked(rules, [{ path: 'db/migrations/1.sql', status: 'M' }]), '');
   assert.equal(mustTickBlocked(rules, [{ path: 'db/migrations/2.sql', status: 'A' }]), 'db/migrations/2.sql');
   assert.equal(mustTickBlocked({ ...rules, ticked: ['package.json'] }, ['package.json']), '');
+  // Windows ignores case, so a different spelling is the same file (R8, as in gates/fences.mjs).
+  assert.equal(mustTickBlocked(rules, [{ path: 'apps/web/PACKAGE.JSON', status: 'M' }]), 'apps/web/PACKAGE.JSON');
+  assert.equal(mustTickBlocked(rules, [{ path: 'DB/Migrations/3.sql', status: 'A' }]), 'DB/Migrations/3.sql');
+  assert.equal(mustTickBlocked({ ...rules, ticked: ['Apps/Web/package.json'] }, ['apps/web/package.json']), '');
 });
 
 test('tg-check works only while its own stage runs', async t => {

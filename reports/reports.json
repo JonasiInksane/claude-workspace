@@ -93,6 +93,48 @@
           "path": "reports/2026-10-21_game-dev-asset-pipeline-audit/report-v2.md"
         }
       ]
+    },
+    {
+      "id": "2026-10-22_openrig-workshop-vs-hub",
+      "title": "OpenRig workshop rig vs workspace",
+      "project": null,
+      "type": "research",
+      "status": "active",
+      "created": "2026-10-22",
+      "updated": "2026-10-22",
+      "folder": "reports/2026-10-22_openrig-workshop-vs-hub",
+      "summary": "Workshop rig = 4 seats (lead, builder, reviewer, QA) with strong evidence culture but yolo permissions, no native Windows, untested team run. Don't install; copy the claim format, proving-a-change note, worktree builds and handoff checklist.",
+      "steps": [
+        {
+          "name": "Report",
+          "path": "reports/2026-10-22_openrig-workshop-vs-hub/report.md"
+        }
+      ]
+    },
+    {
+      "id": "2026-10-22_workspace-app-control-plan",
+      "title": "Workspace app as the Tattoogenda control panel",
+      "project": null,
+      "type": "plan",
+      "status": "active",
+      "created": "2026-10-22",
+      "updated": "2026-10-22",
+      "folder": "reports/2026-10-22_workspace-app-control-plan",
+      "summary": "Waves 1-2 built and tested (1025 tests green); paused. Remaining: finish 4 wave-2 review/fix steps, wave 3 wiring and screens, wave 4 acceptance. See report-v2.md.",
+      "steps": [
+        {
+          "name": "Report",
+          "path": "reports/2026-10-22_workspace-app-control-plan/report.md"
+        },
+        {
+          "name": "Mockup",
+          "path": "reports/2026-10-22_workspace-app-control-plan/mockup.html"
+        },
+        {
+          "name": "Report v2",
+          "path": "reports/2026-10-22_workspace-app-control-plan/report-v2.md"
+        }
+      ]
     }
   ]
 }

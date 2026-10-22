@@ -1,19 +1,20 @@
 # Stack
 
-Machine facts, last checked 2026-10-21. Update this file when something changes
-(`node -v`, `claude --version`).
+Machine facts, last checked 2026-10-22. Update this file when something changes
+(`node -v`, `claude --version`). There are two PCs, and their Node setups differ.
 
 ## Machine
 - OS: Windows 11
 - Shells: Windows PowerShell 5.1 (no PowerShell 7, so no `&&`, `||`, `??` or ternary in .ps1)
   and Git Bash (Git for Windows)
-- Node: managed by nvm-windows (`%APPDATA%\nvm`; `C:\Program Files\nodejs` is its link).
-  Active: v20.15.1, the version Tattoogenda pins (also installed: 18.20.3, 20.18.0, 23.2.0).
-  Node 20 can't expand globs in `node --test`, so run the tool tests with `node tools/run-tests.mjs`
+- Node, this PC: v24.11.1, no nvm. The other PC: nvm-windows (`%APPDATA%\nvm`) with v20.15.1,
+  the version Tattoogenda pins. Decision 2026-10-22: Tattoogenda checks run on whatever Node is
+  active, and the app records that version. Tools must run on Node 20 and 24; run their tests
+  with `node tools/run-tests.mjs` (Node 20 can't expand globs in `node --test`).
 - Python: 3.13 (not needed by the workspace tools)
 - Editors: VS Code, Cursor
 - Git client: GitKraken (plus the git CLI)
-- Claude Code: 2.1.306 (auto-updates), native install at `%USERPROFILE%\.local\bin\claude.exe`
+- Claude Code: 2.1.307 (auto-updates), native install at `%USERPROFILE%\.local\bin\claude.exe`
 
 ## Workspace tooling
 - Tools are Node ESM scripts (`node tools/<name>.mjs`) with no npm dependencies.

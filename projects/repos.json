@@ -12,13 +12,6 @@
         "git-lfs",
         "blender-5.2"
       ]
-    },
-    {
-      "name": "game-dev-2d",
-      "url": "https://github.com/JonasiInksane/game-dev-2d.git",
-      "requires": [
-        "git-lfs"
-      ]
     }
   ]
 }

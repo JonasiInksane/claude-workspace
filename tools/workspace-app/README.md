@@ -7,7 +7,7 @@ project cards that start Claude, per-project agents (create, edit, archive and r
 isolated, view memory), image upload (drag and drop, Ctrl+V, or choose files) into the hub
 inbox, a chosen agent's image folder or a flow, and an Assets view for projects with an asset
 pipeline: 3D models (`projects/game-dev`: renders, check results, a 3D view and your verdict)
-and sprites (`projects/game-dev-2d`: an HD-2D preview, the pixels, check results and your verdict).
+and sprites (`projects/game-dev`, `tools/sprite.mjs`: an HD-2D preview, the pixels, check results and your verdict).
 
 Start it with a double-click on `Workspace App.cmd` (workspace root) or the "Claude Workspace"
 shortcut, or `[A]` in the `start.ps1` menu. All three run `start-app.ps1`, which starts the

@@ -1,0 +1,26 @@
+/* The palette (parts/palette.js; mockup #palette) and the keyboard shortcuts sheet it opens.
+   Loaded after app.css (index.html). */
+#palette { margin-top: 12vh; width: min(560px, calc(100vw - 48px)); }
+#palette input {
+  width: 100%; border: 0; border-bottom: 1px solid var(--border); background: transparent;
+  padding: 14px 16px; font-size: var(--t-lg); border-radius: 14px 14px 0 0;
+}
+#palette input:focus-visible { outline: none; }
+.pal-list { list-style: none; margin: 0; padding: 6px; max-height: 50vh; overflow: auto; }
+.pal-list li[role="option"] {
+  display: flex; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer;
+}
+.pal-list li[role="option"]:hover, .pal-list li.sel { background: var(--hover); }
+/* The selected option is also outlined, so it shows without colour too */
+.pal-list li.sel { box-shadow: inset 2px 0 0 var(--accent); }
+.pal-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pal-list small { color: var(--muted); white-space: nowrap; flex: none; }
+.pal-empty { color: var(--muted); padding: 8px 10px; }
+.pal-empty b { color: var(--accent); }
+
+/* Keyboard shortcuts sheet (in the main dialog) */
+.keys { display: grid; gap: var(--s3); }
+.keys h4 { margin: 0 0 4px; font-size: var(--t-md); }
+.keys-list { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; font-size: var(--t-md); }
+.keys-list dt { white-space: nowrap; }
+.keys-list dd { margin: 0; color: var(--muted); }

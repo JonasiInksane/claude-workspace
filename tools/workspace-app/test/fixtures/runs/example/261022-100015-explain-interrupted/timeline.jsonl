@@ -1,0 +1,3 @@
+{"seq":1,"t":"2026-10-22T08:19:00.269Z","kind":"status","stage":null,"attempt":null,"msg":"Started: Explain: How are invoices numbered?"}
+{"seq":2,"t":"2026-10-22T08:19:00.547Z","kind":"stage","stage":"answer","attempt":1,"msg":"Read and answer started (sonnet/high, READ)"}
+{"seq":3,"t":"2026-10-22T08:19:01.350Z","kind":"status","stage":"answer","attempt":null,"msg":"The app was closing while answer ran."}

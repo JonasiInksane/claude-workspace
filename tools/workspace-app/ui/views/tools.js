@@ -1,6 +1,7 @@
 // Tools: a button for every skill (starts Claude in a new terminal) and workspace tool (runs
 // here and shows its output). The server builds every prompt and command (catalog.mjs).
-// Exports skillDialog and skillById (the projects view's Onboard button uses them).
+// Exports skillDialog and skillById (the projects view's Onboard button uses them) and
+// runCommand (the palette uses it with skillDialog).
 import { act, api, h } from '../lib.js';
 import { dialog, formDialog, openDialog } from '../dialog.js';
 import { refresh, state } from '../store.js';
@@ -31,8 +32,8 @@ export function skillDialog(skill, preset = {}) {
 }
 
 // Runs a workspace tool and shows its output. The library shows a preview first, with a
-// button that installs for real.
-async function runCommand(cmd, { preview = false, confirm = false } = {}) {
+// button that installs for real. Exported for the palette (parts/palette.js).
+export async function runCommand(cmd, { preview = false, confirm = false } = {}) {
   const status = h('span', { class: 'badge' }, 'Running…');
   const pre = h('pre', { class: 'output' });
   const install = h('button', { class: 'btn primary', hidden: true, on: { click: () => runCommand(cmd, { confirm: true }) } }, 'Install now');

@@ -14,7 +14,16 @@
 //   %TEMP%\claude-workspace\app.log; a log over 1 MB is renamed to app.log.old first).
 // - --root <dir> uses another workspace root, --idle <seconds> a shorter idle time (for tests),
 //   --data-dir <dir> another private data folder (default %LOCALAPPDATA%\claude-workspace).
-// - Never stops for idleness while the app reports work in progress (handler.isBusy()).
+// - Never stops for idleness while the app reports work in progress (handler.isBusy(): a run
+//   stage, a check or a click being applied). Runs that only wait for you don't count.
+// - Runs: before it listens, the run engine starts and recovers what a previous app left behind
+//   (runs/manager.mjs recover: leftover processes stopped, those runs marked interrupted, locks
+//   kept or released). Before every exit (Ctrl+C, closing the console, idle, a crash) the engine
+//   stops its runs: Claude and check processes tree-killed and their runs marked interrupted
+//   (spike A11), for at most a few seconds.
+// - --fake-claude [fixture] is for tests and UI work only (refused unless WS_APP_TEST=1): Claude
+//   stages run test/fake-claude.mjs, which replays a recorded stream ("auto", the default, picks
+//   the success fixture of each stage's schema).
 import { createServer } from 'node:http';
 import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -30,10 +39,18 @@ const IDLE_NEVER_OPENED_MS = 5 * 60_000; // nobody ever opened the window
 const TICK_MS = 5000;
 
 function parseArgs(argv) {
-  const out = { port: DEFAULT_PORT, open: true, root: '', idle: 0, log: '', dataDir: '' };
+  const out = { port: DEFAULT_PORT, open: true, root: '', idle: 0, log: '', dataDir: '', fakeClaude: '' };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--no-open') out.open = false;
+    else if (a === '--fake-claude') {
+      // An optional fixture name may follow; a word starting with -- is the next option.
+      out.fakeClaude = argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[++i] : 'auto';
+      if (process.env.WS_APP_TEST !== '1') {
+        console.error('workspace-app: --fake-claude is for tests and UI work only. Set WS_APP_TEST=1 to use it.');
+        process.exit(1);
+      }
+    }
     else if (a === '--log') out.log = argv[++i] || '';
     else if (a === '--port') out.port = Number(argv[++i]);
     else if (a === '--root') out.root = argv[++i] || '';
@@ -68,15 +85,47 @@ if (opts.log) {
   };
   console.log = tee(console.log);
   console.error = tee(console.error);
-  const crash = e => { console.error(`workspace-app: crashed: ${(e && e.stack) || e}`); process.exit(1); };
-  process.on('uncaughtException', crash);
-  process.on('unhandledRejection', crash);
 }
 
-let createApp, realActions;
+// Set once they exist; exitApp() works at any point of the startup.
+let engine = null; // the run manager (runs/wiring.mjs)
+let server = null;
+let exiting = null;
+let stopEngine = async () => ({ skipped: true });
+let removeStateFile = () => {};
+
+// Every exit after startup comes here: the state file goes, the server stops taking requests,
+// the run engine stops its runs (capped, so this can't hang), then the process exits. A second
+// call returns the first one's promise.
+function exitApp(reason, code = 0) {
+  if (exiting) return exiting;
+  // Whatever happens below, the process ends shortly after the engine's cap.
+  setTimeout(() => process.exit(code), 12_000);
+  exiting = (async () => {
+    try { removeStateFile(); } catch { /* already gone */ }
+    if (reason) console.log(`workspace-app: stopping (${reason})`);
+    try { if (server) server.close(); } catch { /* not listening */ }
+    if (engine) {
+      const r = await stopEngine(engine);
+      if (r.timedOut) console.error('workspace-app: the run engine did not stop in time; leftover processes are cleaned up at the next start.');
+      else if (r.error) console.error(`workspace-app: stopping the runs failed: ${r.error}`);
+      else if (r.interrupted && r.interrupted.length) console.log(`workspace-app: ${r.interrupted.length} running run(s) marked interrupted.`);
+    }
+    process.exit(code);
+  })();
+  return exiting;
+}
+const crash = e => { console.error(`workspace-app: crashed: ${(e && e.stack) || e}`); exitApp('crash', 1); };
+process.on('uncaughtException', crash);
+process.on('unhandledRejection', crash);
+// SIGINT: Ctrl+C. SIGBREAK: Ctrl+Break. SIGHUP: the console window was closed (Windows).
+for (const sig of ['SIGINT', 'SIGBREAK', 'SIGHUP', 'SIGTERM']) process.on(sig, () => exitApp(sig));
+
+let createApp, realActions, recoverySummary;
 try {
   ({ createApp } = await import('./app.mjs'));
   ({ realActions } = await import('./launch.mjs'));
+  ({ stopEngine, recoverySummary } = await import('./runs/wiring.mjs'));
 } catch (e) {
   console.error(`workspace-app: could not load the app code: ${(e && e.stack) || e}`);
   process.exit(1);
@@ -138,20 +187,32 @@ const started = Date.now();
 const app = createApp({
   root, token, actions, workspaceTag: rootTag, getPort: () => port, onPing: () => { lastPing = Date.now(); },
   ...(opts.dataDir ? { dataDir: resolve(opts.dataDir) } : {}),
+  ...(opts.fakeClaude ? { engineOptions: { fakeClaude: { fixture: opts.fakeClaude } } } : {}),
 });
-const server = createServer(app);
+
+// The run engine starts and cleans up after a previous app before any request can arrive. If it
+// can't start, the rest of the app still works and the runs routes say why.
+try {
+  engine = await app.getEngine();
+  const line = recoverySummary(await engine.recover());
+  if (line) console.log(`workspace-app: ${line}`);
+  if (opts.fakeClaude) console.log(`workspace-app: Claude stages use the fake Claude (fixture ${opts.fakeClaude}).`);
+} catch (e) {
+  console.error(`workspace-app: the run engine could not start, so runs are not available: ${(e && e.message) || e}`);
+}
+server = createServer(app);
 
 try {
   port = await listen(server, opts.port);
 } catch (e) {
   if (opts.port === 0 || (e.code !== 'EADDRINUSE' && e.code !== 'EACCES')) {
     console.error(`workspace-app: could not listen on 127.0.0.1:${opts.port} (${e.code || e.message})`);
-    process.exit(1);
+    await exitApp('', 1);
   }
   // Another start of this workspace's app may be just coming up: give it a moment.
   if (e.code === 'EADDRINUSE' && (await oursOn(opts.port))) {
     for (let i = 0; i < 10; i++) {
-      if (await reuseRunning()) process.exit(0);
+      if (await reuseRunning()) await exitApp('', 0);
       await wait(300);
     }
   }
@@ -161,18 +222,13 @@ try {
 
 mkdirSync(stateDir, { recursive: true });
 writeFileSync(stateFile, JSON.stringify({ port, token, pid: process.pid, root }), 'utf8');
-
-function shutdown(reason) {
+removeStateFile = () => {
   try {
     const saved = JSON.parse(readFileSync(stateFile, 'utf8'));
     if (saved.pid === process.pid) unlinkSync(stateFile);
   } catch { /* already gone */ }
-  if (reason) console.log(`workspace-app: stopping (${reason})`);
-  server.close();
-  process.exit(0);
-}
-// SIGINT: Ctrl+C. SIGBREAK: Ctrl+Break. SIGHUP: the console window was closed (Windows).
-for (const sig of ['SIGINT', 'SIGBREAK', 'SIGHUP', 'SIGTERM']) process.on(sig, () => shutdown(sig));
+};
+const shutdown = reason => exitApp(reason);
 
 const idleAfterPing = opts.idle || IDLE_AFTER_PING_MS;
 const idleNeverOpened = opts.idle || IDLE_NEVER_OPENED_MS;

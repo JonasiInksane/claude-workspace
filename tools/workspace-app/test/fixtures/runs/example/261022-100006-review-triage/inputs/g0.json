@@ -1,0 +1,66 @@
+{
+  "rows": [
+    {
+      "id": "g0.diffcheck",
+      "label": "Whitespace (git diff --check)",
+      "status": "pass",
+      "reason": ""
+    },
+    {
+      "id": "g0.format",
+      "label": "Format with the project's own config",
+      "status": "skip",
+      "reason": "Not run for a read-only review"
+    },
+    {
+      "id": "g0.lint",
+      "label": "Lint on changed files",
+      "status": "skip",
+      "reason": "Not run for a read-only review"
+    },
+    {
+      "id": "g0.secrets",
+      "label": "Secret scan of the diff",
+      "status": "pass",
+      "reason": ""
+    },
+    {
+      "id": "g0.fences",
+      "label": "Scope fence",
+      "status": "pass",
+      "reason": ""
+    },
+    {
+      "id": "g0.ratchets.tests",
+      "label": "Ratchet: test counts, .skip, .only, todo",
+      "status": "skip",
+      "reason": "Not run: no test files changed."
+    },
+    {
+      "id": "g0.ratchets.allowlist",
+      "label": "Ratchet: procedure allowlist",
+      "status": "skip",
+      "reason": "Not run: no router file changed."
+    },
+    {
+      "id": "g0.ratchets.metrics",
+      "label": "Ratchet: cycles and deep imports",
+      "status": "pass",
+      "reason": ""
+    },
+    {
+      "id": "g0.contract",
+      "label": "Contract: procedures, legacy router, queues",
+      "status": "skip",
+      "reason": "Not run: no router or queue file changed."
+    },
+    {
+      "id": "g0.tenant",
+      "label": "Tenant probes on changed files",
+      "status": "skip",
+      "reason": "Not run: no changed file is in the tenant probes' scope."
+    }
+  ],
+  "secretsFound": 0,
+  "unhandledPaths": []
+}

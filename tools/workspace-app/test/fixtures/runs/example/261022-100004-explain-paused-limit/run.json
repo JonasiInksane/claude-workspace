@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "id": "261022-100004-explain-paused-limit",
+  "project": "example",
+  "pipeline": "explain",
+  "parent": null,
+  "title": "Explain: Where is the cart total computed (paused-limit)?",
+  "values": {
+    "what": "Where is the cart total computed (paused-limit)?",
+    "where": ""
+  },
+  "level": "standard",
+  "levelReason": [],
+  "reviewEffort": null,
+  "createdAt": "2026-10-22T08:18:30.701Z",
+  "updatedAt": "2026-10-22T08:18:31.172Z",
+  "endedAt": null,
+  "status": "paused-limit",
+  "statusReason": "Claude's usage limit was reached; resume the stage later.",
+  "current": {
+    "stage": "answer",
+    "index": 0,
+    "attempt": 1,
+    "round": 1
+  },
+  "waiting": null,
+  "isolation": {
+    "mode": "none",
+    "treeMode": "main",
+    "tree": "C:\\dev\\claude-workspace\\projects\\example",
+    "mainDir": "C:\\dev\\claude-workspace\\projects\\example"
+  },
+  "base": {
+    "branch": "",
+    "sha": "3509c76000eee69a52b6d914c94e88d29bb0bbe7"
+  },
+  "branch": null,
+  "commit": null,
+  "versions": {
+    "node": "20.15.1",
+    "claudeCode": "2.1.307"
+  },
+  "lockHeld": false,
+  "plan": null,
+  "allowances": [],
+  "pins": [],
+  "redTests": [],
+  "inputsHashes": {
+    "request.md": "sha256:4643297915524d1ab6aea663253d6926698f820dfd33ca27a1ed36ffe4e0d5c7",
+    "values.json": "sha256:c779ecc2f735593a674d14785ba079efa1c6203bce13a34eaeb1d66f223b0742"
+  },
+  "fixRounds": {
+    "auto": 0,
+    "user": 0,
+    "maxAuto": 2,
+    "maxUser": 2
+  },
+  "gatedTree": null,
+  "stages": [
+    {
+      "id": "answer",
+      "n": 0,
+      "kind": "claude",
+      "status": "paused-limit",
+      "attempts": [
+        {
+          "k": 1,
+          "folder": "stages/00-answer",
+          "sessionId": "4e0498c1-6f0c-4dd5-8bf1-70a8c880f8b0",
+          "name": "261022-100004-explain-paused-limit-answer",
+          "startedAt": "2026-10-22T08:18:30.915Z",
+          "model": "sonnet",
+          "effort": "high",
+          "profile": "READ",
+          "mode": "manual",
+          "maxTurns": 40,
+          "cwd": "C:\\dev\\claude-workspace\\projects\\example",
+          "why": "fresh",
+          "proc": {
+            "pid": 20576,
+            "image": "node.exe",
+            "startedAt": 1792657110963
+          },
+          "endedAt": "2026-10-22T08:18:31.168Z",
+          "status": "paused-limit",
+          "turns": 1,
+          "numTurns": 1,
+          "subtype": "success",
+          "durationMs": 245,
+          "estUsd": 0,
+          "denials": 0,
+          "ccVersion": "2.1.307",
+          "initModel": "claude-sonnet-5-5",
+          "init": "ok",
+          "autoResumed": false
+        }
+      ],
+      "startedAt": "2026-10-22T08:18:30.915Z",
+      "endedAt": "2026-10-22T08:18:31.168Z"
+    }
+  ],
+  "takeover": null,
+  "error": null,
+  "riskTags": [],
+  "findingId": null,
+  "owner": {
+    "pid": 9184,
+    "image": "node.exe",
+    "startedAt": 1792657106225
+  },
+  "outputs": {},
+  "rateLimit": {
+    "status": "rejected",
+    "type": "five_hour",
+    "utilization": 1,
+    "resetsAt": 1792674000,
+    "sevenDayUtilization": 0.17
+  }
+}

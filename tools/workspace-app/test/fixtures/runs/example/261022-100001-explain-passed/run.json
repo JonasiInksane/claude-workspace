@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "id": "261022-100001-explain-passed",
+  "project": "example",
+  "pipeline": "explain",
+  "parent": null,
+  "title": "Explain: What does charge do?",
+  "values": {
+    "what": "What does charge do?",
+    "where": ""
+  },
+  "level": "standard",
+  "levelReason": [],
+  "reviewEffort": null,
+  "createdAt": "2026-10-22T08:18:27.972Z",
+  "updatedAt": "2026-10-22T08:18:28.441Z",
+  "endedAt": "2026-10-22T08:18:28.439Z",
+  "status": "passed",
+  "statusReason": "",
+  "current": {
+    "stage": "answer",
+    "index": 0,
+    "attempt": 1,
+    "round": 1
+  },
+  "waiting": null,
+  "isolation": {
+    "mode": "none",
+    "treeMode": "main",
+    "tree": "C:\\dev\\claude-workspace\\projects\\example",
+    "mainDir": "C:\\dev\\claude-workspace\\projects\\example"
+  },
+  "base": {
+    "branch": "",
+    "sha": "3509c76000eee69a52b6d914c94e88d29bb0bbe7"
+  },
+  "branch": null,
+  "commit": null,
+  "versions": {
+    "node": "20.15.1",
+    "claudeCode": "2.1.307"
+  },
+  "lockHeld": false,
+  "plan": null,
+  "allowances": [],
+  "pins": [],
+  "redTests": [],
+  "inputsHashes": {
+    "request.md": "sha256:b06a074ea679e3cd27dd1742f5428a170cb7195938c500396a36c728c8e3dcbb",
+    "values.json": "sha256:eca66e5ba1f4870b3310fce9102fc7646047979e9cd106398126cbb5375b6c91"
+  },
+  "fixRounds": {
+    "auto": 0,
+    "user": 0,
+    "maxAuto": 2,
+    "maxUser": 2
+  },
+  "gatedTree": null,
+  "stages": [
+    {
+      "id": "answer",
+      "n": 0,
+      "kind": "claude",
+      "status": "done",
+      "attempts": [
+        {
+          "k": 1,
+          "folder": "stages/00-answer",
+          "sessionId": "074b1948-9594-481c-bd76-a8fd3f7dcd81",
+          "name": "261022-100001-explain-passed-answer",
+          "startedAt": "2026-10-22T08:18:28.181Z",
+          "model": "sonnet",
+          "effort": "high",
+          "profile": "READ",
+          "mode": "manual",
+          "maxTurns": 40,
+          "cwd": "C:\\dev\\claude-workspace\\projects\\example",
+          "why": "fresh",
+          "proc": {
+            "pid": 28924,
+            "image": "node.exe",
+            "startedAt": 1792657108215
+          },
+          "endedAt": "2026-10-22T08:18:28.425Z",
+          "status": "done",
+          "turns": 5,
+          "numTurns": 5,
+          "subtype": "success",
+          "durationMs": 230,
+          "estUsd": 0.00161092,
+          "denials": 0,
+          "ccVersion": "2.1.307",
+          "initModel": "claude-sonnet-5-5",
+          "init": "ok",
+          "autoResumed": false
+        }
+      ],
+      "startedAt": "2026-10-22T08:18:28.181Z",
+      "endedAt": "2026-10-22T08:18:28.427Z",
+      "meta": "5 turns"
+    }
+  ],
+  "takeover": null,
+  "error": null,
+  "riskTags": [],
+  "findingId": null,
+  "owner": {
+    "pid": 9184,
+    "image": "node.exe",
+    "startedAt": 1792657106225
+  },
+  "outputs": {
+    "answer": {
+      "answer": "charge(cents) in apps/api/src/billing/charge.mjs adds 21% tax and rounds.",
+      "sources": [
+        {
+          "path": "apps/api/src/billing/charge.mjs",
+          "line": 1,
+          "note": "the function"
+        }
+      ],
+      "openQuestions": [],
+      "suggestedNote": ""
+    }
+  },
+  "rateLimit": {
+    "status": "allowed",
+    "type": "five_hour",
+    "utilization": 0.42,
+    "resetsAt": 1792674000,
+    "sevenDayUtilization": 0.17
+  }
+}

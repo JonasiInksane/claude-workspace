@@ -250,7 +250,8 @@ function archiveFlowDialog(slug, title) {
 }
 
 // Shows the exact prompt Claude will start with (built by the server), with optional notes.
-function runFlowDialog(f) {
+// Exported for the palette (parts/palette.js).
+export function runFlowDialog(f) {
   const notes = h('textarea', { maxlength: 2000, placeholder: 'Optional: what is different this time, for example "the hero, walking left"' });
   const pre = h('pre', { class: 'output' }, 'Loading…');
   const settings = h('p', { class: 'muted small-text' });

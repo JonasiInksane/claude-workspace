@@ -1,0 +1,38 @@
+diff --git a/apps/web/src/features/cart/total.mjs b/apps/web/src/features/cart/total.mjs
+index c7ce554..e332b77 100644
+--- a/apps/web/src/features/cart/total.mjs
++++ b/apps/web/src/features/cart/total.mjs
+@@ -1 +1,3 @@
+-export const total = items => items.reduce((s, i) => s + i, 0);
++import { sumCents } from './cents.mjs';
++
++export const total = items => sumCents(items);
+diff --git a/apps/web/src/features/cart/cents.mjs b/apps/web/src/features/cart/cents.mjs
+new file mode 100644
+index 0000000..5eb50ec
+--- /dev/null
++++ b/apps/web/src/features/cart/cents.mjs
+@@ -0,0 +1 @@
++export const sumCents = items => items.reduce((s, i) => s + i, 0);
+diff --git a/apps/web/src/features/cart/total.pin.test.mjs b/apps/web/src/features/cart/total.pin.test.mjs
+new file mode 100644
+index 0000000..9d6335b
+--- /dev/null
++++ b/apps/web/src/features/cart/total.pin.test.mjs
+@@ -0,0 +1,7 @@
++import { test } from 'node:test';
++import assert from 'node:assert/strict';
++import { total } from './total.mjs';
++
++test('total pins the sum', () => {
++  assert.equal(total([1, 2, 3]), 6);
++});
+diff --git a/docs/records/CART-CENTS.md b/docs/records/CART-CENTS.md
+new file mode 100644
+index 0000000..3464fc6
+--- /dev/null
++++ b/docs/records/CART-CENTS.md
+@@ -0,0 +1,3 @@
++# CART-CENTS
++
++The cart total uses a cents helper.

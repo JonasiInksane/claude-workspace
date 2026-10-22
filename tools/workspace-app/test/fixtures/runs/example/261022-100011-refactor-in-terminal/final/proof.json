@@ -1,0 +1,172 @@
+{
+  "version": 1,
+  "runId": "261022-100011-refactor-in-terminal",
+  "project": "example",
+  "pipeline": "refactor",
+  "builtAt": "2026-10-22T08:18:44.411Z",
+  "base": {
+    "branch": "main",
+    "sha": "3509c76000eee69a52b6d914c94e88d29bb0bbe7"
+  },
+  "branch": null,
+  "tree": "t",
+  "level": "standard",
+  "levelReason": [],
+  "checks": [
+    {
+      "id": "g0.diffcheck",
+      "label": "Whitespace (git diff --check)",
+      "command": "git diff --check 3509c76",
+      "result": "pass",
+      "durationMs": 132
+    },
+    {
+      "id": "g0.format",
+      "label": "Format with the project's own config",
+      "command": "format:changed on 4 files",
+      "result": "pass",
+      "durationMs": 68
+    },
+    {
+      "id": "g0.lint",
+      "label": "Lint on changed files",
+      "command": "lint:web on 3 files",
+      "result": "pass",
+      "durationMs": 74
+    },
+    {
+      "id": "g0.secrets",
+      "label": "Secret scan of the diff",
+      "command": "secret scan of the added lines",
+      "result": "pass",
+      "durationMs": 1
+    },
+    {
+      "id": "g0.fences",
+      "label": "Scope fence",
+      "command": "fences from the profile",
+      "result": "warn",
+      "durationMs": 51
+    },
+    {
+      "id": "g0.ratchets.tests",
+      "label": "Ratchet: test counts, .skip, .only, todo",
+      "command": "test counts in 1 test file at base and head",
+      "result": "pass",
+      "durationMs": 1
+    },
+    {
+      "id": "g0.ratchets.allowlist",
+      "label": "Ratchet: procedure allowlist",
+      "command": "",
+      "result": "skip",
+      "durationMs": 0
+    },
+    {
+      "id": "g0.ratchets.metrics",
+      "label": "Ratchet: cycles and deep imports",
+      "command": "deepImports at base and head",
+      "result": "pass",
+      "durationMs": 55
+    },
+    {
+      "id": "g0.contract",
+      "label": "Contract: procedures, legacy router, queues",
+      "command": "",
+      "result": "skip",
+      "durationMs": 0
+    },
+    {
+      "id": "g0.tenant",
+      "label": "Tenant probes on changed files",
+      "command": "",
+      "result": "skip",
+      "durationMs": 0
+    },
+    {
+      "id": "types:web",
+      "label": "Types: Web",
+      "command": "node -e process.exit(0)",
+      "result": "pass",
+      "durationMs": 77
+    },
+    {
+      "id": "test:root",
+      "label": "Lint and unit tests: root",
+      "command": "node --test --test-reporter=tap (1 file)",
+      "result": "pass",
+      "durationMs": 208
+    },
+    {
+      "id": "lint:web",
+      "label": "Lint and unit tests: Web",
+      "command": "node -e console.log(JSON.stringify([])) (3 files)",
+      "result": "pass",
+      "durationMs": 73
+    },
+    {
+      "id": "test:web",
+      "label": "Lint and unit tests: Web",
+      "command": "node --test --test-reporter=tap (2 files)",
+      "result": "pass",
+      "durationMs": 238
+    },
+    {
+      "id": "test:api",
+      "label": "API tests",
+      "command": "",
+      "result": "skip",
+      "durationMs": 0
+    }
+  ],
+  "baseline": {
+    "key": "3509c76000ee-run-node20.15.1",
+    "new": 0,
+    "known": 0,
+    "flaky": 0,
+    "canShrink": 0
+  },
+  "pins": {
+    "before": [
+      {
+        "path": "apps/web/src/features/cart/total.pin.test.mjs",
+        "sha256": "415a35cb0f0e970bf920f549175dc07b91858bce02dd373b418b048e65a2f3eb"
+      }
+    ],
+    "after": [
+      {
+        "path": "apps/web/src/features/cart/total.pin.test.mjs",
+        "sha256": "415a35cb0f0e970bf920f549175dc07b91858bce02dd373b418b048e65a2f3eb"
+      }
+    ],
+    "identical": true,
+    "green": true
+  },
+  "redTests": [],
+  "scope": {
+    "inPlan": 1,
+    "total": 4,
+    "allowedByUser": [
+      "apps/web/src/features/cart/cents.mjs"
+    ],
+    "outside": []
+  },
+  "existingTestsChanged": [],
+  "treeHash": {
+    "gated": "436cc965b13e3960bb4878ad788063d54cdf0209",
+    "atCommit": null,
+    "match": null
+  },
+  "turns": {
+    "scope": 5,
+    "prove": 5,
+    "implement": 5
+  },
+  "versions": {
+    "node": "20.15.1",
+    "claudeCode": "2.1.307"
+  },
+  "notProven": [
+    "Expo cart totals"
+  ]
+}

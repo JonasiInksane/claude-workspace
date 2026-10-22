@@ -5,6 +5,12 @@
 // The rest is small synchronous file reads. Requests that arrive while a build is running share
 // that build; invalidateState() (app.mjs calls it after every POST) makes the next request start
 // a fresh one, so a refresh right after a change always sees it.
+//
+// Runs (SPEC 4): each project gets linked and realPath (a junction to a checkout elsewhere, and
+// where Claude and git run), hasProfile (dataDir/profiles/<name>.json exists) and its counts of
+// waiting and running runs; the top level gets runs: { waiting, running, atReviewGate }. The
+// counts come from the runs index (runs/store.mjs listRuns) through a summary cached for 2 s per
+// data folder, so a page that polls state doesn't reread the index on every call.
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { duplicateNames, listAgents, listArchivedAgents, projectDir, SHARED_DIR } from '../lib/agents.mjs';
@@ -16,6 +22,14 @@ import { catalogForUi } from './catalog.mjs';
 import { contentTypeFor, localDate } from './uploads.mjs';
 import { assetProjects, listAssets } from './assets.mjs';
 import { isLaunchable } from './lookup.mjs';
+import { isLinked, realProjectDir } from '../lib/projects.mjs';
+import { defaultDataDir, PROJECT_RE } from './core/datadir.mjs';
+import { listRuns } from './runs/store.mjs';
+
+export const RUNS_CACHE_MS = 2000;
+// Waiting kinds shown as their own nav items under Runs (at most 3).
+const REVIEW_KINDS = ['review', 'commit'];
+const MAX_REVIEW_ITEMS = 3;
 
 // The entries of reports/reports.json ([] when it is missing or broken).
 export function readReports(root) {
@@ -29,7 +43,43 @@ function countMd(dir) {
   try { return readdirSync(dir).filter(n => n.toLowerCase().endsWith('.md')).length; } catch { return 0; }
 }
 
-function projectsState(root, libCount) {
+// The latest index line of every waiting or running run, summed up:
+// { waiting, running, byProject: { <project>: { waiting, running } }, atReviewGate: [...] }.
+async function readRunSummary(dataDir) {
+  const out = { waiting: 0, running: 0, byProject: {}, atReviewGate: [] };
+  let rows = [];
+  try { rows = await listRuns(dataDir, { status: ['waiting', 'running'], limit: 500 }); } catch { rows = []; }
+  for (const r of rows) {
+    const key = r.status === 'waiting' ? 'waiting' : 'running';
+    out[key]++;
+    const p = out.byProject[r.project] || (out.byProject[r.project] = { waiting: 0, running: 0 });
+    p[key]++;
+    if (key === 'waiting' && REVIEW_KINDS.includes(r.waiting) && out.atReviewGate.length < MAX_REVIEW_ITEMS) {
+      out.atReviewGate.push({ id: r.id, project: r.project, title: String(r.title || r.id), waiting: r.waiting });
+    }
+  }
+  return out;
+}
+
+// readRunSummary, cached for RUNS_CACHE_MS per data folder; callers at the same time share it.
+const runSummaries = new Map();
+export function runSummary(dataDir, now = Date.now()) {
+  const key = resolve(dataDir);
+  const hit = runSummaries.get(key);
+  if (hit && now - hit.at < RUNS_CACHE_MS) return hit.promise;
+  const promise = readRunSummary(key);
+  runSummaries.set(key, { at: now, promise });
+  return promise;
+}
+
+// Where a project's checkout really is: { linked, realPath }. A link whose target is gone has
+// realPath ''.
+function placeOf(root, name, dir) {
+  if (!isLinked(root, name)) return { linked: false, realPath: dir };
+  try { return { linked: true, realPath: realProjectDir(root, name) }; } catch { return { linked: true, realPath: '' }; }
+}
+
+function projectsState(root, libCount, dataDir, runs) {
   return [...projectNameMap(root).values()].sort((a, b) => a.localeCompare(b)).map(name => {
     const dir = projectDir(root, name);
     let label = 'Other';
@@ -47,9 +97,14 @@ function projectsState(root, libCount) {
       images: libCount.get(`${name}/${a.name.toLowerCase()}`) || 0,
       memoryFiles: a.valid ? countMd(a.memoryDir) : 0,
     }));
+    const counts = runs.byProject[name] || { waiting: 0, running: 0 };
     return {
       name,
       label,
+      ...placeOf(root, name, dir),
+      hasProfile: PROJECT_RE.test(name) && existsSync(join(dataDir, 'profiles', `${name}.json`)),
+      waiting: counts.waiting,
+      running: counts.running,
       hasClaudeMd: existsSync(join(dir, 'CLAUDE.md')) || existsSync(join(dir, '.claude', 'CLAUDE.md')),
       launchable: isLaunchable(name),
       sharedImages: libCount.get(`${name}/${SHARED_DIR}`) || 0,
@@ -59,16 +114,17 @@ function projectsState(root, libCount) {
   });
 }
 
-async function build(root, tools) {
+async function build(root, tools, dataDir) {
   // Started first, so git runs while the files below are read.
   const reposPending = Promise.all([repoStatusAsync(root), unlistedProjectsAsync(root), requirementStatusAsync()]);
   reposPending.catch(() => {}); // awaited below; this only keeps an early throw from leaving it unhandled
+  const runs = await runSummary(dataDir);
 
   let inbox = { items: [], libraries: [], processed: 0, truncated: false, exists: false };
   let inboxError = '';
   try { inbox = scanInbox(root); } catch (e) { inboxError = e.message; }
   const libCount = new Map(inbox.libraries.map(l => [`${l.project}/${l.agent.toLowerCase()}`, l.files]));
-  const projects = projectsState(root, libCount);
+  const projects = projectsState(root, libCount, dataDir, runs);
 
   const reports = readReports(root)
     .filter(r => r.status === 'active')
@@ -105,23 +161,27 @@ async function build(root, tools) {
     repos: { error: readRepos(root).error, list, unlisted, have },
     catalog: catalogForUi(),
     assets,
+    runs: { waiting: runs.waiting, running: runs.running, atReviewGate: runs.atReviewGate },
   };
 }
 
 // The build in progress per workspace root; requests that come in meanwhile share it.
 const running = new Map();
 
-// Everything the UI shows. `tools` is actions.tools (which programs were found).
-export function buildState(root, tools = {}) {
+// Everything the UI shows. `tools` is actions.tools (which programs were found); `dataDir` is
+// the private data folder the run counts and profiles come from.
+export function buildState(root, tools = {}, { dataDir = defaultDataDir() } = {}) {
   root = resolve(root);
   if (!running.has(root)) {
-    const p = build(root, tools).finally(() => { if (running.get(root) === p) running.delete(root); });
+    const p = build(root, tools, resolve(dataDir)).finally(() => { if (running.get(root) === p) running.delete(root); });
     running.set(root, p);
   }
   return running.get(root);
 }
 
-// The next buildState() starts fresh instead of joining a build that began before a change.
+// The next buildState() starts fresh instead of joining a build that began before a change, and
+// rereads the run counts.
 export function invalidateState(root) {
   running.delete(resolve(root));
+  runSummaries.clear();
 }

@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "id": "261022-100002-explain-failed",
+  "project": "example",
+  "pipeline": "explain",
+  "parent": null,
+  "title": "Explain: Where is the cart total computed (failed)?",
+  "values": {
+    "what": "Where is the cart total computed (failed)?",
+    "where": ""
+  },
+  "level": "standard",
+  "levelReason": [],
+  "reviewEffort": null,
+  "createdAt": "2026-10-22T08:18:28.722Z",
+  "updatedAt": "2026-10-22T08:18:29.605Z",
+  "endedAt": "2026-10-22T08:18:29.603Z",
+  "status": "failed",
+  "statusReason": "Claude's structured result does not match answer.v1: answer: is required; sources: is required; openQuestions: is required, even after one reminder",
+  "current": {
+    "stage": "answer",
+    "index": 0,
+    "attempt": 1,
+    "round": 1
+  },
+  "waiting": null,
+  "isolation": {
+    "mode": "none",
+    "treeMode": "main",
+    "tree": "C:\\dev\\claude-workspace\\projects\\example",
+    "mainDir": "C:\\dev\\claude-workspace\\projects\\example"
+  },
+  "base": {
+    "branch": "",
+    "sha": "3509c76000eee69a52b6d914c94e88d29bb0bbe7"
+  },
+  "branch": null,
+  "commit": null,
+  "versions": {
+    "node": "20.15.1",
+    "claudeCode": "2.1.307"
+  },
+  "lockHeld": false,
+  "plan": null,
+  "allowances": [],
+  "pins": [],
+  "redTests": [],
+  "inputsHashes": {
+    "request.md": "sha256:087f078a8670af5a823614a4aedaf45b80c8d7f1d705e6a6a2c00152620817e3",
+    "values.json": "sha256:80227d35a7785fbe90e56334e5519b18ad840950b6c13dcbdc8e8eb1464f9035"
+  },
+  "fixRounds": {
+    "auto": 0,
+    "user": 0,
+    "maxAuto": 2,
+    "maxUser": 2
+  },
+  "gatedTree": null,
+  "stages": [
+    {
+      "id": "answer",
+      "n": 0,
+      "kind": "claude",
+      "status": "failed",
+      "attempts": [
+        {
+          "k": 1,
+          "folder": "stages/00-answer",
+          "sessionId": "7eaa70f2-30fb-409a-9a2e-a766db679088",
+          "name": "261022-100002-explain-failed-answer",
+          "startedAt": "2026-10-22T08:18:28.925Z",
+          "model": "sonnet",
+          "effort": "high",
+          "profile": "READ",
+          "mode": "manual",
+          "maxTurns": 40,
+          "cwd": "C:\\dev\\claude-workspace\\projects\\example",
+          "why": "fresh",
+          "proc": {
+            "pid": 23700,
+            "image": "node.exe",
+            "startedAt": 1792657109221
+          },
+          "endedAt": "2026-10-22T08:18:29.602Z",
+          "status": "failed",
+          "turns": 10,
+          "numTurns": 10,
+          "subtype": "success",
+          "durationMs": 668,
+          "estUsd": 0.00322184,
+          "denials": 0,
+          "ccVersion": "2.1.307",
+          "initModel": "claude-sonnet-5-5",
+          "init": "ok",
+          "autoResumed": true
+        }
+      ],
+      "startedAt": "2026-10-22T08:18:28.925Z",
+      "endedAt": "2026-10-22T08:18:29.602Z"
+    }
+  ],
+  "takeover": null,
+  "error": {
+    "message": "Claude's structured result does not match answer.v1: answer: is required; sources: is required; openQuestions: is required, even after one reminder",
+    "at": "2026-10-22T08:18:29.603Z"
+  },
+  "riskTags": [],
+  "findingId": null,
+  "owner": {
+    "pid": 9184,
+    "image": "node.exe",
+    "startedAt": 1792657106225
+  },
+  "outputs": {},
+  "rateLimit": {
+    "status": "allowed",
+    "type": "five_hour",
+    "utilization": 0.42,
+    "resetsAt": 1792674000,
+    "sevenDayUtilization": 0.17
+  }
+}

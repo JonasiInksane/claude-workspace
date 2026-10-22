@@ -1,0 +1,20 @@
+diff --git a/apps/web/src/features/cart/total.mjs b/apps/web/src/features/cart/total.mjs
+index c7ce554..f5c8c17 100644
+--- a/apps/web/src/features/cart/total.mjs
++++ b/apps/web/src/features/cart/total.mjs
+@@ -1 +1 @@
+-export const total = items => items.reduce((s, i) => s + i, 0);
++export const total = items => items.reduce((s, i) => s + i * 100, 0);
+diff --git a/apps/web/src/features/cart/total.pin.test.mjs b/apps/web/src/features/cart/total.pin.test.mjs
+new file mode 100644
+index 0000000..9d6335b
+--- /dev/null
++++ b/apps/web/src/features/cart/total.pin.test.mjs
+@@ -0,0 +1,7 @@
++import { test } from 'node:test';
++import assert from 'node:assert/strict';
++import { total } from './total.mjs';
++
++test('total pins the sum', () => {
++  assert.equal(total([1, 2, 3]), 6);
++});

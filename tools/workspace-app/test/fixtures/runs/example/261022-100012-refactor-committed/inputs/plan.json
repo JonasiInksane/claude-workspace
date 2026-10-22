@@ -1,0 +1,27 @@
+{
+  "schema": "plan.v1",
+  "approvedAt": "2026-10-22T08:18:39.466Z",
+  "slice": 0,
+  "files": [
+    "apps/web/src/features/cart/total.mjs",
+    "package.json"
+  ],
+  "removedFiles": [
+    "apps/web/src/features/cart/extra.mjs"
+  ],
+  "ticked": [
+    "package.json"
+  ],
+  "tests": [
+    "apps/web/src/features/cart/total.pin.test.mjs"
+  ],
+  "answers": [
+    {
+      "q": "Keep the name total?",
+      "a": "Yes"
+    }
+  ],
+  "notes": "",
+  "hash": "sha256:16da56a72a13fc0d1faaef1e669eae8eb54ac3e7cb2b22efd1acdbcabfc77418",
+  "summary": "Move the cart total into a cents helper."
+}

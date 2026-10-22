@@ -1,0 +1,18 @@
+[
+  {
+    "path": "apps/web/src/features/cart/cents.mjs",
+    "status": "A"
+  },
+  {
+    "path": "apps/web/src/features/cart/total.mjs",
+    "status": "M"
+  },
+  {
+    "path": "apps/web/src/features/cart/total.pin.test.mjs",
+    "status": "A"
+  },
+  {
+    "path": "docs/records/CART-CENTS.md",
+    "status": "A"
+  }
+]

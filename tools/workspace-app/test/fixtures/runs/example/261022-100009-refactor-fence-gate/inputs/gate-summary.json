@@ -1,0 +1,11 @@
+{
+  "at": "2026-10-22T08:18:42.412Z",
+  "result": "fence",
+  "chip": "0 new · 0 known",
+  "problems": [],
+  "outsidePlan": [
+    "apps/web/src/features/cart/cents.mjs"
+  ],
+  "newTests": [],
+  "gate": "gates/06-checks"
+}

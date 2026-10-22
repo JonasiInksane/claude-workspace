@@ -1,0 +1,13 @@
+{
+  "what": "Sum the cart total in cents",
+  "where": "",
+  "kind": "auto",
+  "care": "standard",
+  "keep": [
+    "trpc",
+    "legacy",
+    "queues",
+    "ui"
+  ],
+  "out": ""
+}

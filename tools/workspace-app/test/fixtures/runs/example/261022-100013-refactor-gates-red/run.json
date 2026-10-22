@@ -1,0 +1,513 @@
+{
+  "version": 1,
+  "id": "261022-100013-refactor-gates-red",
+  "project": "example",
+  "pipeline": "refactor",
+  "parent": null,
+  "title": "Refactor: Sum the cart total in cents",
+  "values": {
+    "what": "Sum the cart total in cents",
+    "where": "",
+    "kind": "auto",
+    "care": "standard",
+    "keep": [
+      "trpc",
+      "legacy",
+      "queues",
+      "ui"
+    ],
+    "out": ""
+  },
+  "level": "standard",
+  "levelReason": [],
+  "reviewEffort": null,
+  "createdAt": "2026-10-22T08:18:50.943Z",
+  "updatedAt": "2026-10-22T08:18:59.314Z",
+  "endedAt": null,
+  "status": "gates-red",
+  "statusReason": "Gates still red after 2 automatic fix rounds: Lint and unit tests: Web: 2 new",
+  "current": {
+    "stage": "checks",
+    "index": 6,
+    "attempt": 3,
+    "round": 3
+  },
+  "waiting": null,
+  "isolation": {
+    "mode": "worktree",
+    "tree": "C:\\dev\\example-run",
+    "mainDir": "C:\\dev\\claude-workspace\\projects\\example",
+    "treeMode": "run",
+    "refreshed": []
+  },
+  "base": {
+    "branch": "main",
+    "sha": "3509c76000eee69a52b6d914c94e88d29bb0bbe7"
+  },
+  "branch": null,
+  "commit": null,
+  "versions": {
+    "node": "20.15.1",
+    "claudeCode": "2.1.307"
+  },
+  "lockHeld": true,
+  "plan": {
+    "schema": "plan.v1",
+    "approvedAt": "2026-10-22T08:18:51.826Z",
+    "slice": 0,
+    "files": [
+      "apps/web/src/features/cart/total.mjs"
+    ],
+    "removedFiles": [
+      "apps/web/src/features/cart/extra.mjs",
+      "package.json"
+    ],
+    "ticked": [],
+    "tests": [
+      "apps/web/src/features/cart/total.pin.test.mjs"
+    ],
+    "answers": [],
+    "notes": "",
+    "output": {
+      "summary": "Move the cart total into a cents helper.",
+      "files": [
+        {
+          "path": "apps/web/src/features/cart/total.mjs",
+          "why": "the math"
+        },
+        {
+          "path": "apps/web/src/features/cart/extra.mjs",
+          "why": "a helper"
+        },
+        {
+          "path": "package.json",
+          "why": "a script"
+        }
+      ],
+      "risks": [
+        {
+          "kind": "ui",
+          "path": "apps/web/src/features/cart/total.mjs",
+          "note": "the cart page shows this total"
+        }
+      ],
+      "existingTests": [
+        "apps/web/src/features/cart/total.test.mjs"
+      ],
+      "slices": [
+        {
+          "title": "Cents",
+          "goal": "total sums in cents",
+          "files": [
+            "apps/web/src/features/cart/total.mjs",
+            "apps/web/src/features/cart/extra.mjs",
+            "package.json"
+          ],
+          "tests": [
+            "apps/web/src/features/cart/total.pin.test.mjs"
+          ],
+          "outOfScope": [
+            "Expo"
+          ],
+          "estLines": 10
+        }
+      ],
+      "questions": [
+        "Keep the name total?"
+      ]
+    },
+    "hash": "sha256:1d90086975cae2169825c0b65bc94f1b0d1072b6a6fd6af24be6ccd668d1a9cc"
+  },
+  "allowances": [],
+  "pins": [
+    {
+      "path": "apps/web/src/features/cart/total.pin.test.mjs",
+      "sha256": "415a35cb0f0e970bf920f549175dc07b91858bce02dd373b418b048e65a2f3eb",
+      "tests": [
+        "total pins the sum"
+      ]
+    }
+  ],
+  "redTests": [],
+  "inputsHashes": {
+    "request.md": "sha256:b374441ae35965f06b119473815c9904bd929022dabdce8665eb7b5a172c52c9",
+    "values.json": "sha256:1fbb5167e552ac3a798613f59f94e221ef38af0e83458e1e3573add1663a5380",
+    "diff.patch": "sha256:1385d000635441adfa48d9371b7fcde6c2c067b51ed9d5e47807c52fd6802ad4",
+    "changed.json": "sha256:bc49dd668307dcc0950d0567021978c5ca801307d94d946f44b8cb3b6e35296a",
+    "stat.txt": "sha256:37c0efa10e73846603622ff5cfe973fba7138afb3b771e7ddcc85363502f3da7",
+    "gate-summary.json": "sha256:0ac8cee83c9eba02148b94eec85c8e13de1afe8cc99b689a072b5fedfeacb6e3"
+  },
+  "fixRounds": {
+    "auto": 2,
+    "user": 0,
+    "maxAuto": 2,
+    "maxUser": 2
+  },
+  "gatedTree": null,
+  "stages": [
+    {
+      "id": "preflight",
+      "n": 0,
+      "kind": "gate",
+      "status": "done",
+      "rounds": 1,
+      "startedAt": "2026-10-22T08:18:50.962Z",
+      "gate": "gates/00-preflight",
+      "endedAt": "2026-10-22T08:18:51.353Z",
+      "meta": "t clean · base 3509c76 · baseline cached"
+    },
+    {
+      "id": "scope",
+      "n": 1,
+      "kind": "claude",
+      "status": "done",
+      "attempts": [
+        {
+          "k": 1,
+          "folder": "stages/01-scope",
+          "sessionId": "ab33dd17-4590-41cd-a84c-e248892ba686",
+          "name": "261022-100013-refactor-gates-red-scope",
+          "startedAt": "2026-10-22T08:18:51.549Z",
+          "model": "opus",
+          "effort": "high",
+          "profile": "READ",
+          "mode": "manual",
+          "maxTurns": 40,
+          "cwd": "C:\\dev\\example-run",
+          "why": "fresh",
+          "proc": {
+            "pid": 24208,
+            "image": "node.exe",
+            "startedAt": 1792657131577
+          },
+          "endedAt": "2026-10-22T08:18:51.788Z",
+          "status": "done",
+          "turns": 5,
+          "numTurns": 5,
+          "subtype": "success",
+          "durationMs": 231,
+          "estUsd": 0.00161092,
+          "denials": 0,
+          "ccVersion": "2.1.307",
+          "initModel": "claude-opus-5-5",
+          "init": "ok",
+          "autoResumed": false
+        }
+      ],
+      "startedAt": "2026-10-22T08:18:51.549Z",
+      "endedAt": "2026-10-22T08:18:51.788Z",
+      "meta": "5 turns"
+    },
+    {
+      "id": "plan",
+      "n": 2,
+      "kind": "human",
+      "status": "done",
+      "startedAt": "2026-10-22T08:18:51.795Z",
+      "endedAt": "2026-10-22T08:18:51.826Z"
+    },
+    {
+      "id": "prove",
+      "n": 3,
+      "kind": "claude",
+      "status": "done",
+      "attempts": [
+        {
+          "k": 1,
+          "folder": "stages/03-prove",
+          "sessionId": "cba62506-8a6f-4080-95b9-f5e59fb6cba6",
+          "name": "261022-100013-refactor-gates-red-prove",
+          "startedAt": "2026-10-22T08:18:51.992Z",
+          "model": "sonnet",
+          "effort": "high",
+          "profile": "EDIT",
+          "mode": "acceptEdits",
+          "maxTurns": 60,
+          "cwd": "C:\\dev\\example-run",
+          "why": "fresh",
+          "proc": {
+            "pid": 32008,
+            "image": "node.exe",
+            "startedAt": 1792657132065
+          },
+          "endedAt": "2026-10-22T08:18:52.271Z",
+          "status": "done",
+          "turns": 5,
+          "numTurns": 5,
+          "subtype": "success",
+          "durationMs": 257,
+          "estUsd": 0.00161092,
+          "denials": 0,
+          "ccVersion": "2.1.307",
+          "initModel": "claude-sonnet-5-5",
+          "init": "ok",
+          "autoResumed": false
+        }
+      ],
+      "startedAt": "2026-10-22T08:18:51.992Z",
+      "endedAt": "2026-10-22T08:18:52.271Z",
+      "meta": "5 turns"
+    },
+    {
+      "id": "gate-b",
+      "n": 4,
+      "kind": "gate",
+      "status": "done",
+      "rounds": 1,
+      "startedAt": "2026-10-22T08:18:52.280Z",
+      "gate": "gates/04-gate-b",
+      "endedAt": "2026-10-22T08:18:52.781Z",
+      "meta": "1 pinned file pass on the old code"
+    },
+    {
+      "id": "implement",
+      "n": 5,
+      "kind": "claude",
+      "status": "done",
+      "attempts": [
+        {
+          "k": 1,
+          "folder": "stages/05-implement",
+          "sessionId": "ed400510-5ecc-4c35-834a-b169e3870bf4",
+          "name": "261022-100013-refactor-gates-red-implement",
+          "startedAt": "2026-10-22T08:18:52.908Z",
+          "model": "opus",
+          "effort": "high",
+          "profile": "EDIT",
+          "mode": "acceptEdits",
+          "maxTurns": 60,
+          "cwd": "C:\\dev\\example-run",
+          "why": "fresh",
+          "proc": {
+            "pid": 27776,
+            "image": "node.exe",
+            "startedAt": 1792657132965
+          },
+          "endedAt": "2026-10-22T08:18:53.190Z",
+          "status": "done",
+          "turns": 5,
+          "numTurns": 5,
+          "subtype": "success",
+          "durationMs": 267,
+          "estUsd": 0.00161092,
+          "denials": 0,
+          "ccVersion": "2.1.307",
+          "initModel": "claude-opus-5-5",
+          "init": "ok",
+          "autoResumed": false
+        },
+        {
+          "k": 2,
+          "folder": "stages/05-implement-a2",
+          "sessionId": "ed400510-5ecc-4c35-834a-b169e3870bf4",
+          "name": "261022-100013-refactor-gates-red-implement",
+          "startedAt": "2026-10-22T08:18:55.455Z",
+          "model": "opus",
+          "effort": "high",
+          "profile": "EDIT",
+          "mode": "acceptEdits",
+          "maxTurns": 60,
+          "cwd": "C:\\dev\\example-run",
+          "why": "auto-fix",
+          "proc": {
+            "pid": 6844,
+            "image": "node.exe",
+            "startedAt": 1792657135487
+          },
+          "endedAt": "2026-10-22T08:18:55.720Z",
+          "status": "done",
+          "turns": 5,
+          "numTurns": 5,
+          "subtype": "success",
+          "durationMs": 255,
+          "estUsd": 0.00161092,
+          "denials": 0,
+          "ccVersion": "2.1.307",
+          "initModel": "claude-opus-5-5",
+          "init": "ok",
+          "autoResumed": false
+        },
+        {
+          "k": 3,
+          "folder": "stages/05-implement-a3",
+          "sessionId": "ed400510-5ecc-4c35-834a-b169e3870bf4",
+          "name": "261022-100013-refactor-gates-red-implement",
+          "startedAt": "2026-10-22T08:18:57.448Z",
+          "model": "opus",
+          "effort": "high",
+          "profile": "EDIT",
+          "mode": "acceptEdits",
+          "maxTurns": 60,
+          "cwd": "C:\\dev\\example-run",
+          "why": "auto-fix",
+          "proc": {
+            "pid": 15968,
+            "image": "node.exe",
+            "startedAt": 1792657137475
+          },
+          "endedAt": "2026-10-22T08:18:57.718Z",
+          "status": "done",
+          "turns": 5,
+          "numTurns": 5,
+          "subtype": "success",
+          "durationMs": 261,
+          "estUsd": 0.00161092,
+          "denials": 0,
+          "ccVersion": "2.1.307",
+          "initModel": "claude-opus-5-5",
+          "init": "ok",
+          "autoResumed": false
+        }
+      ],
+      "startedAt": "2026-10-22T08:18:52.908Z",
+      "meta": "5 turns",
+      "endedAt": "2026-10-22T08:18:57.718Z"
+    },
+    {
+      "id": "checks",
+      "n": 6,
+      "kind": "gate",
+      "status": "failed",
+      "rounds": 3,
+      "startedAt": "2026-10-22T08:18:57.725Z",
+      "gate": "gates/06-checks-r3",
+      "meta": "2 problems",
+      "endedAt": "2026-10-22T08:18:59.313Z"
+    },
+    {
+      "id": "review",
+      "n": 7,
+      "kind": "claude",
+      "status": "pending",
+      "attempts": []
+    },
+    {
+      "id": "verify",
+      "n": 8,
+      "kind": "claude",
+      "status": "pending",
+      "attempts": []
+    },
+    {
+      "id": "review-gate",
+      "n": 9,
+      "kind": "human",
+      "status": "pending"
+    },
+    {
+      "id": "commit",
+      "n": 10,
+      "kind": "git",
+      "status": "pending"
+    }
+  ],
+  "takeover": null,
+  "error": null,
+  "riskTags": [],
+  "findingId": null,
+  "owner": {
+    "pid": 9184,
+    "image": "node.exe",
+    "startedAt": 1792657106225
+  },
+  "outputs": {
+    "scope": {
+      "summary": "Move the cart total into a cents helper.",
+      "files": [
+        {
+          "path": "apps/web/src/features/cart/total.mjs",
+          "why": "the math"
+        },
+        {
+          "path": "apps/web/src/features/cart/extra.mjs",
+          "why": "a helper"
+        },
+        {
+          "path": "package.json",
+          "why": "a script"
+        }
+      ],
+      "risks": [
+        {
+          "kind": "ui",
+          "path": "apps/web/src/features/cart/total.mjs",
+          "note": "the cart page shows this total"
+        }
+      ],
+      "existingTests": [
+        "apps/web/src/features/cart/total.test.mjs"
+      ],
+      "slices": [
+        {
+          "title": "Cents",
+          "goal": "total sums in cents",
+          "files": [
+            "apps/web/src/features/cart/total.mjs",
+            "apps/web/src/features/cart/extra.mjs",
+            "package.json"
+          ],
+          "tests": [
+            "apps/web/src/features/cart/total.pin.test.mjs"
+          ],
+          "outOfScope": [
+            "Expo"
+          ],
+          "estLines": 10
+        }
+      ],
+      "questions": [
+        "Keep the name total?"
+      ]
+    },
+    "prove": {
+      "tests": [
+        {
+          "path": "apps/web/src/features/cart/total.pin.test.mjs",
+          "name": "total pins the sum",
+          "proves": "the sum stays the same"
+        }
+      ],
+      "notes": ""
+    },
+    "implement": {
+      "changes": [
+        {
+          "path": "apps/web/src/features/cart/total.mjs",
+          "what": "sums in cents"
+        }
+      ],
+      "recordPath": "",
+      "commitMessage": "Sum the cart in cents",
+      "notProven": []
+    }
+  },
+  "treeReady": true,
+  "riskHits": [],
+  "baselineKey": "3509c76000ee-run-node20.15.1",
+  "baselineLevel": "standard",
+  "rateLimit": {
+    "status": "allowed",
+    "type": "five_hour",
+    "utilization": 0.42,
+    "resetsAt": 1792674000,
+    "sevenDayUtilization": 0.17
+  },
+  "newFiles": [
+    "apps/web/src/features/cart/extra.mjs"
+  ],
+  "metricRows": [
+    {
+      "metric": "deepImports",
+      "before": 0,
+      "after": 0,
+      "change": 0,
+      "status": "same"
+    }
+  ],
+  "lastGate": {
+    "at": "2026-10-22T08:18:59.309Z",
+    "result": "red",
+    "chip": "2 new · 0 known",
+    "folder": "gates/06-checks-r3"
+  }
+}

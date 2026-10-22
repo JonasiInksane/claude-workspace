@@ -1,6 +1,10 @@
-// The page's one modal dialog (<dialog id="dialog"> in index.html) and the form helper built on
-// it. A view opens it with openDialog(); only one dialog shows at a time, and opening another
-// replaces the content.
+// The page's one general modal dialog (<dialog id="dialog"> in index.html) and the form helper
+// built on it. A view opens it with openDialog(); only one dialog shows at a time, and opening
+// another replaces the content. The palette and the commit dialog are their own <dialog>
+// elements (#palette, #commitDialog), and lib.js confirmDialog() makes a short-lived one.
+//
+// Accessibility: index.html gives the dialog aria-modal and aria-labelledby="dialogTitle";
+// openDialog() puts that id on the title, so screen readers name the dialog by it.
 //
 // Unsaved changes: pass `guard`, a function that returns false to keep the dialog open (it
 // usually asks confirm()). Esc, the close button, Cancel and a click on the backdrop all ask
@@ -42,9 +46,11 @@ export function openDialog(title, body, { wide = false, actions = [], guard = nu
   closeGuard = guard;
   dialogUpload = upload;
   dialog.className = wide ? 'wide' : '';
+  dialog.setAttribute('aria-labelledby', 'dialogTitle');
+  dialog.setAttribute('aria-modal', 'true');
   dialog.replaceChildren(...[
-    h('div', { class: 'card-head' }, h('h3', {}, title),
-      h('button', { class: 'icon-btn', 'aria-label': 'Close', on: { click: closeDialog } }, '✕')),
+    h('div', { class: 'card-head' }, h('h3', { id: 'dialogTitle' }, title),
+      h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Close', on: { click: closeDialog } }, '✕')),
     h('div', { class: 'card-body' }, body),
     actions.length ? h('div', { class: 'card-foot dialog-actions' }, actions) : null,
   ].filter(Boolean));

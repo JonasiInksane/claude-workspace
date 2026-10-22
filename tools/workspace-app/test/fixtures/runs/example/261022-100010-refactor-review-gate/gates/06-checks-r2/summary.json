@@ -1,0 +1,294 @@
+{
+  "version": 1,
+  "level": "standard",
+  "role": "head",
+  "treeMode": "run",
+  "tree": "C:\\dev\\example-run",
+  "baseSha": "3509c76000eee69a52b6d914c94e88d29bb0bbe7",
+  "node": "20.15.1",
+  "startedAt": "2026-10-22T08:18:42.886Z",
+  "endedAt": "2026-10-22T08:18:43.886Z",
+  "durationMs": 1000,
+  "result": "pass",
+  "refusal": "",
+  "chip": "0 new · 0 known",
+  "counts": {
+    "new": 0,
+    "known": 0,
+    "flaky": 0,
+    "canShrink": 0,
+    "notRun": 4
+  },
+  "checks": [
+    {
+      "group": "G0",
+      "id": "g0.diffcheck",
+      "label": "Whitespace (git diff --check)",
+      "command": "git diff --check 3509c76",
+      "status": "pass",
+      "reason": "",
+      "durationMs": 132,
+      "log": null,
+      "details": {
+        "problems": []
+      }
+    },
+    {
+      "group": "G0",
+      "id": "g0.format",
+      "label": "Format with the project's own config",
+      "command": "format:changed on 4 files",
+      "status": "pass",
+      "reason": "",
+      "durationMs": 68,
+      "log": "g0.format.log",
+      "details": {
+        "files": [
+          "apps/web/src/features/cart/cents.mjs",
+          "apps/web/src/features/cart/total.mjs",
+          "apps/web/src/features/cart/total.pin.test.mjs",
+          "docs/records/CART-CENTS.md"
+        ],
+        "exitCode": 0
+      }
+    },
+    {
+      "group": "G0",
+      "id": "g0.lint",
+      "label": "Lint on changed files",
+      "command": "lint:web on 3 files",
+      "status": "pass",
+      "reason": "",
+      "durationMs": 74,
+      "log": "g0.lint.lint-web.log",
+      "details": {
+        "commands": [
+          {
+            "id": "lint:web",
+            "files": 3,
+            "status": "pass",
+            "exitCode": 0,
+            "reason": "",
+            "errors": [],
+            "log": "g0.lint.lint-web.log",
+            "durationMs": 74
+          }
+        ]
+      }
+    },
+    {
+      "group": "G0",
+      "id": "g0.secrets",
+      "label": "Secret scan of the diff",
+      "command": "secret scan of the added lines",
+      "status": "pass",
+      "reason": "",
+      "durationMs": 1,
+      "log": null,
+      "details": {
+        "found": []
+      }
+    },
+    {
+      "group": "G0",
+      "id": "g0.fences",
+      "label": "Scope fence",
+      "command": "fences from the profile",
+      "status": "warn",
+      "reason": "Pass, 1 allowed by you.",
+      "durationMs": 51,
+      "log": "g0.fences.log",
+      "details": {
+        "summary": "Pass, 1 allowed by you",
+        "scope": {
+          "inPlan": 3,
+          "total": 4,
+          "allowedByUser": [
+            "apps/web/src/features/cart/cents.mjs"
+          ],
+          "outside": []
+        }
+      }
+    },
+    {
+      "group": "G0",
+      "id": "g0.ratchets.tests",
+      "label": "Ratchet: test counts, .skip, .only, todo",
+      "command": "test counts in 1 test file at base and head",
+      "status": "pass",
+      "reason": "",
+      "durationMs": 1,
+      "log": null,
+      "details": {
+        "ok": true,
+        "lost": [],
+        "newSkips": [],
+        "files": [
+          {
+            "path": "apps/web/src/features/cart/total.pin.test.mjs",
+            "before": 0,
+            "after": 1
+          }
+        ]
+      }
+    },
+    {
+      "group": "G0",
+      "id": "g0.ratchets.allowlist",
+      "label": "Ratchet: procedure allowlist",
+      "command": "",
+      "status": "skip",
+      "reason": "Not run: no router file changed.",
+      "durationMs": 0,
+      "log": "g0.ratchets.allowlist.log",
+      "details": {}
+    },
+    {
+      "group": "G0",
+      "id": "g0.ratchets.metrics",
+      "label": "Ratchet: cycles and deep imports",
+      "command": "deepImports at base and head",
+      "status": "pass",
+      "reason": "",
+      "durationMs": 55,
+      "log": null,
+      "details": {
+        "rows": [
+          {
+            "metric": "deepImports",
+            "before": 0,
+            "after": 0,
+            "change": 0,
+            "status": "same"
+          }
+        ],
+        "problems": []
+      }
+    },
+    {
+      "group": "G0",
+      "id": "g0.contract",
+      "label": "Contract: procedures, legacy router, queues",
+      "command": "",
+      "status": "skip",
+      "reason": "Not run: no router or queue file changed.",
+      "durationMs": 0,
+      "log": "g0.contract.log",
+      "details": {}
+    },
+    {
+      "group": "G0",
+      "id": "g0.tenant",
+      "label": "Tenant probes on changed files",
+      "command": "",
+      "status": "skip",
+      "reason": "Not run: no changed file is in the tenant probes' scope.",
+      "durationMs": 0,
+      "log": "g0.tenant.log",
+      "details": {}
+    },
+    {
+      "id": "types:web",
+      "group": "G1",
+      "label": "Types: Web",
+      "command": "node -e process.exit(0)",
+      "status": "pass",
+      "reason": "",
+      "durationMs": 77,
+      "log": "types-web.log",
+      "details": {
+        "new": [],
+        "flaky": [],
+        "known": 0,
+        "canShrink": 0,
+        "errors": []
+      }
+    },
+    {
+      "id": "test:root",
+      "group": "G2",
+      "label": "Lint and unit tests: root",
+      "command": "node --test --test-reporter=tap (1 file)",
+      "status": "pass",
+      "reason": "",
+      "durationMs": 208,
+      "log": "test-root.log",
+      "counts": {
+        "pass": 1,
+        "fail": 0,
+        "skip": 0,
+        "todo": 0
+      },
+      "details": {
+        "new": [],
+        "flaky": [],
+        "known": 0,
+        "canShrink": 0,
+        "failures": []
+      }
+    },
+    {
+      "id": "lint:web",
+      "group": "G2",
+      "label": "Lint and unit tests: Web",
+      "command": "node -e console.log(JSON.stringify([])) (3 files)",
+      "status": "pass",
+      "reason": "",
+      "durationMs": 73,
+      "log": "lint-web.log",
+      "details": {
+        "new": [],
+        "flaky": [],
+        "known": 0,
+        "canShrink": 0,
+        "errors": []
+      }
+    },
+    {
+      "id": "test:web",
+      "group": "G2",
+      "label": "Lint and unit tests: Web",
+      "command": "node --test --test-reporter=tap (2 files)",
+      "status": "pass",
+      "reason": "",
+      "durationMs": 238,
+      "log": "test-web.log",
+      "counts": {
+        "pass": 2,
+        "fail": 0,
+        "skip": 0,
+        "todo": 0
+      },
+      "details": {
+        "new": [],
+        "flaky": [],
+        "known": 0,
+        "canShrink": 0,
+        "failures": []
+      }
+    },
+    {
+      "id": "test:api",
+      "group": "G3",
+      "label": "API tests",
+      "command": "",
+      "status": "skip",
+      "reason": "Not run: apps/api and packages/shared unchanged",
+      "durationMs": 0,
+      "log": ""
+    }
+  ],
+  "tests": {
+    "new": [],
+    "flaky": [],
+    "known": [],
+    "canShrink": [],
+    "messageChanged": []
+  },
+  "baselineKey": "3509c76000ee-run-node20.15.1",
+  "g0": {
+    "ok": true,
+    "secretsFound": 0,
+    "failed": []
+  }
+}

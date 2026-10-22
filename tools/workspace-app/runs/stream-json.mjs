@@ -364,7 +364,10 @@ export function createNormalizer({ stage = '', attempt = 1, redact = s => s, now
     if (succeeded(ev)) msg = `Finished: ${turns}${cost}`;
     else if (ev.subtype === 'error_max_turns') msg = `Stopped at the turn limit: ${turns}${cost}`;
     else if (ev.subtype === 'error_max_budget_usd') msg = `Stopped by the budget backstop: ${turns}${cost}`;
-    else msg = `Ended with ${ev.subtype || 'no subtype'}${ev.is_error ? ' (error)' : ''}: ${resultErrorText(ev) || turns}`;
+    // Claude Code ends some API errors (a bad key, the usage limit) with subtype "success" and
+    // is_error: that reads as an error, not a success.
+    else if (ev.is_error) msg = `Ended with an error${ev.subtype && ev.subtype !== 'success' ? ` (${ev.subtype})` : ''}: ${resultErrorText(ev) || turns}`;
+    else msg = `Ended with ${ev.subtype || 'no subtype'}: ${resultErrorText(ev) || turns}`;
     return [row('result', msg, { subtype: ev.subtype || '', ok: succeeded(ev) })];
   }
 

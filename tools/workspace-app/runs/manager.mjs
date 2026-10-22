@@ -480,7 +480,7 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
     const refusals = [...draft.refusals];
     if (!draft.error && draft.lock) {
       const busy = await lockBusy(draft);
-      if (busy) refusals.push(busy);
+      if (busy) refusals.unshift(busy); // first: it usually explains the others (see start)
     }
     const x = draft.extra || {};
     return {
@@ -536,6 +536,10 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
       guardOpen();
       const draft = await draftFor(req, internal);
       if (draft.error) throw new HttpError(400, draft.error);
+      // A run that holds the lock usually also explains the other refusals (its changes are in
+      // the run worktree), so "busy with <title>" comes first.
+      const busy = draft.lock ? await lockBusy(draft) : '';
+      if (busy) throw new HttpError(409, busy);
       if (draft.refusals.length) throw new HttpError(400, draft.refusals.join(' '));
       const slugText = draft.values.what || draft.findingId || draft.title.replace(/^[^:]*:\s*/, '');
       const id = await store.freeRunId(dataDir, draft.project, draft.pipeline, slugText, new Date(now()));

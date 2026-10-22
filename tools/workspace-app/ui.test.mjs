@@ -9,10 +9,28 @@ import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { hashFor, matchRoute, parseHash, routeOf, viewOf, defaultSettings as pageDefaults } from './ui/store.js';
+import { hashFor, livePoll, matchRoute, parseHash, routeOf, setLive, viewOf, defaultSettings as pageDefaults } from './ui/store.js';
 import { fmtAgo, fmtClock, fmtDuration, statusBadge } from './ui/lib.js';
 import { routeIntent, routesForUi } from './runs/intent.mjs';
 import { defaultSettings as serverDefaults } from './core/settings.mjs';
+
+test('livePoll: when the live stream drops, an open poller pulls at once and then at its fast rate', async () => {
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  setLive(true);
+  let pulls = 0;
+  const stop = livePoll(async () => { pulls++; }, { ms: 40, liveMs: 60_000 });
+  try {
+    await sleep(20);
+    assert.equal(pulls, 1, 'the first pull');
+    await sleep(100);
+    assert.equal(pulls, 1, 'while live, the next pull waits liveMs');
+    setLive(false);
+    await sleep(15);
+    assert.equal(pulls, 2, 'pulled at once when the stream dropped');
+    await sleep(150);
+    assert.ok(pulls >= 4, `then every ms (got ${pulls})`);
+  } finally { stop(); setLive(false); }
+});
 
 const uiDir = join(dirname(fileURLToPath(import.meta.url)), 'ui');
 const read = rel => readFileSync(join(uiDir, ...rel.split('/')), 'utf8');

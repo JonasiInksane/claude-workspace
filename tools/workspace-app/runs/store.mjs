@@ -148,9 +148,20 @@ async function listNames(dir, { dirs = true } = {}) {
   }
 }
 
-// newRunId, checked against the run folders that exist for the project.
+// The run ids in use in every project. Ids are global (findRun, the manager's drivers, the page's
+// #run/<id>), so two projects must never share one.
+async function takenIds(dataDir) {
+  const ids = new Set();
+  for (const p of (await listNames(runsRoot(dataDir))).filter(n => PROJECT_RE.test(n))) {
+    for (const id of await listNames(projectRunsDir(dataDir, p))) ids.add(id);
+  }
+  return ids;
+}
+
+// newRunId, checked against the run folders of every project.
 export async function freeRunId(dataDir, project, pipeline, text, date = new Date()) {
-  const existing = new Set(await listNames(projectRunsDir(dataDir, project)));
+  checkProject(project);
+  const existing = await takenIds(dataDir);
   return newRunId(pipeline, text, date, id => existing.has(id));
 }
 
@@ -194,6 +205,22 @@ function checkStatuses(run) {
   if (run.waiting && !WAITING_KINDS.includes(run.waiting.kind)) throw new Error(`"${run.waiting.kind}" is not a waiting kind.`);
 }
 
+// A free run id (init.id when given and free in every project), with its folder made.
+async function claimRunId(dataDir, init, now) {
+  const wanted = init.id ? checkRunId(init.id) : null;
+  if (wanted && (await takenIds(dataDir)).has(wanted)) throw new Error(`Run ${wanted} already exists.`);
+  for (let attempt = 0; ; attempt++) {
+    const candidate = wanted || await freeRunId(dataDir, init.project, init.pipeline, init.slugText ?? init.title, new Date(now()));
+    try {
+      await mkdir(runDir(dataDir, init.project, candidate)); // not recursive: fails if the id is taken
+      return candidate;
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+      if (wanted || attempt >= 3) throw new Error(`Run ${candidate} already exists.`);
+    }
+  }
+}
+
 // Creates the run folder (with inputs/, stages/, gates/, final/, tmp/) and run.json, and indexes
 // the run. `init` holds any run.json fields to set (project and pipeline are required; `id` is
 // optional and must be free). Returns the run.
@@ -201,18 +228,8 @@ export async function createRun(dataDir, init = {}, { now = Date.now } = {}) {
   checkProject(init.project);
   checkName(init.pipeline, 'pipeline id');
   await mkdir(projectRunsDir(dataDir, init.project), { recursive: true });
-  let id = init.id ? checkRunId(init.id) : null;
-  for (let attempt = 0; ; attempt++) {
-    const candidate = id || await freeRunId(dataDir, init.project, init.pipeline, init.slugText ?? init.title, new Date(now()));
-    try {
-      await mkdir(runDir(dataDir, init.project, candidate)); // not recursive: fails if the id is taken
-      id = candidate;
-      break;
-    } catch (err) {
-      if (err.code !== 'EEXIST') throw err;
-      if (init.id || attempt >= 3) throw new Error(`Run ${candidate} already exists.`);
-    }
-  }
+  // One creation at a time per data folder, so two projects can't pick the same free id at once.
+  const id = await serial(runsRoot(dataDir), () => claimRunId(dataDir, init, now));
   const dir = runDir(dataDir, init.project, id);
   for (const f of RUN_FOLDERS) await mkdir(join(dir, f), { recursive: true });
   const { slugText, ...fields } = init;

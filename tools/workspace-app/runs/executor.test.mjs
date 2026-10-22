@@ -877,6 +877,21 @@ test('unpark with a tree that hashes differently reruns the checks', async t => 
   assert.equal(stageOf(run, 'checks').rounds, 2);
 });
 
+test('take over checks the trust of the folder its terminal opens in: the run tree, not the main checkout', async t => {
+  const trusted = {};
+  const deps = { trustState: async p => ({ state: p === trusted.dir ? 'trusted' : 'not-trusted' }) };
+  const h = await harness(t, { deps });
+  trusted.dir = h.tree;
+  let run = await toReviewGate(h);
+  run = (await h.act(run, 'takeover')).run;
+  assert.equal(run.status, 'in-terminal', 'the run worktree is trusted, so Take over works');
+
+  const h2 = await harness(t, { deps });
+  trusted.dir = h2.main;
+  const other = await toReviewGate(h2);
+  await assert.rejects(h2.act(other, 'takeover'), err => err.status === 400 && /trust/.test(err.message), 'only the main checkout is trusted');
+});
+
 test('take over and back: the stage session in a terminal, then the checks and a fresh review', async t => {
   const h = await harness(t);
   let run = await toReviewGate(h);

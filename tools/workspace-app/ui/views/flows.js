@@ -78,15 +78,18 @@ function flowCard(f) {
   const thumbs = h('div', { class: 'flow-thumbs' });
   if (f.images) loadFlowThumbs(f, thumbs);
   const badge = f.target === 'agent' ? 'violet' : f.target === 'project' ? 'blue' : '';
+  // The visible reason a disabled Run… has, linked to the button for screen readers.
+  const why = `flow-${f.slug}-why`;
+  const off = !!f.error || !state.tools.claude;
   return h('div', { class: 'card flow' },
     h('div', { class: 'card-head' },
       h('div', { class: 'project-title' }, h('h3', {}, f.title || f.slug), h('span', { class: `badge ${badge}` }, flowTargetLabel(f))),
       h('div', { class: 'row-actions' },
-        keyed(h('button', { class: 'btn primary small', type: 'button', disabled: !!f.error || !state.tools.claude, on: { click: () => runFlowDialog(f) } }, 'Run…'), `flow-${f.slug}-run`),
+        keyed(h('button', { class: 'btn primary small', type: 'button', disabled: off, 'aria-describedby': off ? why : null, on: { click: () => runFlowDialog(f) } }, 'Run…'), `flow-${f.slug}-run`),
         keyed(h('button', { class: 'btn small', type: 'button', on: { click: () => flowDialog(f.slug) } }, 'Edit'), `flow-${f.slug}-edit`)),
-      !f.error && !state.tools.claude ? h('p', { class: 'reason flow-reason' }, 'Claude Code was not found on this PC, so flows can\'t run.') : null),
+      !f.error && !state.tools.claude ? h('p', { class: 'reason flow-reason', id: why }, 'Claude Code was not found on this PC, so flows can\'t run.') : null),
     h('div', { class: 'card-body' },
-      f.error ? h('div', { class: 'form-error' }, `Can't run: ${f.error}. Edit it to pick another target.`) : null,
+      f.error ? h('div', { class: 'form-error', id: why }, `Can't run: ${f.error}. Edit it to pick another target.`) : null,
       f.description ? h('p', { class: 'flow-desc' }, f.description) : null,
       h('div', { class: 'muted small-text' }, f.images ? plural(f.images, 'reference image') : 'No images', ' · ', h('code', {}, `flows/${f.slug}.md`)),
       launchSummary(f.launch) ? h('div', { class: 'muted small-text' }, `Starts with ${launchSummary(f.launch)}`) : null,

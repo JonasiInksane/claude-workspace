@@ -1683,11 +1683,14 @@ export function createExecutor(deps = {}) {
     return typeof out === 'string' ? { ok: true, message: out, run } : { ok: true, ...out, run };
   }
 
+  // Trust of the folder Take over opens the terminal in: the run's tree (the run worktree, or the
+  // main checkout in branch mode), the same folder the manager's button check asks about.
   async function trustedFor(run) {
     if (typeof d.trustFor === 'function') { try { return await d.trustFor(run); } catch { return undefined; } }
     if (typeof d.trustState !== 'function') return undefined;
     try {
-      const where = (run.isolation && run.isolation.mainDir) || (d.mainDirFor ? await d.mainDirFor(run.project) : '');
+      const iso = run.isolation || {};
+      const where = iso.tree || iso.mainDir || (d.mainDirFor ? await d.mainDirFor(run.project) : '');
       if (!where) return undefined;
       const t = await d.trustState(where);
       return t && t.state === 'trusted' ? true : t && t.state === 'not-trusted' ? false : undefined;

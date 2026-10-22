@@ -398,6 +398,20 @@ test('one editing run per project: a second one gets 409 "tg-run is busy with <t
   assert.equal(lockOf(dataDir, 'example').runId, b.runId);
 });
 
+test('a busy project answers 409 "busy with <title>", even when the run worktree also refuses (it holds that run\'s changes)', async t => {
+  const dirty = 'This run needs the run worktree: example-run has 3 changed files; a run can\'t start until it is clean.';
+  // The worktree refuses only once the first run has left its changes in it.
+  let refuse = false;
+  const { mgr } = setup(t, { behave: { refactor: waitAtHuman, preview: async () => ({ refusals: refuse ? [dirty] : [] }) } });
+  const a = await mgr.start({ project: 'example', pipeline: 'refactor', values: { what: 'Move money math' } });
+  await mgr.settled();
+  refuse = true;
+  const busy = 'tg-run is busy with Refactor: Move money math. Park it or wait.';
+  assert.deepEqual(await status(mgr.start({ project: 'example', pipeline: 'refactor', values: { what: 'Another' } })), [409, busy]);
+  assert.deepEqual((await mgr.preview({ project: 'example', pipeline: 'refactor', values: { what: 'Another' } })).refusals, [busy, dirty], 'busy first');
+  await mgr.cancel(a.runId);
+});
+
 test('two editing starts at the same moment: exactly one gets the lock', async t => {
   const { mgr } = setup(t, { behave: { refactor: waitAtHuman } });
   const results = await Promise.all([

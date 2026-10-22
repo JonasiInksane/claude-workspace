@@ -307,7 +307,14 @@ export function emitSignal(signal) {
     try { fn(signal); } catch (e) { console.error(e); }
   }
 }
-export function setLive(on) { live = !!on; }
+const pollers = new Set(); // the open livePoll loops
+export function setLive(on) {
+  const was = live;
+  live = !!on;
+  // The stream just dropped: every open view pulls now, then at its fast rate (not after the
+  // up-to-10 s wait it had scheduled while the stream was up).
+  if (was && !live) for (const p of [...pollers]) p.wake();
+}
 
 // Calls pull() every `ms` while the stream is down and every `liveMs` while it is up, and at
 // once when a signal names `runId` (or any signal, without a runId). pull() may resolve false
@@ -335,10 +342,13 @@ export function livePoll(pull, { runId = null, ms = 2000, liveMs = 10_000 } = {}
     clearTimeout(timer);
     tick();
   });
+  const poller = { wake() { clearTimeout(timer); tick(); } };
+  pollers.add(poller);
   function stop() {
     stopped = true;
     clearTimeout(timer);
     off();
+    pollers.delete(poller);
   }
   tick();
   return stop;

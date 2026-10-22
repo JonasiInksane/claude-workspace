@@ -1,6 +1,7 @@
 // The Assets view's data: game assets made by a project's asset pipeline (projects/<p>/tools/
-// asset.mjs, assets/<style>/<category>/<Name>/asset.json), their check results and review
-// renders, the files the page may load (renders, concept images, models), and the user's
+// asset.mjs for 3D models, tools/sprite.mjs for sprites; assets/<style>/<category>/<Name>/
+// asset.json, with "kind": "sprite" for a sprite), their check results and review renders, the
+// files the page may load (renders, concept images, models, sprite sheets), and the user's
 // verdict. The pipeline's own scripts write everything except the verdict, which goes into the
 // asset's asset.json status and brief.md log, as the project's CLAUDE.md asks.
 import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -18,10 +19,13 @@ const readJson = p => { try { return JSON.parse(readFileSync(p, 'utf8')); } catc
 const isFile = p => { try { return statSync(p).isFile(); } catch { return false; } };
 const posix = p => p.split(sep).join('/');
 
-// Projects whose folder has the asset pipeline.
+// Projects whose folder has an asset pipeline: the 3D one, the sprite one, or both.
 export function assetProjects(root) {
-  return dirs(join(root, 'projects')).filter(p => isFile(join(root, 'projects', p, 'tools', 'asset.mjs')) && existsSync(join(root, 'projects', p, 'assets')));
+  const pipeline = p => ['asset.mjs', 'sprite.mjs'].some(f => isFile(join(root, 'projects', p, 'tools', f)));
+  return dirs(join(root, 'projects')).filter(p => pipeline(p) && existsSync(join(root, 'projects', p, 'assets')));
 }
+
+const isSprite = asset => asset && asset.kind === 'sprite';
 
 function checkSummary(dir, stage) {
   const c = readJson(join(dir, 'review', `check-${stage}.json`));
@@ -40,9 +44,11 @@ export function listAssets(root, project) {
         const asset = readJson(join(dir, 'asset.json'));
         if (!asset) continue;
         const id = `${style}/${category}/${name}`;
-        const thumb = ['review/final_front.png', 'review/raw_front.png', 'concept/front.png'].find(f => isFile(join(dir, f)));
+        const kind = isSprite(asset) ? 'sprite' : 'model';
+        const thumbs = kind === 'sprite' ? ['review/thumb.png', 'concept/front.png'] : ['review/final_front.png', 'review/raw_front.png', 'concept/front.png'];
+        const thumb = thumbs.find(f => isFile(join(dir, f)));
         out.push({
-          id, name: asset.name || name, style: asset.style || style, category, cls: asset.class || '', source: asset.source || 'procedural',
+          id, kind, name: asset.name || name, style: asset.style || style, category, cls: asset.class || '', source: asset.source || 'procedural',
           status: asset.status || '', final: checkSummary(dir, 'final'), raw: checkSummary(dir, 'raw'),
           thumb: thumb ? `${id}/${thumb}` : '',
         });
@@ -82,11 +88,18 @@ function briefLog(dir, count = 8) {
   return entries.slice(-count).reverse();
 }
 
-// Everything the detail view shows for one asset.
+// The review images of a sprite, in reading order: turnaround, animation strips, line-up,
+// palette, then the rest. thumb.png is the card's picture, so it is left out.
+const SPRITE_REVIEW = n => (n === 'turnaround.png' ? 0 : n.startsWith('anim_') ? 1 : n === 'lineup.png' ? 2 : n === 'palette.png' ? 3 : 4);
+
+// Everything the detail view shows for one asset. A sprite has no models; it has its sheet
+// (export/SPR_<Name>.png and .json, plus _N normal-map and _E emissive sheets when present).
 export function assetDetail(root, project, id) {
   const { dir, error } = assetDir(root, project, id);
   if (error) return { error };
   const asset = readJson(join(dir, 'asset.json')) || {};
+  const name = asset.name || id.split('/')[2];
+  const sprite = isSprite(asset);
   const order = n => { const i = VIEWS.findIndex(v => n.includes(`_${v}.`)); return i < 0 ? VIEWS.length : i; };
   const renders = stage => images(dir, 'review', n => n.startsWith(`${stage}_`)).sort((a, b) => order(a) - order(b)).map(n => `${id}/review/${n}`);
   const check = stage => {
@@ -96,17 +109,29 @@ export function assetDetail(root, project, id) {
     return {
       summary: c.summary, checkedAt: c.checkedAt || '', triangles: c.triangles ?? null, dimensionsM: c.dimensionsM || null,
       checks: (c.checks || []).map(k => ({ id: k.id, status: k.status, message: k.message })).sort((a, b) => (rank[a.status] ?? 3) - (rank[b.status] ?? 3)),
+      ...(sprite ? { heightPx: c.heightPx ?? null, widthPx: c.widthPx ?? null, colors: c.colors ?? null, frames: c.frames ?? null } : {}),
     };
   };
-  const finalModel = `export/SM_${asset.name || id.split('/')[2]}.glb`;
+  const finalModel = `export/SM_${name}.glb`;
+  const exported = file => (isFile(join(dir, 'export', file)) ? `${id}/export/${file}` : '');
   const record = readJson(join(dir, 'gen', 'record.json'));
   return {
-    id, dir: posix(relative(root, dir)), asset,
-    models: { final: isFile(join(dir, finalModel)) ? `${id}/${finalModel}` : '', raw: isFile(join(dir, 'gen', 'raw.glb')) ? `${id}/gen/raw.glb` : '' },
-    renders: { final: renders('final'), raw: renders('raw') },
+    id, kind: sprite ? 'sprite' : 'model', dir: posix(relative(root, dir)), asset,
+    models: sprite ? { final: '', raw: '' }
+      : { final: isFile(join(dir, finalModel)) ? `${id}/${finalModel}` : '', raw: isFile(join(dir, 'gen', 'raw.glb')) ? `${id}/gen/raw.glb` : '' },
+    ...(sprite ? {
+      sprite: { sheet: exported(`SPR_${name}.png`), json: exported(`SPR_${name}.json`), normal: exported(`SPR_${name}_N.png`), emissive: exported(`SPR_${name}_E.png`) },
+    } : {}),
+    renders: sprite
+      ? { final: images(dir, 'review', n => n !== 'thumb.png').sort((a, b) => SPRITE_REVIEW(a) - SPRITE_REVIEW(b) || a.localeCompare(b)).map(n => `${id}/review/${n}`), raw: [] }
+      : { final: renders('final'), raw: renders('raw') },
     concept: images(dir, 'concept').map(n => `${id}/concept/${n}`),
-    checks: { final: check('final'), raw: check('raw') },
-    generation: record ? { task: record.task, model: record.model, credits: record.credits, finishedAt: record.finishedAt || '' } : null,
+    checks: { final: check('final'), raw: sprite ? null : check('raw') },
+    // Meshy records credits; a PixelLab record (sprites) has usd or generations instead.
+    generation: record ? {
+      task: record.task || record.characterId || '', provider: record.provider || '', model: record.model || '',
+      credits: record.credits ?? null, usd: record.usd ?? null, generations: record.generations ?? null, finishedAt: record.finishedAt || '',
+    } : null,
     log: briefLog(dir),
   };
 }

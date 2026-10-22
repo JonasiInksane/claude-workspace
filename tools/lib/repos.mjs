@@ -6,9 +6,13 @@
 //
 // The file is tracked by the workspace (the rest of projects/ is not), so another PC knows what
 // to clone. Names are the folder names: flows and agents refer to them.
+//
+// Two APIs: the sync one (originOf, repoStatus, unlistedProjects, requirementStatus) for the CLI
+// tools, and an async one (the same names + Async) for the workspace app, which must not block
+// its server while git runs. The async one caches each folder's origin for ORIGIN_TTL_MS.
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 
 export const REQUIREMENTS = ['git-lfs', 'blender-5.2'];
 export const NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -74,25 +78,31 @@ function isDir(p) {
   try { return statSync(p).isDirectory(); } catch { return false; }
 }
 
+const repoEntry = (r, present, origin) => ({ ...r, present, origin, originMatches: !origin || origin === r.url });
+
 // Each listed repo with whether it is on this PC, and its origin there.
 export function repoStatus(root) {
   return readRepos(root).repos.map(r => {
     const dir = join(root, 'projects', r.name);
     const present = isDir(dir);
-    const origin = present ? originOf(dir) : '';
-    return { ...r, present, origin, originMatches: !origin || origin === r.url };
+    return repoEntry(r, present, present ? originOf(dir) : '');
   });
 }
 
-// Project folders that repos.json doesn't list, with their origin (empty: no remote yet).
-export function unlistedProjects(root) {
+// The project folder names that repos.json doesn't list.
+function unlistedNames(root) {
   const listed = new Set(readRepos(root).repos.map(r => r.name));
   let entries = [];
   try { entries = readdirSync(join(root, 'projects'), { withFileTypes: true }); } catch { return []; }
   return entries
     .filter(e => (e.isDirectory() || e.isSymbolicLink()) && !e.name.startsWith('.') && !e.name.startsWith('_') && !listed.has(e.name))
     .filter(e => isDir(join(root, 'projects', e.name)))
-    .map(e => ({ name: e.name, origin: originOf(join(root, 'projects', e.name)) }));
+    .map(e => e.name);
+}
+
+// Project folders that repos.json doesn't list, with their origin (empty: no remote yet).
+export function unlistedProjects(root) {
+  return unlistedNames(root).map(name => ({ name, origin: originOf(join(root, 'projects', name)) }));
 }
 
 // Whether this PC has what the requirements name. Cached for a minute (it runs programs).
@@ -100,6 +110,71 @@ let cache = { at: 0, value: null };
 export function requirementStatus({ env = process.env, now = Date.now() } = {}) {
   if (cache.value && now - cache.at < 60_000) return cache.value;
   const lfs = spawnSync('git', ['lfs', 'version'], { encoding: 'utf8', windowsHide: true });
+  const value = {
+    'git-lfs': lfs.status === 0,
+    'blender-5.2': existsSync(env.BLENDER_EXE || DEFAULT_BLENDER),
+  };
+  cache = { at: now, value };
+  return value;
+}
+
+// ---------------------------------------------------------------- async (workspace app)
+
+export const ORIGIN_TTL_MS = 10_000;
+const GIT_TIMEOUT_MS = 15_000;
+
+// Runs git without blocking. { status, stdout }; status is null when git is missing or timed out.
+function gitAsync(args) {
+  return new Promise(resolveP => {
+    execFile('git', args, { encoding: 'utf8', windowsHide: true, timeout: GIT_TIMEOUT_MS }, (err, stdout) => {
+      const status = !err ? 0 : typeof err.code === 'number' ? err.code : null;
+      resolveP({ status, stdout: String(stdout || '') });
+    });
+  });
+}
+
+// The origin remote of a folder ('' without one), always asked fresh.
+export async function originOfAsync(dir) {
+  const r = await gitAsync(['-C', dir, 'remote', 'get-url', 'origin']);
+  return r.status === 0 ? r.stdout.trim() : '';
+}
+
+// The same, cached per folder for ORIGIN_TTL_MS. Callers at the same time share one git run.
+const originCache = new Map();
+function cachedOrigin(dir, now = Date.now()) {
+  const hit = originCache.get(dir);
+  if (hit && now - hit.at < ORIGIN_TTL_MS) return hit.promise;
+  const promise = originOfAsync(dir);
+  originCache.set(dir, { at: now, promise });
+  return promise;
+}
+
+let lfsRun = null; // the `git lfs version` run in progress, shared by callers at the same time
+
+// Forgets the cached origins and requirement checks (for tests).
+export function clearRepoCache() {
+  originCache.clear();
+  cache = { at: 0, value: null };
+  lfsRun = null;
+}
+
+export function repoStatusAsync(root) {
+  return Promise.all(readRepos(root).repos.map(async r => {
+    const dir = join(root, 'projects', r.name);
+    const present = isDir(dir);
+    return repoEntry(r, present, present ? await cachedOrigin(dir) : '');
+  }));
+}
+
+export function unlistedProjectsAsync(root) {
+  return Promise.all(unlistedNames(root).map(async name => ({ name, origin: await cachedOrigin(join(root, 'projects', name)) })));
+}
+
+// requirementStatus without blocking; it shares the same one-minute cache.
+export async function requirementStatusAsync({ env = process.env, now = Date.now() } = {}) {
+  if (cache.value && now - cache.at < 60_000) return cache.value;
+  lfsRun ||= gitAsync(['lfs', 'version']).finally(() => { lfsRun = null; });
+  const lfs = await lfsRun;
   const value = {
     'git-lfs': lfs.status === 0,
     'blender-5.2': existsSync(env.BLENDER_EXE || DEFAULT_BLENDER),

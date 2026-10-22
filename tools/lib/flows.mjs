@@ -4,13 +4,15 @@
 //   flows/_archived/<flow>.md             archived flows (files kept; Restore brings them back)
 //   inbox/attachments/_flows/<flow>/      its reference images (gitignored, never triaged)
 //
-// Frontmatter: title, description, target (hub | project | agent), project, agent, and optional
+// Frontmatter: title, description, target (hub | project | agent), project, agent, optional
 // launch settings permissionMode, model, effort, allowedTools (tools/lib/prompt-file.mjs checks
-// them). Values are written as JSON strings, which are valid YAML, so ": " or "#" in a title
-// can't break the file.
+// them), and an optional question for every run: ask (the label of the run's text box, at most
+// 120 characters) and askRequired (true: a run needs an answer). Values are written as JSON
+// strings, which are valid YAML, so ": " or "#" in a title can't break the file.
 // A run starts Claude at the target with the labeled image paths first ("Image 1: <path>" plus
 // an optional caption from the image folder's captions.json), then the prompt, then optional
-// notes for that run; the session may read the image folder without asking.
+// notes for that run (under the flow's ask when it has one); the session may read the image
+// folder without asking.
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { duplicateNames, listAgents, readFrontmatter, resolveProject, textHash } from './agents.mjs';
@@ -19,7 +21,7 @@ import { checkLaunch } from './prompt-file.mjs';
 export const FLOW_TARGETS = ['hub', 'project', 'agent'];
 export const FLOW_IMAGES_DIR = '_flows';
 export const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-export const LIMITS = { title: 120, description: 300, prompt: 16000, notes: 2000, images: 40, caption: 200 };
+export const LIMITS = { title: 120, description: 300, prompt: 16000, notes: 2000, images: 40, caption: 200, ask: 120 };
 // What a run passes: the formats Claude Code's Read tool shows as images. BMP uploads are
 // converted to PNG; a BMP copied into the folder by hand is listed but not passed.
 const RUN_IMAGE_RE = /\.(png|jpe?g|gif|webp)$/i;
@@ -52,7 +54,17 @@ export function parseFlow(text) {
     project: fm.project || '', agent: fm.agent || '', prompt,
   };
   for (const k of LAUNCH_KEYS) flow[k] = fm[k] || '';
+  flow.ask = fm.ask || '';
+  // Kept as written when it is not a clear true/false, so checkFlow can say what is wrong.
+  flow.askRequired = fm.askRequired === undefined || fm.askRequired === '' ? false : readBool(fm.askRequired);
   return flow;
+}
+
+// true/false from frontmatter text or a form value; anything else comes back unchanged.
+function readBool(v) {
+  if (v === true || v === false) return v;
+  const s = String(v).trim().toLowerCase();
+  return s === 'true' ? true : s === 'false' ? false : v;
 }
 
 export function renderFlow(f) {
@@ -62,6 +74,8 @@ export function renderFlow(f) {
   if (f.target !== 'hub') lines.push(`project: ${JSON.stringify(f.project)}`);
   if (f.target === 'agent') lines.push(`agent: ${JSON.stringify(f.agent)}`);
   for (const k of LAUNCH_KEYS) if (f[k]) lines.push(`${k}: ${JSON.stringify(f[k])}`);
+  if (f.ask) lines.push(`ask: ${JSON.stringify(f.ask)}`);
+  if (f.ask && f.askRequired === true) lines.push('askRequired: true');
   lines.push('---', '', f.prompt.trim(), '');
   return lines.join('\n');
 }
@@ -91,6 +105,12 @@ export function checkFlow(root, input) {
   flow.model = launch.launch.model || '';
   flow.effort = launch.launch.effort || '';
   flow.allowedTools = (launch.launch.allowedTools || []).join(', ');
+  flow.ask = s('ask').replace(/\s+/g, ' ');
+  if (flow.ask.length > LIMITS.ask) return bad(`the question (ask) is longer than ${LIMITS.ask} characters`);
+  const required = input.askRequired === undefined || input.askRequired === null || input.askRequired === '' ? false : readBool(input.askRequired);
+  if (typeof required !== 'boolean') return bad('askRequired must be true or false');
+  if (required && !flow.ask) return bad('a required answer needs a question: fill in ask, or untick Required');
+  flow.askRequired = required;
   if (!FLOW_TARGETS.includes(flow.target)) return bad('target must be hub, project or agent');
   if (flow.target === 'hub') return { error: '', flow };
   const { name, error } = resolveProject(root, s('project'));
@@ -211,7 +231,9 @@ export function setCaption(root, slug, image, caption) {
 
 // The prompt a run starts with. Images come first, labeled, because Anthropic's vision guidance
 // puts images before the question and labels several as "Image 1:", "Image 2:"; the flow's
-// prompt can refer to them by those labels. Then the prompt, then the run's notes.
+// prompt can refer to them by those labels. Then the prompt, then the run's notes: under the
+// flow's question when it has one ("What do you want to refactor?\n<notes>"), otherwise under
+// "Notes for this run:".
 export function runPrompt(flow, images, notes = '', captions = {}) {
   const parts = [];
   if (images.length) {
@@ -222,8 +244,17 @@ export function runPrompt(flow, images, notes = '', captions = {}) {
   }
   parts.push(flow.prompt.trim());
   const n = String(notes || '').trim();
-  if (n) parts.push(`Notes for this run:\n${n}`);
+  const ask = String(flow.ask || '').trim();
+  if (n) parts.push(`${ask || 'Notes for this run:'}\n${n}`);
   return parts.join('\n\n');
+}
+
+// '' when the run's notes are fine for this flow, or the sentence to show when the flow's
+// required question has no answer.
+export function checkRunNotes(flow, notes) {
+  const ask = String(flow.ask || '').trim();
+  if (ask && flow.askRequired === true && !String(notes || '').trim()) return `"${ask}" needs an answer`;
+  return '';
 }
 
 // Moves flows/<slug>.md to flows/_archived/ (<slug>--2.md ... when taken). Images stay.

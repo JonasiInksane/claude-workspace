@@ -1,0 +1,24 @@
+/* Projects view and its dialogs (views/projects.js). Loaded after app.css (index.html). */
+.project .card-head { flex-wrap: wrap; }
+.agents { list-style: none; margin: 0; padding: 0; }
+.agent { display: grid; grid-template-columns: 1fr auto; gap: 6px 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.agent:last-child { border-bottom: 0; }
+.agent-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 600; }
+.agent-desc { color: var(--muted); font-size: 12.5px; grid-column: 1; }
+.agent .row-actions { grid-row: 1 / span 2; grid-column: 2; justify-content: flex-end; }
+.agent.disabled .agent-name { color: var(--muted); text-decoration: line-through; }
+.repo-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; white-space: normal; }
+.check-group { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; }
+.check-title { width: 100%; font-weight: 600; font-size: 13px; display: grid; gap: 2px; }
+.check-title small { font-weight: 400; color: var(--muted); }
+.memory { display: grid; grid-template-columns: 200px 1fr; gap: 14px; min-height: 300px; }
+.memory .files { display: flex; flex-direction: column; gap: 2px; }
+.memory .files button { text-align: left; background: none; border: 0; padding: 6px 8px; border-radius: 6px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memory .files button.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.memory pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 12.5px; max-height: 60vh; overflow: auto; }
+
+@media (max-width: 760px) {
+  .agent { grid-template-columns: 1fr; }
+  .agent .row-actions { grid-row: auto; grid-column: 1; justify-content: flex-start; }
+  .memory { grid-template-columns: 1fr; }
+}

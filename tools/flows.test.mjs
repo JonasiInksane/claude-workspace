@@ -1,13 +1,15 @@
 // Tests for tools/lib/flows.mjs and tools/lib/prompt-file.mjs.
 // Run: node tools/run-tests.mjs
-// Each test builds a throwaway workspace root in the temp folder; the real workspace is not touched.
+// Each test builds a throwaway workspace root in the temp folder; the real workspace is not touched
+// (the last test only reads the workspace's own Tattoogenda flows).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import {
-  archiveFlow, checkFlow, flowFile, flowImages, flowImagesDir, getFlow, listArchivedFlows, listFlows, parseFlow,
+  archiveFlow, checkFlow, checkRunNotes, flowFile, flowImages, flowImagesDir, getFlow, listArchivedFlows, listFlows, parseFlow,
   readCaptions, renderFlow, restoreFlow, runPrompt, saveFlow, setCaption, skippedFlowImages, slugify,
 } from './lib/flows.mjs';
 import { checkLaunch, launchArgs, promptArgs, splitToolRules, takePromptFile, writePromptFile } from './lib/prompt-file.mjs';
@@ -40,11 +42,77 @@ test('renderFlow and parseFlow round-trip, also with quotes, colons and #', () =
   const f = {
     title: 'A "title": #1', description: 'd: e', target: 'agent', project: 'Game', agent: 'artist', prompt: 'Line 1\n\n---\nLine "2"',
     permissionMode: 'plan', model: 'opus', effort: 'high', allowedTools: 'Read, Bash(npm test:*)',
+    ask: 'What: "this" #2?', askRequired: true,
   };
   assert.deepEqual(parseFlow(renderFlow(f)), f);
-  const plain = { ...f, target: 'hub', permissionMode: '', model: '', effort: '', allowedTools: '' };
+  assert.match(renderFlow(f), /\nask: "What: \\"this\\" #2\?"\naskRequired: true\n---/);
+  const plain = { ...f, target: 'hub', permissionMode: '', model: '', effort: '', allowedTools: '', ask: '', askRequired: false };
   assert.deepEqual(parseFlow(renderFlow(plain)), { ...plain, project: '', agent: '' });
-  assert.doesNotMatch(renderFlow(plain), /permissionMode|model|effort|allowedTools/);
+  assert.doesNotMatch(renderFlow(plain), /permissionMode|model|effort|allowedTools|ask/);
+  // An optional question: no askRequired line.
+  const optional = { ...plain, ask: 'Anything else?' };
+  assert.doesNotMatch(renderFlow(optional), /askRequired/);
+  assert.deepEqual(parseFlow(renderFlow(optional)), { ...optional, project: '', agent: '' });
+  // Hand-written values: "false" reads as false; anything else is kept so checkFlow can refuse it.
+  assert.equal(parseFlow('---\ntitle: "x"\nask: "q"\naskRequired: false\n---\np').askRequired, false);
+  assert.equal(parseFlow('---\ntitle: "x"\nask: "q"\naskRequired: "TRUE"\n---\np').askRequired, true);
+  assert.equal(parseFlow('---\ntitle: "x"\nask: "q"\naskRequired: maybe\n---\np').askRequired, 'maybe');
+});
+
+test('checkFlow checks the question: at most 120 characters, required only with a question, true or false', t => {
+  const root = fixture(t);
+  const ok = checkFlow(root, { ...base, ask: '  What do you\n want  to refactor? ', askRequired: true });
+  assert.equal(ok.error, '');
+  assert.deepEqual([ok.flow.ask, ok.flow.askRequired], ['What do you want to refactor?', true]);
+  assert.equal(checkFlow(root, { ...base, ask: 'x'.repeat(120) }).error, '');
+  assert.match(checkFlow(root, { ...base, ask: 'x'.repeat(121) }).error, /longer than 120/);
+  assert.match(checkFlow(root, { ...base, askRequired: true }).error, /needs a question/);
+  assert.match(checkFlow(root, { ...base, ask: 'q', askRequired: 'maybe' }).error, /true or false/);
+  assert.match(checkFlow(root, { ...base, ask: 'q', askRequired: 1 }).error, /true or false/);
+  // The form sends booleans; a file sends text. Both work; empty means not required.
+  assert.equal(checkFlow(root, { ...base, ask: 'q', askRequired: 'true' }).flow.askRequired, true);
+  assert.equal(checkFlow(root, { ...base, ask: 'q', askRequired: '' }).flow.askRequired, false);
+  assert.deepEqual([checkFlow(root, base).flow.ask, checkFlow(root, base).flow.askRequired], ['', false]);
+  // Saved and read back.
+  const saved = saveFlow(root, { ...base, title: 'Asks', ask: 'Which part?', askRequired: true });
+  assert.equal(saved.error, '');
+  const back = getFlow(root, saved.slug);
+  assert.deepEqual([back.ask, back.askRequired], ['Which part?', true]);
+  assert.equal(listFlows(root).find(f => f.slug === saved.slug).error, '');
+});
+
+test('runPrompt puts the answer under the flow\'s question; checkRunNotes refuses an empty required answer', () => {
+  const flow = { prompt: 'Refactor it.', ask: 'What do you want to refactor?', askRequired: true };
+  assert.equal(runPrompt(flow, [], '  The money module  '), 'Refactor it.\n\nWhat do you want to refactor?\nThe money module');
+  assert.equal(runPrompt(flow, [], ''), 'Refactor it.');
+  assert.equal(runPrompt({ prompt: 'p', ask: '' }, [], 'n'), 'p\n\nNotes for this run:\nn');
+  assert.equal(checkRunNotes(flow, ' \n '), '"What do you want to refactor?" needs an answer');
+  assert.equal(checkRunNotes(flow, 'x'), '');
+  assert.equal(checkRunNotes({ ...flow, askRequired: false }, ''), '');
+  assert.equal(checkRunNotes({ prompt: 'p' }, ''), '');
+  // A required flag without a question (a hand-edited file) can't block a run.
+  assert.equal(checkRunNotes({ prompt: 'p', ask: '', askRequired: true }, ''), '');
+});
+
+test('the four Tattoogenda flows: plan mode, high effort, a required question, no finding ids or paths', () => {
+  const flowsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'flows');
+  const expected = {
+    'tattoogenda-refactor': 'What do you want to refactor?',
+    'tattoogenda-fix-finding': 'Which finding, and anything I should know?',
+    'tattoogenda-debug': 'What is wrong, and how do I reproduce it?',
+    'tattoogenda-review': 'What should I review?',
+  };
+  for (const [slug, ask] of Object.entries(expected)) {
+    const text = readFileSync(join(flowsDir, `${slug}.md`), 'utf8');
+    const f = parseFlow(text);
+    assert.deepEqual([f.target, f.project, f.permissionMode, f.effort, f.ask, f.askRequired], ['project', 'tattoogenda', 'plan', 'high', ask, true], slug);
+    assert.ok(f.title.endsWith('(interactive)'), slug);
+    assert.match(f.prompt, /CLAUDE\.md and AGENTS\.md/, slug);
+    // No file paths and nothing shaped like an audit finding id (made-up examples: X-H9, Q7, ZZ-99).
+    assert.doesNotMatch(text, /[\\/]/, `${slug} has a path`);
+    assert.doesNotMatch(text, /\b[A-Z]{1,2}-?[A-Z]{0,2}\d{1,3}\b/, `${slug} has a finding id`);
+    assert.ok(f.prompt.length < 2000, slug);
+  }
 });
 
 test('checkFlow needs a title, a prompt and a target that can run', t => {
@@ -180,6 +248,10 @@ test('prompt files carry the prompt and readable folders once, then disappear', 
   assert.throws(() => takePromptFile(bad), /absolute/);
   const empty = writePromptFile({ prompt: '  ' });
   assert.throws(() => takePromptFile(empty), /empty/);
+  for (const refused of [unsafe, bad, empty]) rmSync(refused, { force: true }); // refused files are kept; clean up
+  const badSession = writePromptFile({ prompt: 'p', launch: { sessionId: 'nope' } });
+  assert.throws(() => takePromptFile(badSession), /launch: sessionId/);
+  rmSync(badSession, { force: true });
   const outside = join(mkdtempSync(join(tmpdir(), 'ws-prompt-')), 'p.json');
   writeFileSync(outside, JSON.stringify({ prompt: 'keep me' }));
   assert.equal(takePromptFile(outside).prompt, 'keep me');

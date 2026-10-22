@@ -1,14 +1,23 @@
-// Starting things from the workspace app: Claude sessions, agent sessions, Explorer, the editor,
-// the navigator and the app window itself. Command building is pure (tested in launch.test.mjs);
-// `realActions` does the spawning. Nothing goes through a shell string: every program gets an
-// argument list, and PowerShell gets its command base64-encoded (-EncodedCommand).
-import { existsSync, lstatSync } from 'node:fs';
+// Starting things from the workspace app: Claude sessions, agent sessions, programs in a terminal
+// tab, Explorer, the editor, the navigator and the app window itself. Command building is pure
+// (tested in launch.test.mjs); `realActions` does the spawning. Nothing goes through a shell
+// string: every program gets an argument list, and PowerShell gets its command base64-encoded
+// (-EncodedCommand).
+//
+// Sessions: every interactive Claude session the app starts gets its own id (--session-id, a new
+// UUID) unless it resumes one (--resume <id>), and a line in <dataDir>\sessions.jsonl:
+//   {"at":"…","sessionId":"<uuid>","kind":"hub|project|agent|flow|skill|takeover","project":"…","title":"…"}
+// so the app can find a session again (Take over, Continue). -c (continue the last session) has
+// no id of its own and adds no line.
+import { existsSync, lstatSync, statSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
 import { homedir } from 'node:os';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { resolveClaude } from '../lib/agents.mjs';
-import { writePromptFile } from '../lib/prompt-file.mjs';
+import { checkLaunch, launchArgs, writePromptFile } from '../lib/prompt-file.mjs';
+import { appendJsonl, defaultDataDir } from './core/datadir.mjs';
 
 const appDir = dirname(fileURLToPath(import.meta.url));
 const toolsDir = join(appDir, '..');
@@ -31,9 +40,72 @@ export function wtPath(dir) {
 
 export const encodePs = command => Buffer.from(command, 'utf16le').toString('base64');
 
-// The PowerShell command a new terminal runs: go to the folder, then run the program.
-export function psCommand(dir, program, args = []) {
-  return [`Set-Location -LiteralPath ${psq(dir)}`, `& ${[program, ...args].map(psq).join(' ')}`].join('; ');
+// An environment variable name PowerShell can take after $env: without quoting.
+export const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+// The PowerShell command a new terminal runs: go to the folder, set `env` ($env:NAME='value'),
+// then run the program. Names are checked (they can't be quoted); values are literals.
+export function psCommand(dir, program, args = [], env = {}) {
+  const sets = Object.entries(env || {}).map(([name, value]) => {
+    if (!ENV_NAME_RE.test(name)) throw new Error(`"${name}" is not an environment variable name`);
+    return `$env:${name}=${psq(value)}`;
+  });
+  return [`Set-Location -LiteralPath ${psq(dir)}`, ...sets, `& ${[program, ...args].map(psq).join(' ')}`].join('; ');
+}
+
+export const SESSION_KINDS = ['hub', 'project', 'agent', 'flow', 'skill', 'takeover'];
+// Take over (a run's stage continued in a terminal) resumes the stage's session in one of these.
+export const TAKEOVER_MODES = ['acceptEdits', 'manual'];
+// startAgent's kinds: an agent started from Projects, or a flow. A takeover goes through
+// startClaude, which checks its mode (R5), so it can't start as an agent session instead.
+export const AGENT_KINDS = ['agent', 'flow'];
+export const sessionsFile = dataDir => join(dataDir, 'sessions.jsonl');
+
+// Appends one line to sessions.jsonl (core/datadir.mjs appendJsonl: the folder is made on first
+// use, and a torn last line can't swallow this one). Best effort: a session that started stays
+// started even when the line can't be written.
+export async function recordSession(dataDir, { sessionId, kind, project = '', title = '' }, now = new Date()) {
+  try {
+    await appendJsonl(sessionsFile(dataDir), { at: now.toISOString(), sessionId, kind, project, title });
+  } catch (e) {
+    console.error(`workspace-app: could not record session ${sessionId}: ${e.message}`);
+  }
+}
+
+// The checked launch for an interactive Claude session, with its session id: the one to resume,
+// the one given, or a new one (none for -c). Throws with a plain message on a bad value.
+export function sessionLaunch({ launch = {}, resume, sessionId, continueLast = false } = {}) {
+  const checked = checkLaunch({ ...launch, ...(resume ? { resume } : {}), ...(sessionId ? { sessionId } : {}) });
+  if (checked.error) throw new Error(`launch: ${checked.error}`);
+  const l = checked.launch;
+  if (continueLast && (l.resume || l.sessionId)) throw new Error('continue the last session or name one, not both');
+  if (!continueLast && !l.resume && !l.sessionId) l.sessionId = randomUUID();
+  return { launch: l, id: l.resume || l.sessionId || '' };
+}
+
+// Programs a terminal tab may not start directly: .cmd and .bat need cmd.exe (a shell).
+const SHELL_SCRIPT = /\.(cmd|bat)$/i;
+// runInTerminal starts only a full path to an .exe: with a bare name ("npm") PowerShell's `&`
+// searches PATH and may run npm.ps1 or npm.cmd, and a relative path depends on the folder.
+const EXE_PATH = /^[A-Za-z]:[\\/].*\.exe$/i;
+
+// Checks runInTerminal's program and arguments; throws with a plain message. Windows PowerShell
+// 5.1 builds the program's command line itself: it drops an empty argument, doesn't escape a '"'
+// inside one, and lets the trailing backslash of an argument with a space (which it quotes) eat
+// the closing quote. Such arguments would arrive changed, so they are refused.
+export function checkTerminalProgram(program, args) {
+  if (typeof program !== 'string' || !program) throw new Error('runInTerminal needs a program');
+  if (SHELL_SCRIPT.test(program)) throw new Error(`${program} is a .cmd or .bat script; run it through node instead`);
+  if (!EXE_PATH.test(program)) throw new Error(`${program} is not a full path to an .exe, for example C:\\Program Files\\nodejs\\node.exe`);
+  let isFile = false;
+  try { isFile = statSync(program).isFile(); } catch { /* reported below */ }
+  if (!isFile) throw new Error(`${program} was not found`);
+  if (!Array.isArray(args)) throw new Error('runInTerminal needs its arguments as a list');
+  for (const a of args.map(String)) {
+    if (!a) throw new Error('an argument is empty, and PowerShell 5.1 would drop it');
+    if (a.includes('"')) throw new Error(`the argument ${a} has a double quote, which PowerShell 5.1 would pass on changed`);
+    if (/\s/.test(a) && a.endsWith('\\')) throw new Error(`the argument ${a} has a space and ends with a backslash, which PowerShell 5.1 would pass on changed`);
+  }
 }
 
 // How to open a terminal tab (Windows Terminal) or, without it, a new console window.
@@ -106,22 +178,53 @@ export function run(command, args, { hidden = false, wait = false, verbatim = fa
 export const explorerArgs = target => [`"${String(target).replace(/"/g, '')}"`];
 
 // The real side effects. The app gets this object; tests pass a recorder with the same methods.
-export function realActions({ root, tools = findTools(), windowStyle } = {}) {
+//   dataDir  the private data folder for sessions.jsonl (default %LOCALAPPDATA%\claude-workspace)
+//   runner   starts a program (default run); tests pass a recorder so no window opens
+export function realActions({ root, tools = findTools(), windowStyle, dataDir = defaultDataDir(), runner = run } = {}) {
   const node = process.execPath;
   const terminal = (dir, title, command) => {
     const t = terminalCommand({ wt: tools.wt, dir, title, command, windowStyle });
-    return run(t.command, t.args, { hidden: t.hidden, wait: t.wait });
+    return runner(t.command, t.args, { hidden: t.hidden, wait: t.wait });
   };
-  const explorer = target => run('explorer.exe', explorerArgs(target), { verbatim: true });
+  const explorer = target => runner('explorer.exe', explorerArgs(target), { verbatim: true });
+  const kindOf = (kind, fallback) => {
+    const k = kind || fallback;
+    if (!SESSION_KINDS.includes(k)) throw new Error(`unknown session kind "${k}"`);
+    return k;
+  };
   return {
     tools,
-    // With `prompt`: it goes through a prompt file (tools/lib/prompt-file.mjs explains why), with
-    // `readDirs` the session may read without asking.
-    startClaude({ dir, title, continueLast, prompt, readDirs = [], launch = {} }) {
+    // Starts claude in a terminal tab at `dir` and resolves with { sessionId } ('' for -c).
+    // Without `prompt`, the flags go straight on claude's command line (--resume <id> or
+    // --session-id <id>, --settings <file>, --permission-mode <m>, ...). With `prompt`, everything
+    // goes through a prompt file (tools/lib/prompt-file.mjs explains why), with `readDirs` the
+    // session may read without asking. `kind` and `project` are for sessions.jsonl; without a
+    // kind, a resume counts as a takeover (the only resume the app starts), so it gets the
+    // takeover mode check too.
+    async startClaude({ dir, title, continueLast = false, prompt, readDirs = [], launch = {}, resume, sessionId, kind, project = '' }) {
       if (!tools.claude) throw new Error('Claude Code was not found (PATH or %USERPROFILE%\\.local\\bin).');
-      if (!prompt) return terminal(dir, title, psCommand(dir, tools.claude, continueLast ? ['-c'] : []));
-      const file = writePromptFile({ prompt, readDirs, launch });
-      return terminal(dir, title, psCommand(dir, node, [join(appDir, 'claude-prompt.mjs'), file]));
+      const s = sessionLaunch({ launch, resume, sessionId, continueLast });
+      const k = kindOf(kind, s.launch.resume ? 'takeover' : project ? 'project' : 'hub');
+      // R5: a takeover runs in acceptEdits or manual mode only. It resumes the stage's session, or
+      // (the fallback when a resume can't work) starts a new one from a prompt that sums it up.
+      if (k === 'takeover' && !TAKEOVER_MODES.includes(s.launch.permissionMode)) {
+        throw new Error(`a takeover runs in ${TAKEOVER_MODES.join(' or ')} mode`);
+      }
+      if (k === 'takeover' && !s.launch.resume && !prompt) {
+        throw new Error("a takeover resumes the stage's session, or starts from a prompt that sums the stage up");
+      }
+      const command = prompt
+        ? psCommand(dir, node, [join(appDir, 'claude-prompt.mjs'), writePromptFile({ prompt, readDirs, launch: s.launch })])
+        : psCommand(dir, tools.claude, [...(continueLast ? ['-c'] : []), ...launchArgs(s.launch)]);
+      await terminal(dir, title, command);
+      if (s.id) await recordSession(dataDir, { sessionId: s.id, kind: k, project, title });
+      return { sessionId: s.id };
+    },
+    // Any program in a terminal tab at `dir`, with `env` set for it first (the cockpit's dev
+    // servers). `program` is a full path to an existing .exe; see checkTerminalProgram.
+    runInTerminal({ dir, title, program, args = [], env = {} }) {
+      checkTerminalProgram(program, args);
+      return terminal(dir, title, psCommand(dir, program, args.map(String), env));
     },
     newProject({ project, type, from }) {
       const args = [join(toolsDir, 'new-project.mjs'), project, '--type', type, ...(from ? ['--from', from] : [])];
@@ -141,8 +244,9 @@ export function realActions({ root, tools = findTools(), windowStyle } = {}) {
         child.stderr.setEncoding('utf8').on('data', add);
         // The whole tree: run-tests' own `node --test` child holds the output pipe open too.
         const stop = () => {
-          if (process.platform === 'win32') spawnSync('taskkill', ['/T', '/F', '/PID', String(child.pid)], { windowsHide: true, stdio: 'ignore' });
-          else child.kill();
+          if (process.platform !== 'win32') { child.kill(); return; }
+          const kill = spawn('taskkill', ['/T', '/F', '/PID', String(child.pid)], { windowsHide: true, stdio: 'ignore' });
+          kill.once('error', () => child.kill());
         };
         const timer = setTimeout(() => { add(`\n(stopped: it ran longer than ${Math.round(timeoutMs / 1000)} seconds)`); stop(); }, timeoutMs);
         child.once('error', e => { clearTimeout(timer); reject(e); });
@@ -153,10 +257,22 @@ export function realActions({ root, tools = findTools(), windowStyle } = {}) {
         });
       });
     },
-    startAgent({ project, agent, title, prompt, readDirs = [], launch = {} }) {
+    // An isolated agent session (tools/agent-session.mjs) with a new session id, or the one it
+    // resumes (launch.resume, only with a prompt: agent-session takes launch settings from the
+    // prompt file). The launch is checked here, so a bad value is refused before a terminal opens.
+    // Resolves with { sessionId }.
+    async startAgent({ project, agent, title, prompt, readDirs = [], launch = {}, sessionId, kind }) {
+      const k = kindOf(kind, 'agent');
+      if (!AGENT_KINDS.includes(k)) throw new Error(`an agent session starts as ${AGENT_KINDS.join(' or ')}, not as ${k}; a takeover goes through startClaude`);
+      const s = sessionLaunch({ launch, sessionId });
+      const { sessionId: newId, ...rest } = s.launch;
+      if (rest.resume && !prompt) throw new Error('an agent session resumes only together with a prompt');
       const args = [join(toolsDir, 'agent-session.mjs'), project, agent, '--root', root];
-      if (prompt) args.push('--prompt-file', writePromptFile({ prompt, readDirs, launch }));
-      return terminal(root, title, psCommand(root, node, args));
+      if (newId) args.push('--session-id', newId);
+      if (prompt) args.push('--prompt-file', writePromptFile({ prompt, readDirs, launch: rest }));
+      await terminal(root, title, psCommand(root, node, args));
+      await recordSession(dataDir, { sessionId: s.id, kind: k, project, title });
+      return { sessionId: s.id };
     },
     openFolder({ dir }) {
       return explorer(dir);
@@ -166,8 +282,13 @@ export function realActions({ root, tools = findTools(), windowStyle } = {}) {
       if (!tools.editor) throw new Error('No editor found (VS Code or Cursor).');
       return run(tools.editor.path, [path]);
     },
-    openNavigator() {
-      spawnSync(node, [join(toolsDir, 'build-index.mjs'), '--quiet'], { stdio: 'ignore', windowsHide: true });
+    // Rebuilds index.html first (without blocking the server), then opens it.
+    async openNavigator() {
+      await new Promise(resolveP => {
+        const child = spawn(node, [join(toolsDir, 'build-index.mjs'), '--quiet'], { stdio: 'ignore', windowsHide: true });
+        child.once('error', resolveP);
+        child.once('exit', resolveP);
+      });
       return explorer(join(root, 'index.html'));
     },
     openWindow({ url }) {

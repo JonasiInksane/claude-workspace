@@ -100,3 +100,13 @@ test('the app stops after the heartbeat stops and removes its state file', async
   assert.equal(await exited(app.proc), 0);
   assert.ok(!existsSync(stateFile(root)));
 });
+
+test('--data-dir is accepted, and starting the app does not create the folder', async t => {
+  const { makeRoot, start } = fixture(t);
+  const root = makeRoot('a');
+  const dataDir = join(dirname(root), 'private-data');
+  const app = await start(root, ['--data-dir', dataDir]);
+  assert.equal(app.reused, false);
+  assert.equal((await get(app.port, '/health')).status, 200);
+  assert.ok(!existsSync(dataDir));
+});

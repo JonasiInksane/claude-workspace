@@ -1,7 +1,7 @@
 ---
 title: Unsaved-changes guard on a dialog in Edge
 tags: [web, html, dialog, edge, chromium, keyboard, testing]
-updated: 2026-10-21
+updated: 2026-10-22
 ---
 
 # Unsaved-changes guard on a dialog in Edge
@@ -36,7 +36,8 @@ dialog.addEventListener('close', () => { closeGuard = null; });
 // In an editor: closeGuard = () => !dirty() || confirm('Discard your changes?');
 ```
 
-Working code: `tools/workspace-app/ui/app.js` (`closeDialog`, the agent and flow editors).
+Working code: `tools/workspace-app/ui/dialog.js` (`closeDialog`, `clearGuard`), used by the agent
+and flow editors in `ui/views/projects.js` and `ui/views/flows.js`.
 
 ## Source
 - Workspace app, 2026-10-21, Edge 155.0.4283.62 (headless). Verified: with the keydown handler,

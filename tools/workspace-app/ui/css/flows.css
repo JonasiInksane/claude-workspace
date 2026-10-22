@@ -1,0 +1,22 @@
+/* Flows view and its dialogs (views/flows.js). Loaded after app.css (index.html). */
+.flow .card-head { flex-wrap: wrap; }
+.flow-desc { margin: 0 0 6px; }
+.flow-thumbs { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+.flow-thumbs:empty { display: none; }
+.flow-thumbs img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); background: var(--code-bg); }
+.flow-form .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.prompt-edit { min-height: 30vh; }
+details.launch { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
+details.launch summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+details.launch[open] summary { margin-bottom: 8px; }
+.tile .meta b { font-size: 12px; white-space: nowrap; }
+.tile input.caption {
+  border: 0; border-top: 1px solid var(--border); padding: 6px 9px; font-size: 12px; background: var(--bg); width: 100%;
+}
+.drop.compact { padding: 14px 16px; margin: 6px 0 10px; }
+.drop.compact b { margin-top: 0; font-size: 14px; }
+#view-flows > details.archived { margin-top: 18px; }
+
+@media (max-width: 760px) {
+  .flow-form .two-col { grid-template-columns: 1fr; }
+}

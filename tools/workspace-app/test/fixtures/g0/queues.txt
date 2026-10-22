@@ -1,0 +1,9 @@
+// Synthetic queue names for the contract tests (example project). Not real code.
+export enum Jobs {
+  SendMail = 'send-mail',
+  // a comment between members
+  Resize = "resize-image",
+  Cleanup, /* no string value: the member name counts */
+}
+
+export const AUDIT_QUEUE = 'audit-log';

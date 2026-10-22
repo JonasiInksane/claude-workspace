@@ -1,0 +1,69 @@
+TAP version 13
+# node:internal/modules/esm/resolve:274
+#     throw new ERR_MODULE_NOT_FOUND(
+#           ^
+# Error [ERR_MODULE_NOT_FOUND]: Cannot find module 'C:\\work\\example\\apps\\api\\src\\not-there.mjs' imported from C:\\work\\example\\apps\\api\\src\\missing-import.test.mjs
+#     at finalizeResolution (node:internal/modules/esm/resolve:274:11)
+#     at moduleResolve (node:internal/modules/esm/resolve:864:10)
+#     at defaultResolve (node:internal/modules/esm/resolve:990:11)
+#     at \#cachedDefaultResolve (node:internal/modules/esm/loader:737:20)
+#     at ModuleLoader.resolve (node:internal/modules/esm/loader:714:38)
+#     at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:293:38)
+#     at \#link (node:internal/modules/esm/module_job:208:49) {
+#   code: 'ERR_MODULE_NOT_FOUND',
+#   url: 'file:///C:/work/example/apps/api/src/not-there.mjs'
+# }
+# Node.js v24.11.1
+# Subtest: apps\\api\\src\\missing-import.test.mjs
+not ok 1 - apps\\api\\src\\missing-import.test.mjs
+  ---
+  duration_ms: 52.2521
+  type: 'test'
+  location: 'C:\\work\\example\\apps\\api\\src\\missing-import.test.mjs:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: still runs
+ok 2 - still runs
+  ---
+  duration_ms: 0.4995
+  type: 'test'
+  ...
+# file:///C:/work/example/apps/api/src/syntax.test.mjs:2
+# test('broken', () => { const = 1; });
+#                              ^
+# SyntaxError: Unexpected token '='
+#     at compileSourceTextModule (node:internal/modules/esm/utils:317:16)
+#     at ModuleLoader.moduleStrategy (node:internal/modules/esm/translators:111:18)
+#     at \#translate (node:internal/modules/esm/loader:541:20)
+#     at afterLoad (node:internal/modules/esm/loader:594:29)
+#     at ModuleLoader.loadAndTranslate (node:internal/modules/esm/loader:599:12)
+#     at \#createModuleJob (node:internal/modules/esm/loader:623:36)
+#     at \#getJobFromResolveResult (node:internal/modules/esm/loader:329:34)
+#     at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:294:41)
+#     at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:665:25)
+# Node.js v24.11.1
+# Subtest: apps\\api\\src\\syntax.test.mjs
+not ok 3 - apps\\api\\src\\syntax.test.mjs
+  ---
+  duration_ms: 42.0473
+  type: 'test'
+  location: 'C:\\work\\example\\apps\\api\\src\\syntax.test.mjs:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+1..3
+# tests 3
+# suites 0
+# pass 1
+# fail 2
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 74.0602

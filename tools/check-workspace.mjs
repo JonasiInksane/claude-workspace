@@ -1,21 +1,36 @@
 // Self-check for the workspace. Exits 1 when there are errors.
 //
-// Usage: node tools/check-workspace.mjs
+// Usage: node tools/check-workspace.mjs [--root <dir>]
 //
 // Checks: strict JSON, skill and agent frontmatter, knowledge notes + INDEX.md, the reports
 // registry, relative Markdown links, CLAUDE.md @imports, hook script paths, .env.example,
-// absolute user paths, file sizes, lists the projects with their detected type and agents, and
-// checks the inbox's agent image folders.
+// absolute user paths, file sizes, lists the projects with their detected type and agents,
+// checks the inbox's agent image folders, and keeps private project data (the markers in the
+// private project profiles, tools/lib/private-data.mjs) out of the files the hub publishes.
+// --root <dir> checks another workspace root (for tests).
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve, dirname, basename, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { detectProjectType, typeLabel } from './lib/project-type.mjs';
 import { duplicateNames, listAgents } from './lib/agents.mjs';
 import { scanInbox } from './lib/inbox.mjs';
+import { findPrivateData, readPrivateProfiles } from './lib/private-data.mjs';
 
 function isDirPath(p) { try { return statSync(p).isDirectory(); } catch { return false; } }
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+function rootFromArgs(argv) {
+  let dir = '';
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--root') dir = argv[++i] || '';
+    else if (argv[i] === '-h' || argv[i] === '--help') { console.log('Usage: node tools/check-workspace.mjs [--root <dir>]'); process.exit(0); }
+    else { console.error(`check-workspace: unknown argument ${argv[i]}`); process.exit(2); }
+  }
+  if (argv.includes('--root') && !dir) { console.error('check-workspace: --root needs a folder'); process.exit(2); }
+  return dir ? resolve(dir) : resolve(dirname(fileURLToPath(import.meta.url)), '..');
+}
+
+const root = rootFromArgs(process.argv.slice(2));
 
 // Built-in and bundled command names a skill must never reuse (SPEC C5).
 const BUILTIN = new Set([
@@ -634,6 +649,33 @@ check('inbox', r => {
     else if (!l.known) r.warnings.push(`${l.path}/: projects/${l.project} has no agent "${l.agent}" (renamed or removed?)`);
   }
   if (ib.truncated) r.warnings.push('inbox/ is too deep or too large; only part of it was scanned');
+});
+
+// 14. Private project data: for every private profile with privacy.hubPublic true, the files git
+// tracks here (outside projects/, under 1 MB, text) must not match its markers. A match is an
+// error, or a warning for a file the profile lists as already public (knownExposed). Untracked
+// files that are not ignored are scanned too and warn: committing them would publish the text.
+function gitFiles(args) {
+  const r = spawnSync('git', ['-C', root, 'ls-files', '-z', ...args], { encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
+  return r.status === 0 ? r.stdout.split('\0').filter(Boolean) : null;
+}
+check('private-project-data', r => {
+  r.unit = 'files';
+  const { profiles, problems } = readPrivateProfiles(process.env);
+  for (const p of problems) r.warnings.push(p);
+  const active = profiles.filter(p => p.hubPublic && p.markers.length);
+  if (!active.length) { r.note = profiles.length ? 'no profile marks the hub as public' : 'no private project profiles on this PC'; return; }
+  const tracked = gitFiles([]);
+  if (!tracked) { r.warnings.push('git ls-files failed here (not a git repository?), so tracked files were not scanned'); return; }
+  const untracked = gitFiles(['--others', '--exclude-standard']) || [];
+  r.count = tracked.length + untracked.length;
+  r.note = `markers of ${active.map(p => p.project).join(', ')}`;
+  for (const h of findPrivateData(root, { tracked, untracked, profiles: active })) {
+    const what = h.matches.map(m => `/${m.marker}/ (line ${m.line})`).join(', ');
+    if (!h.tracked) r.warnings.push(`${h.file}: untracked, but matches private ${h.project} markers ${what}; committing it would publish them`);
+    else if (h.exposed) r.warnings.push(`${h.file}: matches private ${h.project} markers ${what}; already public, see S0`);
+    else r.errors.push(`${h.file}: matches private ${h.project} markers ${what}. Remove that text, or keep the file out of the hub.`);
+  }
 });
 
 // ---------------------------------------------------------------- output

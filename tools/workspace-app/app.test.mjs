@@ -1,16 +1,20 @@
-// Tests for the workspace app's HTTP handler (tools/workspace-app/app.mjs), over real HTTP on a
-// free port, with a throwaway workspace and a fake `actions` object that records calls instead
-// of starting programs. Run: node tools/run-tests.mjs
+// Tests for the workspace app's HTTP handler (tools/workspace-app/app.mjs and routes/*.mjs),
+// over real HTTP on a free port, with a throwaway workspace and a fake `actions` object that
+// records calls instead of starting programs. Run: node tools/run-tests.mjs
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, request } from 'node:http';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { createApp } from './app.mjs';
+import { createApp, defaultDataDir, mergeRoutes, ROUTE_MODULES } from './app.mjs';
+import { listUiFiles } from './http.mjs';
+import { buildState, invalidateState } from './state.mjs';
+import * as stateRoutes from './routes/state.mjs';
 import { localDate } from './uploads.mjs';
+
 
 const PNG = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000000', 'hex');
 const TOKEN = 'test-token-123';
@@ -420,7 +424,7 @@ test('skills start Claude with a prompt built on the server, in the hub or the p
 
 test('tools run from the catalog only, and the library installs only after its preview', async () => {
   calls.length = 0;
-  const run = body => call('POST', '/api/run', { body });
+  const run = body => call('POST', '/api/command', { body });
   const check = await run({ id: 'check' });
   assert.equal(check.status, 200);
   assert.deepEqual([check.json.status, check.json.output], [1, '1 error']);
@@ -553,4 +557,99 @@ test('asset verdicts set the status and log a dated line in the brief; bad input
   assert.equal((await call('POST', '/api/asset-verdict', { body: { project: 'Game', id: 'demo/props/Box', verdict: 'approve' }, headers: { Origin: 'http://evil.example' } })).status, 403);
   assert.equal(JSON.parse(readFileSync(join(dir, 'asset.json'), 'utf8')).status, 'revise');
   assert.equal(readFileSync(join(dir, 'brief.md'), 'utf8'), brief);
+});
+
+// ---------------------------------------------------------------- the module layout
+
+test('static files: the page, every module it imports, its styles and icons are served, nothing else', async () => {
+  const types = { js: 'text/javascript', css: 'text/css', svg: 'image/svg+xml' };
+  const page = (await call('GET', '/')).buf.toString('utf8');
+  const queue = [...page.matchAll(/(?:href|src)="(\/[^"]+)"/g)].map(m => m[1]);
+  const seen = new Set();
+  while (queue.length) {
+    const path = queue.shift();
+    if (seen.has(path)) continue;
+    seen.add(path);
+    const r = await call('GET', path);
+    assert.equal(r.status, 200, path);
+    assert.ok(r.headers['content-type'].startsWith(types[path.split('.').pop()]), `${path}: ${r.headers['content-type']}`);
+    if (path.endsWith('.js')) {
+      for (const m of r.buf.toString('utf8').matchAll(/(?:from|import)\s*\(?\s*'(\.{1,2}\/[^']+)'/g)) queue.push(new URL(m[1], `http://x${path}`).pathname);
+    }
+  }
+  for (const want of ['/main.js', '/lib.js', '/store.js', '/dialog.js', '/viewer.js', '/views/home.js', '/app.css', '/css/flows.css']) assert.ok(seen.has(want), want);
+  for (const path of ['/index.html', '/app.js', '/package.json', '/views', '/views/', '/css', '/main.js/', '/ui/main.js', '/%2e%2e/app.mjs', '/..%2fapp.mjs', '/views/..%5Capp.mjs']) {
+    assert.equal((await call('GET', path)).status, 404, path);
+  }
+  assert.equal((await call('GET', '/main.js', { auth: false })).status, 403);
+});
+
+test('listUiFiles: only index.html and .js, .css, .svg and .ico files with plain names, no dotfiles or links', async t => {
+  const base = mkdtempSync(join(tmpdir(), 'ws-ui-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const dir = join(base, 'ui');
+  const add = rel => { const f = join(base, ...rel.split('/')); mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, 'x'); };
+  for (const rel of ['index.html', 'a.js', 'b.css', 'c.svg', 'd.ico', 'sub/e.js', 'sub/f.css', 'sub/page.html', 'sub/data.json', 'notes.md', 'x.mjs',
+    '.hidden.js', '.git/x.js', 'bad name.js', 'd1/ok.js', 'd1/d2/d3/d4/d5/deep.js']) add(`ui/${rel}`);
+  add('outside/evil.js');
+  symlinkSync(join(base, 'outside'), join(dir, 'linked'), 'junction'); // a junction out of ui/ is not followed
+  const files = listUiFiles(dir);
+  assert.deepEqual([...files.keys()].sort(), ['/', '/a.js', '/b.css', '/c.svg', '/d.ico', '/d1/ok.js', '/sub/e.js', '/sub/f.css']);
+  assert.equal(files.get('/').file, join(dir, 'index.html'));
+  assert.equal(files.get('/sub/e.js').type, 'text/javascript; charset=utf-8');
+  assert.equal(files.get('/d.ico').type, 'image/x-icon');
+});
+
+test('routes: keys are "GET|POST /api/...", none is defined twice, and every route the page uses exists', () => {
+  assert.throws(() => mergeRoutes([{ 'GET /api/x': async () => ({}) }, { 'GET /api/x': async () => ({}) }]), /defined twice/);
+  for (const key of ['PUT /api/x', 'GET /x', 'GET /api/x?y', 'get /api/x', 'GET /api/X']) {
+    assert.throws(() => mergeRoutes([{ [key]: async () => ({}) }]), /bad route key/, key);
+  }
+  assert.throws(() => mergeRoutes([{ 'GET /api/x': 'nope' }]), /no handler/);
+  const keys = Object.keys(mergeRoutes(ROUTE_MODULES.map(m => m.routes({ root, actions: {}, getPort: () => 0, workspaceTag: '', dataDir: root }))));
+  for (const key of [
+    'GET /api/state', 'GET /api/images', 'POST /api/upload', 'GET /api/memory', 'GET /api/agent-file', 'POST /api/agent-file',
+    'POST /api/agents', 'POST /api/agents/archive', 'POST /api/agents/restore', 'GET /api/asset', 'POST /api/asset-verdict',
+    'POST /api/launch', 'POST /api/open', 'GET /api/flow', 'POST /api/flows', 'POST /api/flows/caption', 'POST /api/flows/run',
+    'POST /api/flows/archive', 'POST /api/flows/restore', 'POST /api/skill', 'POST /api/command', 'POST /api/repos/clone',
+    'POST /api/repos/add', 'POST /api/projects', 'POST /api/projects/link', 'POST /api/projects/unlink',
+  ]) assert.ok(keys.includes(key), key);
+});
+
+test('a route module works on its own: routes(ctx) returns handlers that resolve with the JSON body', async () => {
+  const ctx = { root, actions: { tools: { claude: 'claude.exe' } }, getPort: () => 0, workspaceTag: '', dataDir: join(root, '.data') };
+  const body = await stateRoutes.routes(ctx)['GET /api/state'](null, null, new URL('http://127.0.0.1/api/state'));
+  assert.equal(body.ok, true);
+  assert.equal(body.tools.claude, true);
+  assert.ok(Array.isArray(body.projects));
+});
+
+test('createApp options: isBusy is reported to server.mjs; dataDir defaults to %LOCALAPPDATA%\claude-workspace', () => {
+  let busy = false;
+  const app = createApp({ root, token: TOKEN, actions: {}, getPort: () => 0, isBusy: () => busy, dataDir: join(root, '.data') });
+  assert.equal(app.isBusy(), false);
+  busy = true;
+  assert.equal(app.isBusy(), true);
+  assert.equal(createApp({ root, token: TOKEN, actions: {}, getPort: () => 0 }).isBusy(), false);
+  assert.equal(defaultDataDir({ LOCALAPPDATA: join('X:', 'Local') }), join('X:', 'Local', 'claude-workspace'));
+  assert.ok(!existsSync(join(root, '.data')), 'nothing creates the data folder until a feature writes there');
+});
+
+test('state: requests during a build share it; invalidateState (after any POST) starts a fresh one', async () => {
+  const first = buildState(root, {});
+  assert.equal(buildState(root, {}), first);
+  invalidateState(root);
+  const second = buildState(root, {});
+  assert.notEqual(second, first);
+  const [a, b] = await Promise.all([first, second]);
+  assert.deepEqual(a.projects.map(p => p.name), b.projects.map(p => p.name));
+  const third = buildState(root, {});
+  assert.notEqual(third, second, 'a finished build is not reused');
+  await third;
+  // Over HTTP: state, a change through the API, state again shows it at once.
+  const [s1] = await Promise.all([call('GET', '/api/state'), call('GET', '/api/state')]);
+  assert.ok(!s1.json.projects.some(p => p.name === 'Fresh'));
+  put('projects/Fresh/.claude/agents/new.md', '---\nname: new\ndescription: n\nmemory: project\n---\n');
+  assert.equal((await call('POST', '/api/ping')).status, 200);
+  assert.ok((await call('GET', '/api/state')).json.projects.some(p => p.name === 'Fresh'));
 });

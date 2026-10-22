@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "project": "example",
+  "label": "Example",
+  "_note": "Synthetic profile for the G0 gate tests (gates/*.test.mjs). Only the keys G0 reads. The probe regexes are read by the tests' fake scanner.",
+  "workspaces": [
+    { "id": "root", "dir": ".", "label": "root" },
+    { "id": "api", "dir": "apps/api", "label": "API", "lint": ["lint:api"] },
+    { "id": "web", "dir": "apps/web", "label": "Web", "lint": ["lint:web"] }
+  ],
+  "commands": {
+    "lint:api": { "kind": "lint", "workspace": "api", "cwd": "apps/api", "argv": ["{node}", "-e", "0", "{files}"], "files": { "roots": ["src"], "pattern": "\\.mjs$" }, "timeoutSec": 60 },
+    "lint:web": { "kind": "lint", "workspace": "web", "cwd": "apps/web", "argv": ["{node}", "-e", "0", "{files}"], "files": { "roots": ["src"], "pattern": "\\.mjs$" }, "timeoutSec": 60 },
+    "format:changed": { "kind": "format", "workspace": "root", "cwd": ".", "argv": ["{node}", "-e", "0", "{files}"], "timeoutSec": 60 }
+  },
+  "format": { "cmd": "format:changed", "glob": "*.{mjs,md}" },
+  "risk": {
+    "money": ["apps/api/src/billing/**"],
+    "tenant": ["apps/api/src/auth/**"],
+    "contract": ["apps/api/src/routes/**/router.mjs", "apps/api/src/queues.mjs"]
+  },
+  "fences": {
+    "forbidden": ["vendor/**", "**/generated.json", "**/.env", "**/.env.*", "**/.npmrc", "**/.sentryclirc", ".claude/**", "**/.claude/**"],
+    "forbiddenExisting": ["apps/api/migrations/**"],
+    "mustTick": ["**/package.json", "package-lock.json", "**/tsconfig*.json", "**/*.config.*", ".husky/**", ".github/**", ".nvmrc", "apps/api/src/auth/**"],
+    "mustTickNew": ["apps/api/migrations/**"],
+    "alwaysAllowed": ["docs/records/*.md", "docs/README.md"],
+    "pinned": ["**/*.contract.test.mjs"],
+    "testPattern": "\\.(test|integration)\\.mjs$"
+  },
+  "secrets": { "trackedSecretFiles": [], "denyReadGlobs": ["**/.env", "**/.env.*", "**/.npmrc", "**/.sentryclirc"], "allowValues": ["example-test-key"] },
+  "builders": { "memberProcedure": "shop", "staffProcedure": "shop", "signedInProcedure": "protected", "openProcedure": "public" },
+  "assertingBuilders": ["staffProcedure"],
+  "assertPattern": "\\b(?:ensure|check)[A-Z]\\w*\\s*\\(",
+  "contract": {
+    "routerFiles": ["apps/api/src/routes/**/router.mjs"],
+    "legacyRouter": "apps/api/src/legacy/router.mjs",
+    "queues": [
+      { "file": "apps/api/src/queues.mjs", "enum": "Jobs" },
+      { "file": "apps/api/src/queues.mjs", "regex": "AUDIT_QUEUE\\s*=\\s*['\"]([^'\"]+)['\"]" }
+    ]
+  },
+  "probes": [
+    { "id": "procedures", "kind": "routerKeys", "label": "Procedures by guard", "measures": "router keys per builder", "files": ["apps/api/src/routes/**/router.mjs"] },
+    { "id": "missingAssert", "kind": "missingAssert", "label": "Member procedures with no ensure check", "measures": "keys with no ensure call", "files": ["apps/api/src/routes/**/router.mjs"], "regex": "NO_ENSURE" },
+    { "id": "rawProcedure", "kind": "regexCount", "label": "Raw procedure builders", "measures": "occurrences", "files": ["apps/api/src/**/*.mjs"], "exclude": ["**/*.test.mjs"], "regex": "\\brawBuilder\\(" },
+    { "id": "unscopedLookups", "kind": "regexCount", "label": "Lookups by input id", "measures": "occurrences", "files": ["apps/api/src/**/*.mjs"], "exclude": ["**/*.test.mjs"], "regex": "where:\\s*\\{\\s*id:\\s*input\\." },
+    { "id": "publicShopId", "kind": "routerKeys", "filter": { "class": "public", "bodyRegex": "teamId" }, "label": "Open routes that take a team id", "measures": "open keys mentioning teamId", "files": ["apps/api/src/routes/**/router.mjs"], "regex": "openProcedure.*teamId" },
+    { "id": "serverCycles", "kind": "cycles", "label": "API import cycles", "measures": "cycles", "cwd": "apps/api", "argv": ["{node}", "-e", "0"] },
+    { "id": "deepImports", "kind": "deepImports", "label": "Web deep imports", "measures": "imports into another feature's internals", "featuresDir": "apps/web/src/features", "alias": "@/features/", "publicEntries": ["public", "index"] }
+  ]
+}

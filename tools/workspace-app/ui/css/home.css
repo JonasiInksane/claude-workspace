@@ -1,0 +1,14 @@
+/* Dashboard (views/home.js). Loaded after app.css (index.html). */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; margin-bottom: 18px; }
+.stat {
+  text-align: left; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px 16px; cursor: pointer; box-shadow: var(--shadow);
+}
+.stat:hover { border-color: var(--accent); }
+.stat b { display: block; font-size: 26px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.stat span { color: var(--muted); font-size: 12.5px; }
+.thumb {
+  width: 40px; height: 40px; border-radius: 8px; flex: none; background: var(--code-bg); overflow: hidden;
+  display: grid; place-items: center; font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase;
+}
+.thumb img { width: 100%; height: 100%; object-fit: cover; }

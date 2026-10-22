@@ -12,7 +12,9 @@
 //   every 15 s; sleep and hibernate don't count as idle time).
 // - --log <file> also appends its messages to that file (start-app.ps1 runs it hidden and uses
 //   %TEMP%\claude-workspace\app.log; a log over 1 MB is renamed to app.log.old first).
-// - --root <dir> uses another workspace root, --idle <seconds> a shorter idle time (for tests).
+// - --root <dir> uses another workspace root, --idle <seconds> a shorter idle time (for tests),
+//   --data-dir <dir> another private data folder (default %LOCALAPPDATA%\claude-workspace).
+// - Never stops for idleness while the app reports work in progress (handler.isBusy()).
 import { createServer } from 'node:http';
 import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -28,13 +30,14 @@ const IDLE_NEVER_OPENED_MS = 5 * 60_000; // nobody ever opened the window
 const TICK_MS = 5000;
 
 function parseArgs(argv) {
-  const out = { port: DEFAULT_PORT, open: true, root: '', idle: 0, log: '' };
+  const out = { port: DEFAULT_PORT, open: true, root: '', idle: 0, log: '', dataDir: '' };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--no-open') out.open = false;
     else if (a === '--log') out.log = argv[++i] || '';
     else if (a === '--port') out.port = Number(argv[++i]);
     else if (a === '--root') out.root = argv[++i] || '';
+    else if (a === '--data-dir') out.dataDir = argv[++i] || '';
     else if (a === '--idle') out.idle = Number(argv[++i]) * 1000; // seconds; for tests
     else if (a === '-h' || a === '--help') {
       console.log('Usage: node tools/workspace-app/server.mjs [--port 4317] [--no-open]');
@@ -132,7 +135,10 @@ const token = randomBytes(24).toString('base64url');
 let port = 0;
 let lastPing = 0;
 const started = Date.now();
-const app = createApp({ root, token, actions, workspaceTag: rootTag, getPort: () => port, onPing: () => { lastPing = Date.now(); } });
+const app = createApp({
+  root, token, actions, workspaceTag: rootTag, getPort: () => port, onPing: () => { lastPing = Date.now(); },
+  ...(opts.dataDir ? { dataDir: resolve(opts.dataDir) } : {}),
+});
 const server = createServer(app);
 
 try {
@@ -177,6 +183,8 @@ setInterval(() => {
   // A long gap between ticks means the PC slept: don't count that as idle time.
   if (now - lastTick > tick * 6 && lastPing) lastPing = now;
   lastTick = now;
+  // Work in progress counts as activity: the idle time starts again once it is done.
+  if (app.isBusy()) { lastPing = now; return; }
   if (lastPing && now - lastPing > idleAfterPing) shutdown('no app window open');
   if (!lastPing && now - started > idleNeverOpened) shutdown('the window was never opened');
 }, tick).unref();

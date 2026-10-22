@@ -1,0 +1,5 @@
+{
+  "//": "Lets Node (the tests) load the page's .js files as ES modules, also on Node 20. Not served to the page.",
+  "private": true,
+  "type": "module"
+}

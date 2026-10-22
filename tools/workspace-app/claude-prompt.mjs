@@ -4,15 +4,16 @@
 // Usage (the workspace app runs this in a new terminal; not meant to be typed):
 //   node tools/workspace-app/claude-prompt.mjs <prompt-file>
 //
-// - Runs `claude [--permission-mode m] [--model x] [--effort e] [--settings <file>] <prompt>` in
-//   the current folder. The settings file is only added when the prompt file lists readDirs (the
-//   session may read those folders) or pre-approved tools (permissions.allow).
+// - Runs `claude [--permission-mode m] [--model x] [--effort e] [--resume id | --session-id id]
+//   [--settings <file>] <prompt>` in the current folder. The app gives every new session its own
+//   id (--session-id), so it can find the session again.
+// - A settings file is added when the prompt file lists readDirs (the session may read those
+//   folders) or pre-approved tools (permissions.allow). When the launch names a settings file as
+//   well, both are merged into one file (promptSessionArgs), because claude reads one.
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { resolveClaude } from '../lib/agents.mjs';
-import { launchArgs, promptArgs, promptDir, takePromptFile } from '../lib/prompt-file.mjs';
+import { promptDir, promptSessionArgs, takePromptFile } from '../lib/prompt-file.mjs';
 
 function fail(msg) {
   console.error(`claude-prompt: ${msg}`);
@@ -26,19 +27,14 @@ try { handed = takePromptFile(file); } catch (e) { fail(e.message); }
 
 const claude = resolveClaude();
 if (!claude.path) fail('claude was not found on PATH or in %USERPROFILE%\\.local\\bin.');
-const args = launchArgs(handed.launch);
-const permissions = {};
-if (handed.readDirs.length) permissions.additionalDirectories = handed.readDirs;
-if (handed.launch.allowedTools) permissions.allow = handed.launch.allowedTools;
-if (Object.keys(permissions).length) {
-  // Named by its content, so starting the same flow again reuses the file.
-  const settings = JSON.stringify({ permissions }, null, 2) + '\n';
-  const settingsFile = join(promptDir(), `read-dirs-${createHash('sha1').update(settings).digest('hex').slice(0, 12)}.json`);
+let built;
+try { built = promptSessionArgs(handed); } catch (e) { fail(e.message); }
+if (built.settings) {
   mkdirSync(promptDir(), { recursive: true });
-  writeFileSync(settingsFile, settings, 'utf8');
-  args.push('--settings', settingsFile);
+  writeFileSync(built.settingsPath, built.settings, 'utf8');
 }
-args.push(...promptArgs(handed.prompt));
-const r = spawnSync(claude.path, args, { stdio: 'inherit' });
+// Interactive: claude shares this terminal's console (stdio inherit), so there is no window to
+// hide; windowsHide is left off so it starts exactly like a claude typed in this terminal.
+const r = spawnSync(claude.path, built.args, { stdio: 'inherit' });
 if (r.error) fail(`could not start claude: ${r.error.message}`);
 process.exit(r.status ?? 0);

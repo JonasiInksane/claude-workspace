@@ -4,25 +4,34 @@
 // SKILLS start Claude with a slash command as its first prompt, in the hub or in a project.
 // /write-handoff is left out on purpose: it sums up the session it runs in, so a fresh session
 // has nothing to hand off. COMMANDS run a workspace tool inside the app and show its output.
+//
+// Each skill has `launch` defaults: how its session starts (permissionMode, model, effort; empty
+// means your own defaults). The skills that change code and should propose first start in plan
+// mode. A request may override the three values (skillLaunch); nothing else of the launch
+// settings comes from the page.
 import { resolveProject } from '../lib/agents.mjs';
+import { checkLaunch } from '../lib/prompt-file.mjs';
 
 const REPORT_TYPES = ['status', 'onboarding', 'audit', 'research', 'playtest', 'plan', 'other'];
 const PROJECT = { key: 'project', label: 'Project', kind: 'project', required: true };
+export const LAUNCH_FIELDS = ['permissionMode', 'model', 'effort'];
+const NO_LAUNCH = Object.freeze({ permissionMode: '', model: '', effort: '' });
+const PLAN_FIRST = Object.freeze({ ...NO_LAUNCH, permissionMode: 'plan' });
 
 export const SKILLS = [
   {
-    id: 'inbox-triage', where: 'hub', label: 'Inbox triage',
+    id: 'inbox-triage', where: 'hub', label: 'Inbox triage', launch: NO_LAUNCH,
     text: 'Proposes where each inbox item goes, files them after your OK.', fields: [],
     args: () => [],
   },
   {
-    id: 'day-recap', where: 'hub', label: 'Day recap',
+    id: 'day-recap', where: 'hub', label: 'Day recap', launch: NO_LAUNCH,
     text: 'Sums up a day from reports, git, the processed inbox and notes. Changes nothing.',
     fields: [{ key: 'day', label: 'Day', kind: 'date', hint: 'Empty for today.' }],
     args: v => [v.day],
   },
   {
-    id: 'context-sweep', where: 'hub', label: 'Context sweep',
+    id: 'context-sweep', where: 'hub', label: 'Context sweep', launch: NO_LAUNCH,
     text: 'Finds oversized, stale or duplicate context and knowledge. Changes nothing without a yes.',
     fields: [{
       key: 'scope', label: 'Scope', kind: 'select',
@@ -31,31 +40,31 @@ export const SKILLS = [
     args: v => [v.scope],
   },
   {
-    id: 'capture-lesson', where: 'hub', label: 'Capture lesson',
+    id: 'capture-lesson', where: 'hub', label: 'Capture lesson', launch: NO_LAUNCH,
     text: 'Saves a lesson or gotcha as a knowledge note and updates knowledge/INDEX.md.',
     fields: [{ key: 'lesson', label: 'Lesson', kind: 'textarea', required: true, max: 2000, hint: 'A sentence or two.' }],
     args: v => [v.lesson],
   },
   {
-    id: 'project-report', where: 'hub', label: 'Project report',
+    id: 'project-report', where: 'hub', label: 'Project report', launch: NO_LAUNCH,
     text: 'Looks at a project without changing it and writes a registered report.',
     fields: [PROJECT, { key: 'type', label: 'Type', kind: 'select', options: REPORT_TYPES.map(t => [t, t]) }],
     args: v => [v.project, v.type || 'status'],
   },
   {
-    id: 'onboard-project', where: 'project', label: 'Onboard project',
+    id: 'onboard-project', where: 'project', label: 'Onboard project', launch: PLAN_FIRST,
     text: 'Maps the repo, checks its commands, writes its CLAUDE.md and permissions.',
     fields: [PROJECT, { key: 'focus', label: 'Focus', kind: 'text', max: 300, hint: 'Optional, for example the checkout flow.' }],
     args: v => [v.focus],
   },
   {
-    id: 'nextjs-feature', where: 'project', label: 'Next.js feature',
+    id: 'nextjs-feature', where: 'project', label: 'Next.js feature', launch: PLAN_FIRST,
     text: 'Builds a Next.js feature: explore, plan (waits for your OK), implement, verify.',
     fields: [PROJECT, { key: 'feature', label: 'Feature', kind: 'textarea', required: true, max: 4000 }],
     args: v => [v.feature],
   },
   {
-    id: 'game-feature', where: 'project', label: 'Game feature',
+    id: 'game-feature', where: 'project', label: 'Game feature', launch: NO_LAUNCH,
     text: 'Builds a game mechanic with testable logic: explore, spec and plan, implement, verify.',
     fields: [PROJECT, { key: 'mechanic', label: 'Mechanic or system', kind: 'textarea', required: true, max: 4000 }],
     args: v => [v.mechanic],
@@ -76,18 +85,31 @@ export const PROJECT_TYPES = ['nextjs', 'game'];
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 
-// The catalog without functions, for the page.
+// The catalog without functions, for the page (each skill with its launch defaults).
 export function catalogForUi() {
   return {
-    skills: SKILLS.map(({ args, ...s }) => s),
+    skills: SKILLS.map(({ args, ...s }) => ({ ...s, launch: { ...s.launch } })),
     commands: COMMANDS.map(c => ({ id: c.id, label: c.label, text: c.text, preview: !!c.preview, command: `node tools/${c.args.join(' ')}` })),
     projectTypes: PROJECT_TYPES,
   };
 }
 
-// Checks the form values of one skill and builds its prompt.
-// Returns { skill, project, prompt }; `project` is the folder's real spelling, or ''.
-export function skillLaunch(root, id, values = {}) {
+// The launch settings for one start of a skill: its defaults, with the request's permissionMode,
+// model and effort put over them (a value that is there, even '', replaces the default; ''
+// means your own default). Other keys are ignored. Checked by checkLaunch, so bypassPermissions
+// and dontAsk stay refused. Returns the launch without empty values.
+function mergedLaunch(skill, overrides) {
+  const merged = { ...skill.launch };
+  const o = overrides && typeof overrides === 'object' && !Array.isArray(overrides) ? overrides : {};
+  for (const k of LAUNCH_FIELDS) if (k in o) merged[k] = o[k] == null ? '' : String(o[k]);
+  const { error, launch } = checkLaunch(merged);
+  if (error) fail(400, `How the session starts: ${error}`);
+  return launch;
+}
+
+// Checks the form values of one skill and builds its prompt and launch settings.
+// Returns { skill, project, prompt, launch }; `project` is the folder's real spelling, or ''.
+export function skillLaunch(root, id, values = {}, launchOverrides = {}) {
   const skill = SKILLS.find(s => s.id === id);
   if (!skill) fail(400, `unknown skill "${id}"`);
   const v = {};
@@ -108,7 +130,7 @@ export function skillLaunch(root, id, values = {}) {
     v[f.key] = x;
   }
   const prompt = [`/${skill.id}`, ...skill.args(v)].filter(Boolean).join(' ');
-  return { skill, project: v.project || '', prompt };
+  return { skill, project: v.project || '', prompt, launch: mergedLaunch(skill, launchOverrides) };
 }
 
 // The command line for one COMMANDS entry: [script, ...args] relative to tools/.

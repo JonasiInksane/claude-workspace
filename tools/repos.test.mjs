@@ -9,7 +9,10 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { addRepo, checkEntry, nameFromUrl, readRepos, repoStatus, unlistedProjects } from './lib/repos.mjs';
+import {
+  addRepo, checkEntry, clearRepoCache, nameFromUrl, originOfAsync, readRepos, repoStatus, repoStatusAsync, requirementStatusAsync,
+  unlistedProjects, unlistedProjectsAsync,
+} from './lib/repos.mjs';
 
 const toolsDir = dirname(fileURLToPath(import.meta.url));
 
@@ -89,4 +92,26 @@ test('projects.mjs add lists a folder by its origin; clone refuses unknown names
   assert.match(run(root, 'clone', 'extra').stderr, /already exists/);
   assert.match(run(root, 'clone', '--url', 'https://x y').stderr, /url must start/);
   assert.match(run(root, 'list').stdout, /extra\s+cloned/);
+});
+
+test('the async variants give the same answers, cache origins, and clearRepoCache forgets them', async t => {
+  const root = fixture(t, [
+    { name: 'here', url: 'https://github.com/me/here.git' },
+    { name: 'away', url: 'https://github.com/me/away.git' },
+  ]);
+  gitRepo(join(root, 'projects', 'here'), 'https://github.com/me/here.git');
+  gitRepo(join(root, 'projects', 'extra'), 'https://github.com/me/extra.git');
+  clearRepoCache();
+  assert.deepEqual(await repoStatusAsync(root), repoStatus(root));
+  assert.deepEqual(await unlistedProjectsAsync(root), unlistedProjects(root));
+  assert.equal(await originOfAsync(join(root, 'projects', 'here')), 'https://github.com/me/here.git');
+  assert.equal(await originOfAsync(join(root, 'projects', 'nope')), '');
+  const have = await requirementStatusAsync();
+  assert.deepEqual(Object.keys(have).sort(), ['blender-5.2', 'git-lfs']);
+  assert.ok(Object.values(have).every(v => typeof v === 'boolean'));
+  // A changed remote shows after the cache is cleared (or ORIGIN_TTL_MS later).
+  spawnSync('git', ['-C', join(root, 'projects', 'extra'), 'remote', 'set-url', 'origin', 'https://github.com/me/moved.git']);
+  assert.equal((await unlistedProjectsAsync(root))[0].origin, 'https://github.com/me/extra.git');
+  clearRepoCache();
+  assert.equal((await unlistedProjectsAsync(root))[0].origin, 'https://github.com/me/moved.git');
 });

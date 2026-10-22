@@ -22,7 +22,8 @@ A run starts Claude in a new terminal. Its first prompt is, in this order:
    with its full path and caption. Anthropic's vision guidance puts images before the question
    and labels them, so the prompt below can say "compare Image 1 with Image 2".
 2. The flow's prompt.
-3. The notes you typed for that run, if any.
+3. The notes you typed for that run, if any: under the flow's question (`ask`) when it has one,
+   otherwise under "Notes for this run:".
 
 The session may read the image folder without asking. Uploaded BMPs are saved as PNG, because
 Claude Code's Read tool shows only PNG, JPEG, GIF and WebP as images; a BMP copied into the
@@ -42,7 +43,20 @@ Optional, per flow ("How the session starts" in the editor). Empty means your ow
 `bypassPermissions` and `dontAsk` are not offered. Plan suits flows that should explore and
 propose before changing anything; effort is the first control for how hard Claude thinks
 ([research report](../reports/2026-10-21_prompt-pipeline-practices/report.md)). Flag values
-as of Claude Code 2.1.306 (`claude --help`).
+as of Claude Code 2.1.307 (`claude --help`). Every session the app starts gets its own id
+(`--session-id`), recorded in `%LOCALAPPDATA%\claude-workspace\sessions.jsonl`.
+
+## A question for each run
+
+Optional, per flow ("Ask" and "Required" in the editor).
+
+| Field | Values | Effect |
+|---|---|---|
+| `ask` | a question, at most 120 characters | The run dialog's text box gets this label, and your answer goes into the prompt under it |
+| `askRequired` | `true` or `false` (default) | With `true` the run doesn't start until the box has an answer |
+
+`askRequired: true` needs an `ask`. The Tattoogenda flows (`tattoogenda-*.md`) each ask one
+required question, for example "What do you want to refactor?", and start in plan mode.
 
 ## Writing the prompt
 
@@ -62,6 +76,8 @@ project: "my-game"
 agent: "artist"
 effort: "high"
 allowedTools: "Read, Bash(npm run sprites:*)"
+ask: "Which frames need the most care?"
+askRequired: true
 ---
 
 Make a 4-frame walk cycle sprite sheet from the sketch in Image 1, in the palette of Image 2.

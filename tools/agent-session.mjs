@@ -1,9 +1,10 @@
 // Starts Claude as one project agent, with only that agent's memory and image folders.
 //
 // Usage:
-//   node tools/agent-session.mjs <project> <agent> [--print]
+//   node tools/agent-session.mjs <project> <agent> [--print] [--session-id <uuid>]
 //
-// - Runs `claude --agent <agent> --settings <file>` inside projects/<project>. The settings file
+// - Runs `claude --agent <agent> --settings <file>` inside projects/<project> (for a linked
+//   project, in the checkout's real folder: tools/lib/projects.mjs). The settings file
 //   (in the temp folder, rewritten on every start) points auto memory at the agent's own folder,
 //   so the project's shared auto memory does not load, and lets the session read
 //   inbox/attachments/<project>/<agent>/ and inbox/attachments/<project>/_shared/ without prompts.
@@ -16,18 +17,21 @@
 // - --prompt-file <file> starts with a first prompt (tools/lib/prompt-file.mjs; the workspace
 //   app's flows use it). Its readDirs are added to the folders the session may read, its launch
 //   settings become --permission-mode / --model / --effort, and its pre-approved tools go into
-//   the settings' permissions.allow.
-import { mkdirSync, writeFileSync } from 'node:fs';
+//   the settings' permissions.allow. A settings file named in its launch is merged into the
+//   agent's settings file (its values win, its lists add up).
+// - --session-id <uuid> gives the new session that id (the workspace app records it).
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  checkAgentName, duplicateNames, imagesDir, listAgents, projectDir, resolveClaude, resolveProject,
+  checkAgentName, duplicateNames, imagesDir, listAgents, resolveClaude, resolveProject,
   sessionSettings, sharedImagesDir,
 } from './lib/agents.mjs';
-import { launchArgs, promptArgs, takePromptFile } from './lib/prompt-file.mjs';
+import { launchArgs, mergeSettings, promptArgs, takePromptFile, UUID_RE } from './lib/prompt-file.mjs';
+import { realProjectDir } from './lib/projects.mjs';
 
 const toolsRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -37,11 +41,11 @@ function fail(msg) {
 }
 
 function usage() {
-  console.log('Usage: node tools/agent-session.mjs <project> <agent> [--print] [--prompt-file <file>]');
+  console.log('Usage: node tools/agent-session.mjs <project> <agent> [--print] [--prompt-file <file>] [--session-id <uuid>]');
 }
 
 function parseArgs(argv) {
-  const out = { positional: [], print: false, root: undefined, promptFile: undefined };
+  const out = { positional: [], print: false, root: undefined, promptFile: undefined, sessionId: '' };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '-h' || a === '--help') { usage(); process.exit(0); }
@@ -52,6 +56,9 @@ function parseArgs(argv) {
     } else if (a === '--prompt-file') {
       out.promptFile = argv[++i];
       if (!out.promptFile) fail('--prompt-file needs a value');
+    } else if (a === '--session-id') {
+      out.sessionId = String(argv[++i] || '').toLowerCase();
+      if (!UUID_RE.test(out.sessionId)) fail('--session-id needs a session id (a UUID)');
     } else if (a.startsWith('--')) fail(`unknown option ${a}`);
     else out.positional.push(a);
   }
@@ -106,21 +113,35 @@ let handed = null;
 if (opts.promptFile) {
   try { handed = takePromptFile(opts.promptFile); } catch (e) { fail(e.message); }
 }
-const settings = sessionSettings(root, project, opts.agent, agent.memory);
-// Extra readable folders and pre-approved tools get their own settings file, so the plain one
-// stays the same.
+let settings = sessionSettings(root, project, opts.agent, agent.memory);
+// Extra readable folders, pre-approved tools and a launch settings file get their own settings
+// file, so the plain one stays the same.
 const extra = handed ? handed.readDirs.map(d => resolve(d)) : [];
 settings.permissions.additionalDirectories.push(...extra);
 const allow = handed && handed.launch.allowedTools ? handed.launch.allowedTools : [];
 if (allow.length) settings.permissions.allow = allow;
-const extraKey = [...extra, ...allow.map(r => `allow:${r}`)].join('\n');
+const launchSettings = handed && handed.launch.settingsFile ? handed.launch.settingsFile : '';
+if (launchSettings) {
+  try { settings = mergeSettings(settings, JSON.parse(readFileSync(launchSettings, 'utf8').replace(/^﻿/, ''))); } catch (e) {
+    fail(`the settings file ${launchSettings} could not be read: ${e.message}`);
+  }
+}
+const extraKey = [...extra, ...allow.map(r => `allow:${r}`), ...(launchSettings ? [`settings:${launchSettings}`] : [])].join('\n');
 const extraTag = extraKey ? `--${createHash('sha1').update(extraKey).digest('hex').slice(0, 8)}` : '';
 const settingsFile = join(settingsDir, `${project}--${opts.agent}--${rootTag}${extraTag}.json`);
 writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + '\n', 'utf8');
 
-const cwd = projectDir(root, project);
+// A linked project runs in the checkout's real folder (transcripts and trust follow the folder).
+let cwd;
+try { cwd = realProjectDir(root, project); } catch (e) { fail(e.message); }
 const args = ['--agent', opts.agent, '--settings', settingsFile];
-if (handed) args.push(...launchArgs(handed.launch), ...promptArgs(handed.prompt));
+const sessionId = opts.sessionId || (handed && handed.launch.sessionId) || '';
+if (handed) {
+  const { settingsFile: _merged, sessionId: _id, ...flags } = handed.launch;
+  args.push(...launchArgs(flags));
+}
+if (sessionId && !(handed && handed.launch.resume)) args.push('--session-id', sessionId);
+if (handed) args.push(...promptArgs(handed.prompt));
 
 if (opts.print) {
   console.log(JSON.stringify({ cwd, command: claude.path, args, settingsFile }, null, 2));

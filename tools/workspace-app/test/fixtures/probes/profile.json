@@ -1,0 +1,60 @@
+{
+  "_note": "Probe part of a synthetic profile for the 'example' project, used by the probe tests with the tree/ folder next to it. Not a full profile.",
+  "version": 1,
+  "project": "example",
+  "label": "Example",
+  "builders": {
+    "teamProcedure": "shop",
+    "billingProcedure": "shop",
+    "authedProcedure": "protected",
+    "openProcedure": "public"
+  },
+  "assertingBuilders": ["billingProcedure"],
+  "assertPattern": "\\bensure[A-Z]\\w*\\s*\\(",
+  "expo": {
+    "webFeatures": "apps/web/src/features",
+    "expoModules": "apps/mobile/src/modules",
+    "map": { "beta": "beta-mobile" }
+  },
+  "probes": [
+    { "id": "procedures", "kind": "routerKeys", "label": "Procedures by guard", "measures": "router keys per procedure builder",
+      "files": ["apps/api/src/modules/**/router.ts", "apps/api/src/core/router.ts"] },
+    { "id": "missingAssert", "kind": "missingAssert", "label": "Team procedures with no ensure call", "measures": "team router keys whose body has no ensure* call",
+      "files": ["apps/api/src/modules/**/router.ts"] },
+    { "id": "openInputs", "kind": "routerKeys", "filter": { "class": "public", "bodyRegex": "\\.input\\(" }, "label": "Open routes with an input", "measures": "public router keys that declare an input",
+      "files": ["apps/api/src/modules/**/router.ts"] },
+    { "id": "stringDates", "kind": "regexCount", "label": "Dates parsed from strings", "measures": "new Date('...') in API code, tests excluded",
+      "files": ["apps/api/src/**/*.ts"], "exclude": ["**/*.test.ts"], "regex": "new Date\\(\\s*['\"]" },
+    { "id": "consoleCalls", "kind": "regexCount", "label": "console calls outside the logger", "measures": "occurrences",
+      "files": ["apps/api/src/**/*.ts"], "exclude": ["apps/api/src/core/raw.ts", "**/*.test.ts"], "regex": "\\bconsole\\.(?:log|warn|error)\\(" },
+    { "id": "awaitInLoop", "kind": "windowRegex", "label": "Awaits inside for loops", "measures": "for loops with an await within 4 lines",
+      "files": ["apps/api/src/**/*.ts"], "exclude": ["**/*.test.ts"], "start": "\\bfor\\s*\\(", "within": 4, "regex": "\\bawait\\b" },
+    { "id": "clientComponents", "kind": "regexCount", "label": "Client components", "measures": "web .tsx files starting with use client",
+      "files": ["apps/web/src/**/*.tsx"], "regex": "^['\"]use client['\"]", "perFile": true },
+    { "id": "asNever", "kind": "regexCount", "label": "as never", "measures": "type escapes in web code",
+      "files": ["apps/web/src/**/*.{ts,tsx}"], "regex": "\\bas never\\b" },
+    { "id": "deepImports", "kind": "deepImports", "label": "Web deep imports", "measures": "imports from one web feature into another feature's internals",
+      "featuresDir": "apps/web/src/features", "alias": "@/features/", "publicEntries": ["public", "index"] },
+    { "id": "publicTs", "kind": "publicTs", "label": "public.ts boundaries", "measures": "web features with a public.ts",
+      "featuresDir": "apps/web/src/features", "boundaryTestRegex": "Boundary\\.test\\.ts$" },
+    { "id": "localeWeb", "kind": "localeParity", "label": "Missing web i18n keys", "measures": "keys missing per locale against en-US",
+      "dir": "apps/web/messages", "source": "en-US" },
+    { "id": "localeMobile", "kind": "localeParity", "label": "Missing mobile i18n keys", "measures": "keys missing per locale against en-US",
+      "dir": "apps/mobile/locales", "source": "en-US" },
+    { "id": "expoParity", "kind": "expoParity", "label": "Mobile parity", "measures": "web features with a mapped mobile module (heuristic)" },
+    { "id": "apiCycles", "kind": "cycles", "label": "API import cycles", "measures": "file-level cycles and the largest module cycle",
+      "cwd": "apps/api", "argv": ["{node}", "{pkg:madge/bin/cli.js}", "--json", "--basedir", ".", "--extensions", "ts", "src"],
+      "moduleRegex": "^src/modules/([^/]+)/", "timeoutSec": 60 }
+  ],
+  "tiles": ["knownFailures", "apiCycles.largestModuleCycle", "deepImports", "publicTs", "asNever", "procedures.nonShopVsAllowlist", "localeWeb", "expoParity"],
+  "lenses": ["missingAssert", "stringDates", "openInputs", "awaitInLoop"],
+  "score": {
+    "knownFailures": { "weight": 2, "target": 0, "ref": 10 },
+    "apiCycles.largestModuleCycle": { "weight": 2, "target": 0, "ref": 6 },
+    "deepImports": { "weight": 2, "target": 0, "ref": 10 },
+    "publicTs": { "weight": 2, "target": 4, "ref": 0, "higherIsBetter": true },
+    "missingAssert": { "weight": 3, "target": 0, "ref": 4 },
+    "localeWeb.max": { "weight": 1, "target": 0, "ref": 6 },
+    "expoParity": { "weight": 1, "target": 100, "ref": 0, "higherIsBetter": true }
+  }
+}

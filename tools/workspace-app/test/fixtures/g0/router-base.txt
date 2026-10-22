@@ -1,0 +1,16 @@
+// Synthetic router for the contract tests (example project). Not real code.
+import { router, memberProcedure, openProcedure, signedInProcedure } from '../../trpc.mjs';
+
+export const invoicesRouter = router({
+  list: memberProcedure.query(({ ctx }) => ctx.db.invoice.findMany()),
+  get: memberProcedure
+    .input(idInput)
+    .query(({ ctx, input }) => ctx.db.invoice.find(input.id)),
+  pay: memberProcedure.mutation(() => null),
+  publicSummary: openProcedure.query(() => ({ ok: true })),
+  me: signedInProcedure.query(({ ctx }) => ctx.user),
+  // A nested router reuses a key name.
+  admin: router({
+    list: memberProcedure.query(() => []),
+  }),
+});

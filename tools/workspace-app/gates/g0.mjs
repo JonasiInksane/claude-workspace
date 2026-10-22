@@ -35,10 +35,9 @@
 // A row that throws becomes an `error` row, which fails G0 (fail closed). Secret-shaped files and
 // files matching the profile's secrets.denyReadGlobs are never read and never handed to a
 // command, and every text that lands in a row, a log or g0.json is redacted.
-import * as fsp from 'node:fs/promises';
 import { lstat, readFile, realpath } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { projectPaths, readJson, writeJsonAtomic } from '../core/datadir.mjs';
+import { isAbsolute, join, relative, resolve } from 'node:path';
+import { projectPaths, readJson, writeJsonAtomic, writeTextAtomic } from '../core/datadir.mjs';
 import { globToRegExp, matchAny } from '../core/glob.mjs';
 import { checkFences, fenceSummary, normalizeChanged, normPath, touchedPaths } from './fences.mjs';
 import { isSecretFileName, redact, redactDeep, scanDiff, SECRET_FILE_PATTERN, walkDiff } from './secrets.mjs';
@@ -762,29 +761,9 @@ const ROWS = {
 
 // ---------------------------------------------------------------- running G0
 
-// Windows can refuse a rename for a moment while a virus scanner or a reader holds the target, so
-// the rename is retried with a growing pause, as core/datadir.mjs does for JSON.
-const RETRY_CODES = new Set(['EPERM', 'EBUSY', 'EACCES']);
-const BACKOFF_MS = [50, 100, 200, 400, 800];
-const pause = ms => new Promise(r => setTimeout(r, ms));
-
-// Writes a text file through a temporary file and a rename. The temporary file is removed when
-// the write or the last rename fails. `fs` and `sleep` can be replaced in tests.
-export async function writeTextAtomic(file, text, { fs: io = fsp, sleep = pause } = {}) {
-  await io.mkdir(dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-  const drop = () => io.rm(tmp, { force: true }).catch(() => {});
-  try { await io.writeFile(tmp, text); } catch (e) { await drop(); throw e; }
-  for (let attempt = 0; ; attempt++) {
-    try {
-      await io.rename(tmp, file);
-      return file;
-    } catch (e) {
-      if (!RETRY_CODES.has(e?.code) || attempt >= BACKOFF_MS.length) { await drop(); throw e; }
-      await sleep(BACKOFF_MS[attempt]);
-    }
-  }
-}
+// Writes a text file through a temporary file and a rename, retried while Windows refuses it
+// (core/datadir.mjs). Kept as an export here for the G0 rows and their tests.
+export { writeTextAtomic };
 
 // Shapes a row like a check summary row (SPEC 2.10) and writes its log when it has one.
 async function finishRow(ctx, def, r, started) {

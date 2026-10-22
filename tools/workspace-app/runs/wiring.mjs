@@ -16,7 +16,7 @@
 //   options runClaudeStage gets (stage, attempt, spec, schemaName, resumeSessionId, ...); its list
 //   still goes through runClaudeStage's own checks.
 // The launcher's startClaude and runTool (ctx.actions) become the executor's LAUNCH_DEPS, used
-// for Take over and Save as report.
+// for Take over and Save as report. With fakeClaude, startClaude is a stub that opens nothing.
 import { fileURLToPath } from 'node:url';
 import { createManager } from './manager.mjs';
 import { createExecutor, defaultDeps } from './executor.mjs';
@@ -79,7 +79,10 @@ export async function createEngine({ root, dataDir, actions = {}, engineOptions 
   if (!dataDir) throw new Error('createEngine needs the data folder (dataDir).');
   const opts = engineOptions || {};
   const command = claudeCommandFor({ actions, engineOptions: opts });
-  const deps = await defaultDeps({ hubRoot: root, dataDir, ...launchDeps(actions), ...(opts.deps || {}) });
+  // In fake-Claude mode Take over must not open a real terminal running the real claude.
+  const launch = launchDeps(actions);
+  if (opts.fakeClaude) launch.startClaude = async o => ({ sessionId: (o && o.resume) || null, fake: true });
+  const deps = await defaultDeps({ hubRoot: root, dataDir, ...launch, ...(opts.deps || {}) });
   deps.claudeStage = claudeStageFor(deps.claudeStage, command);
   if (Array.isArray(command)) deps.claudeCommand = command;
   if (opts.timing) deps.timing = opts.timing;

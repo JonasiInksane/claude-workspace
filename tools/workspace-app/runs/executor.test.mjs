@@ -100,7 +100,7 @@ async function harness(t, opts = {}) {
       async diffText(dir, base, o) { calls.diffText.push([dir, base, o]); return world.diff || world.changed.map(c => `diff --git a/${c.path} b/${c.path}\n+x\n`).join(''); },
       async diffNames() { return []; },
       async fileAt(dir, sha, path) { calls.fileAt.push([dir, sha, path]); return world.atBase[path] ?? null; },
-      async treeHash(dir, base, files, tmp) { calls.treeHash.push([dir, base, files, tmp]); return world.treeSha; },
+      async treeHash(dir, base, files, tmp) { calls.treeHash.push([dir, base, files, tmp]); if (world.treeHashError) throw new Error(world.treeHashError); return world.treeSha; },
       async appBranches() { return world.branches || []; },
     },
     worktree: {
@@ -254,6 +254,16 @@ async function seedFinding(h, status = 'open') {
 }
 const findingStatus = async h => (await findingsStore.loadFindings(h.data, PROJECT)).findings[0].status;
 const stageOf = (run, id) => run.stages.find(s => s.id === id);
+
+// Waits (polling run.json) until implement has a process recorded; a timeout says where the run is.
+async function untilImplementRuns(h, run, ms = 15_000) {
+  try {
+    await waitFor(async () => stageOf(await h.reload(run), 'implement').attempts[0]?.proc, ms);
+  } catch (e) {
+    const r = await h.reload(run);
+    throw new Error(`${e.message}; the run is ${r.status} (${r.statusReason || 'no reason'}); stages ${r.stages.map(s => `${s.id}:${s.status}`).join(' ')}`);
+  }
+}
 
 // Drives a refactor (or fix/debug) run from start to the review gate with default outputs.
 async function toReviewGate(h, pipeline = 'refactor', values = { what: 'Move cart totals into cents' }) {
@@ -676,6 +686,16 @@ test('Fix at the review gate resumes implement with the ticked findings, then a 
   assert.equal(run.waiting.kind, 'review');
 });
 
+test('commit on a run tree git can no longer read: 409 with a plain reason, nothing committed', async t => {
+  const h = await harness(t);
+  const run = await toReviewGate(h);
+  h.world.treeHashError = 'git write-tree failed in C:\\gone: not a git repository';
+  await assert.rejects(h.act(run, 'commit', { message: 'Do it' }),
+    err => err.status === 409 && /^Nothing was committed: the run tree can't be checked \(git write-tree failed/.test(err.message));
+  assert.equal(h.calls.commit.length, 0);
+  assert.equal((await h.reload(run)).status, 'waiting');
+});
+
 test('commit after the tree changed: 409, and the checks run again', async t => {
   const h = await harness(t);
   let run = await toReviewGate(h);
@@ -756,8 +776,7 @@ test('cancel during implement: kill, patch, reset, lock released, finding back t
   await h.ex.handle(fresh, 'approve', {});
   const ctl = new AbortController();
   const driving = h.ex.advance(fresh, { signal: ctl.signal });
-  // Polls run.json on disk: 2 s timed out once while the whole suite ran on a busy PC.
-  await waitFor(async () => stageOf(await h.reload(run), 'implement').attempts[0]?.proc, 15_000);
+  await untilImplementRuns(h, run);
   ctl.abort();
   await driving;
   run = await h.reload(run);
@@ -887,8 +906,7 @@ test('recovery after a crash: an interrupted implement resumes its session', asy
   await h.ex.handle(fresh, 'approve', {});
   const ctl = new AbortController();
   const driving = h.ex.advance(fresh, { signal: ctl.signal });
-  // Polls run.json on disk: 2 s timed out once while the whole suite ran on a busy PC.
-  await waitFor(async () => stageOf(await h.reload(run), 'implement').attempts[0]?.proc, 15_000);
+  await untilImplementRuns(h, run);
   ctl.abort(); // the app died: nothing more is saved
   await driving;
   // What manager.recover() does on the next start.

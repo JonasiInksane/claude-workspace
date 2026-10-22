@@ -28,8 +28,9 @@
 // (sameProcess) is for pids read back from disk, which is recovery's job (core/proc.mjs).
 // Invalid input (a bad spec, a missing settings file, an unknown schema) throws; everything that
 // goes wrong at run time comes back as a stage result.
-import { access, mkdir, open, readFile, rename, writeFile } from 'node:fs/promises';
+import { access, mkdir, open, readFile, writeFile } from 'node:fs/promises';
 import { basename, delimiter, join, posix, win32 } from 'node:path';
+import { writeJsonAtomic } from '../core/datadir.mjs';
 import { headlessArgs, resumeArgs, stdinFor } from './argv.mjs';
 import { capStrings, validate } from './schema-check.mjs';
 import { outputPaths, schemaFor } from './schemas.mjs';
@@ -143,16 +144,8 @@ async function loadProc() {
   throw new Error('core/proc.mjs is not available, so the Claude stage could not start.');
 }
 
-async function writeJson(file, data) {
-  const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-  await writeFile(tmp, JSON.stringify(data, null, 2) + '\n', 'utf8');
-  for (let i = 0; ; i++) {
-    try { return await rename(tmp, file); } catch (e) {
-      if (i >= 4 || !['EPERM', 'EBUSY', 'EACCES'].includes(e.code)) throw e;
-      await new Promise(r => setTimeout(r, 50 * 2 ** i));
-    }
-  }
-}
+// Atomic, with core/datadir's retries (a reader or a virus scanner can hold the file).
+const writeJson = (file, data) => writeJsonAtomic(file, data);
 
 async function readTail(file, max) {
   try {

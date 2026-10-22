@@ -1,0 +1,56 @@
+/* Library (UI-LISTS, views/tools.js). Linked after app.css in index.html; narrow-screen rules for
+   this view go here too. The pipeline catalog follows the mockup's launcher aside (.plan, .who,
+   .cannot) under its own lib-* names, so it never collides with the launcher's styles. */
+
+.lib-reason { margin: 0 0 var(--s2); }
+
+/* ---------- The skill dialog's "How the session starts" (details.launch is in flows.css) */
+.skill-launch .two-col { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.skill-launch > p { margin-top: var(--s2); }
+
+/* ---------- Pipelines */
+.lib-pipes { display: grid; gap: var(--s2); margin-top: var(--s3); }
+details.lib-pipe { border: 1px solid var(--border); border-radius: 10px; background: var(--bg); }
+details.lib-pipe > summary {
+  cursor: pointer; padding: 10px var(--s4); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px;
+  list-style-position: inside;
+}
+details.lib-pipe[open] > summary { border-bottom: 1px solid var(--border); }
+.lib-pipe-name { font-weight: 600; }
+.lib-pipe-blurb { font-size: var(--t-md); flex: 1; min-width: 200px; }
+.lib-pipe-tags { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.lib-pipe-body { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: var(--s5); padding: var(--s3) var(--s4) var(--s4); background: var(--card); border-radius: 0 0 10px 10px; }
+.lib-pipe-body h4 { margin: 0 0 var(--s2); font-size: var(--t-sm); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.lib-pipe-side h4:not(:first-child) { margin-top: var(--s4); }
+
+.lib-stages { list-style: none; margin: 0; padding: 0; }
+.lib-stage { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 8px; padding: 7px 0; font-size: var(--t-md); border-bottom: 1px dashed var(--border); }
+.lib-stage:last-child { border-bottom: 0; }
+.lib-stage small { display: block; color: var(--muted); font-size: var(--t-sm); }
+.lib-stage-main { display: grid; gap: 4px; min-width: 0; }
+.lib-who { font-size: var(--t-sm); font-weight: 600; border-radius: 999px; padding: 0 6px; text-align: center; height: fit-content; margin-top: 1px; }
+.lib-who.code { background: var(--code-bg); color: var(--muted); }
+.lib-who.claude { background: var(--violet-soft); color: var(--violet); }
+.lib-who.you { background: var(--amber-soft); color: var(--amber); }
+.lib-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: var(--t-sm); color: var(--muted); }
+.lib-meta .mono { font-size: var(--t-sm); }
+.lib-models { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+.lib-pick { display: inline-flex; align-items: center; gap: 6px; font-size: var(--t-sm); color: var(--muted); font-weight: 600; }
+.lib-pick select {
+  padding: 3px 8px; border-radius: 7px; border: 1px solid var(--border); background: var(--card); color: var(--text);
+  font-size: var(--t-md); font-weight: 400;
+}
+.lib-cannot { margin: 0; padding-left: 18px; font-size: var(--t-md); display: grid; gap: 2px; }
+
+/* ---------- Settings */
+.lib-settings { display: grid; gap: var(--s3); }
+.lib-setting p { margin: 2px 0 0 24px; }
+
+@media (max-width: 1080px) {
+  .lib-pipe-body { grid-template-columns: 1fr; gap: var(--s3); }
+}
+@media (max-width: 760px) {
+  .skill-launch .two-col { grid-template-columns: 1fr; }
+  .lib-stage { grid-template-columns: 1fr; gap: 2px; }
+  .lib-who { justify-self: start; }
+}

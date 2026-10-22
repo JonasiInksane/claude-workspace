@@ -225,7 +225,7 @@ function makeExecutor(engine, behave) {
   return ex;
 }
 
-function setup(t, { behave = {}, limits, alive, profile = PROFILE, settings = { isolation: {} }, deps = {} } = {}) {
+function setup(t, { behave = {}, limits, alive, profile = PROFILE, settings = { isolation: {} }, deps = {}, actionSettleMs } = {}) {
   const dataDir = mkdtempSync(join(tmpdir(), 'ws-manager-'));
   const log = [];
   const proc = fakeProc(log, alive);
@@ -233,7 +233,7 @@ function setup(t, { behave = {}, limits, alive, profile = PROFILE, settings = { 
   const findingCalls = [];
   const ctl = { proc, active: 0, maxActive: 0, nextPid: 5001, started: [], finishers: new Map(), pids: new Map(), finish: id => ctl.finishers.get(id)() };
   const mgr = createManager({
-    root: dataDir, dataDir, clock, limits,
+    root: dataDir, dataDir, clock, limits, actionSettleMs,
     deps: {
       store, locks, proc, catalog: fakeCatalog, actions: fakeActions, holder: HOLDER, testLog: log,
       profileFor: async () => (profile ? { exists: true, profile, errors: [], warnings: [] } : { exists: false, profile: null, errors: [], warnings: [] }),
@@ -570,12 +570,23 @@ test('action checks the click against the rules, hands it to the executor and co
   assert.deepEqual(log.filter(e => e[0] === 'advance' || e[0] === 'handle').map(e => e[0]), ['advance', 'handle', 'advance']);
 });
 
-test('an action while a stage runs is refused with 409', async t => {
-  const { mgr, ctl } = setup(t, { behave: c => ({ explain: claudeLike(c) }) });
+test('an action while a stage runs is refused with 409 (after the settle time)', async t => {
+  const { mgr, ctl } = setup(t, { behave: c => ({ explain: claudeLike(c) }), actionSettleMs: 50 });
   const { runId } = await mgr.start({ project: 'example', pipeline: 'explain', values: { what: 'Busy' } });
   await waitFor(() => ctl.started.length === 1);
   assert.deepEqual(await status(mgr.action(runId, 'approve', {})), [409, 'The run is busy with a stage. Wait for it, or cancel the run.']);
   ctl.finish(runId);
+  await mgr.settled();
+});
+
+test('a click right after the gate shows waits for the driver that is still finishing', async t => {
+  // The driver saves "waiting" (the page can see the gate), then takes a moment to return.
+  const lingering = async (run, ctx) => { await waitAtHuman(run, ctx); await tick(150); };
+  const { mgr, dataDir } = setup(t, { behave: { refactor: lingering }, actionSettleMs: 2000 });
+  const { runId } = await mgr.start({ project: 'example', pipeline: 'refactor', values: { what: 'Quick click' } });
+  await waitFor(async () => (await loadRun(dataDir, runId)).status === 'waiting');
+  const out = await mgr.action(runId, 'approve', {});
+  assert.equal(out.message, 'Done.');
   await mgr.settled();
 });
 

@@ -24,8 +24,9 @@
 // Every dependency is injected (createExecutor(deps)), so tests run with fakes; defaultDeps()
 // loads the real modules for the wiring and the integration test.
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, extname, join, posix, win32 } from 'node:path';
+import { mkdir, readFile, stat } from 'node:fs/promises';
+import { writeJsonAtomic, writeTextAtomic } from '../core/datadir.mjs';
+import { basename, extname, join, posix, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as catalogModule from './catalog.mjs';
 import * as promptsModule from './prompts.mjs';
@@ -414,25 +415,15 @@ export function createExecutor(deps = {}) {
     };
   }
 
-  async function writeJsonFile(file, data) {
-    await mkdir(dirname(file), { recursive: true });
-    const tmp = `${file}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
-    await writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`);
-    for (let i = 0; ; i++) {
-      try { await rename(tmp, file); return; } catch (e) {
-        if (i >= 4 || !['EPERM', 'EBUSY', 'EACCES'].includes(e.code)) throw e;
-        await sleep(50 * 2 ** i);
-      }
-    }
-  }
+  // Atomic, with core/datadir's retries: the page may be reading the same file.
+  const writeJsonFile = (file, data) => writeJsonAtomic(file, data);
   async function readJsonFile(file, fallback = null) {
     try { return JSON.parse(await readFile(file, 'utf8')); } catch { return fallback; }
   }
+  // final/ files are what the page shows (proof, review, commit message), so they are written whole.
   async function writeFinal(run, name, data) {
-    if (typeof data === 'string') {
-      await mkdir(dirname(finalFile(run, name)), { recursive: true });
-      await writeFile(finalFile(run, name), data);
-    } else await writeJsonFile(finalFile(run, name), data);
+    if (typeof data === 'string') await writeTextAtomic(finalFile(run, name), data);
+    else await writeJsonFile(finalFile(run, name), data);
   }
   const input = (run, name, data) => d.store.writeInput(dataDir, run, name, data);
   async function nonEmptyFile(file) {
@@ -1820,8 +1811,15 @@ export function createExecutor(deps = {}) {
       if (payload.treeSha !== undefined && payload.treeSha !== gated.treeSha) httpFail(409, 'The gates ran again since you opened the dialog; reload the review.');
       const { tree, mainDir } = run.isolation;
       const base = run.base.sha;
-      const changedNow = treeFiles(await changedOf(tree, base));
-      const shaNow = await dep('git.treeHash')(tree, base, gated.files, join(runDir(run), 'tmp', `index-commit-${now()}`));
+      // A tree git can no longer read (moved, deleted, broken) is a refusal, not a crash.
+      let changedNow;
+      let shaNow;
+      try {
+        changedNow = treeFiles(await changedOf(tree, base));
+        shaNow = await dep('git.treeHash')(tree, base, gated.files, join(runDir(run), 'tmp', `index-commit-${now()}`));
+      } catch (e) {
+        httpFail(409, `Nothing was committed: the run tree can't be checked (${e.message}).`);
+      }
       if (shaNow !== gated.treeSha || changedNow.join('\n') !== gatedFiles.join('\n')) return treeMoved(run);
       const messageFile = finalFile(run, 'commit-msg.txt');
       await writeFinal(run, 'commit-msg.txt', `${message}\n`);

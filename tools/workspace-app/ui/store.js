@@ -346,16 +346,30 @@ export function livePoll(pull, { runId = null, ms = 2000, liveMs = 10_000 } = {}
 
 // ---------------------------------------------------------------- notifications (SPEC 5.12)
 
-const runNotify = new Map(); // run id -> false when the user turned notifications off for it
+// The run view's "Notify me when it needs me" choice per run: kept in this browser
+// (localStorage ws-notify:<runId>, "1" or "0") and in memory; without one, settings.notify.web
+// decides. A run turned on still notifies when the global setting is off.
+const runNotify = new Map(); // run id -> true or false, the choice made in this session
+const NOTIFY_KEY = 'ws-notify:';
 let permissionAsked = false;
 
-// The run view's "Notify me when it needs me" toggle. Asks for permission on the first click
-// only (ADDENDUM A20).
+function storedNotify(runId) {
+  try {
+    const v = localStorage.getItem(NOTIFY_KEY + runId);
+    return v === '1' ? true : v === '0' ? false : null;
+  } catch { return null; }
+}
+
+// Asks for permission on the first "on" only (ADDENDUM A20).
 export function setRunNotify(runId, on) {
   runNotify.set(runId, !!on);
+  try { localStorage.setItem(NOTIFY_KEY + runId, on ? '1' : '0'); } catch { /* memory only */ }
   if (on) requestNotifyPermission();
 }
-export const notifyOn = runId => settings.notify.web !== false && runNotify.get(runId) !== false;
+export function notifyOn(runId) {
+  const own = runNotify.has(runId) ? runNotify.get(runId) : storedNotify(runId);
+  return own === null ? settings.notify.web !== false : own;
+}
 
 export function requestNotifyPermission() {
   if (permissionAsked || typeof Notification === 'undefined' || Notification.permission !== 'default') return;

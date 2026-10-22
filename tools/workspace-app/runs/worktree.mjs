@@ -25,15 +25,15 @@
 // Install and generate run through gates/commands.mjs (runCommand), which tests replace.
 import { createHash, randomBytes } from 'node:crypto';
 import { realpathSync } from 'node:fs';
-import { appendFile, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { setTimeout as sleep } from 'node:timers/promises';
 import {
   addPaths, allDone, assertRev, changedFiles, cleanPath, commitTree, diffNames, diffText, git, GitError, gitPaths, headInfo,
   operationInProgress, stashSummary, statusSummary, toplevel, treeHash, worktreeKind, worktrees,
 } from '../core/git.mjs';
 import { anyListening } from '../core/ports.mjs';
+import { writeJsonAtomic } from '../core/datadir.mjs';
 
 export const APP_PREFIX = 'app/';
 export const ARCHIVE_PREFIX = 'archive/';
@@ -108,25 +108,6 @@ export function samePath(a, b) {
 function inside(child, parent) {
   const rel = relative(norm(real(parent)), norm(real(child)));
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
-}
-
-async function writeJsonAtomic(file, data) {
-  await mkdir(dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
-  for (let i = 0; ; i++) {
-    try {
-      await rename(tmp, file);
-      return;
-    } catch (e) {
-      // Antivirus and the search indexer hold files for a moment on Windows.
-      if (i >= 5 || !['EPERM', 'EBUSY', 'EACCES'].includes(e.code)) {
-        await rm(tmp, { force: true });
-        throw e;
-      }
-      await sleep(50 * 2 ** i);
-    }
-  }
 }
 
 async function readJsonFile(file) {

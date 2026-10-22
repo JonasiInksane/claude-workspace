@@ -252,7 +252,11 @@ export function routes(ctx) {
 
       const [next, health, inbox, todaySoFar, lastWin] = await Promise.all([
         part(() => nextUpAcross(ctx, ordered, runs)),
-        Promise.all(projects.map(pr => part(() => healthOf(ctx, pr)))),
+        // A project whose health can't be read still names itself, so its card has a title.
+        Promise.all(projects.map(async pr => {
+          const h = await part(() => healthOf(ctx, pr));
+          return h && h.error ? { project: pr.name, label: pr.label, ...h } : h;
+        })),
         part(() => inboxPart(ctx.root)),
         part(async () => {
           if (!focus) return null;

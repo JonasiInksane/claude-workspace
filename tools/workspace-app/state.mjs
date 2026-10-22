@@ -7,7 +7,8 @@
 // a fresh one, so a refresh right after a change always sees it.
 //
 // Runs (SPEC 4): each project gets linked and realPath (a junction to a checkout elsewhere, and
-// where Claude and git run), hasProfile (dataDir/profiles/<name>.json exists) and its counts of
+// where Claude and git run), hasProfile (dataDir/profiles/<name>.json exists), profileLabel (that
+// profile's label, the only field read from it) and its counts of
 // waiting and running runs; the top level gets runs: { waiting, running, atReviewGate }. The
 // counts come from the runs index (runs/store.mjs listRuns) through a summary cached for 2 s per
 // data folder, so a page that polls state doesn't reread the index on every call.
@@ -79,6 +80,16 @@ function placeOf(root, name, dir) {
   try { return { linked: true, realPath: realProjectDir(root, name) }; } catch { return { linked: true, realPath: '' }; }
 }
 
+// The label a project's profile gives it ("Example"), or '' without a readable profile. Only that
+// one field is read; the profile itself stays private.
+function profileLabel(dataDir, name) {
+  if (!PROJECT_RE.test(name)) return '';
+  try {
+    const label = JSON.parse(readFileSync(join(dataDir, 'profiles', `${name}.json`), 'utf8').replace(/^﻿/, '')).label;
+    return typeof label === 'string' ? label.slice(0, 80) : '';
+  } catch { return ''; }
+}
+
 function projectsState(root, libCount, dataDir, runs) {
   return [...projectNameMap(root).values()].sort((a, b) => a.localeCompare(b)).map(name => {
     const dir = projectDir(root, name);
@@ -103,6 +114,7 @@ function projectsState(root, libCount, dataDir, runs) {
       label,
       ...placeOf(root, name, dir),
       hasProfile: PROJECT_RE.test(name) && existsSync(join(dataDir, 'profiles', `${name}.json`)),
+      profileLabel: profileLabel(dataDir, name),
       waiting: counts.waiting,
       running: counts.running,
       hasClaudeMd: existsSync(join(dir, 'CLAUDE.md')) || existsSync(join(dir, '.claude', 'CLAUDE.md')),
@@ -133,6 +145,7 @@ async function build(root, tools, dataDir) {
 
   const flows = listFlows(root).map(f => ({
     slug: f.slug, title: f.title, description: f.description, target: f.target, project: f.project, agent: f.agent,
+    ask: f.ask || '', askRequired: !!f.askRequired,
     error: f.error, images: flowImages(root, f.slug).length, launch: f.error ? {} : flowLaunch(f),
   }));
   const archivedFlows = listArchivedFlows(root).map(f => ({ archivedAs: f.archivedAs, title: f.title }));
@@ -158,7 +171,8 @@ async function build(root, tools, dataDir) {
     projects,
     flows,
     archivedFlows,
-    repos: { error: readRepos(root).error, list, unlisted, have },
+    // linked: a junction for it exists, even when its target is gone (the page shows "link broken").
+    repos: { error: readRepos(root).error, list: list.map(r => ({ ...r, linked: isLinked(root, r.name) })), unlisted, have },
     catalog: catalogForUi(),
     assets,
     runs: { waiting: runs.waiting, running: runs.running, atReviewGate: runs.atReviewGate },

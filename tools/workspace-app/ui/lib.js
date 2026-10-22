@@ -80,9 +80,12 @@ export function keepFocus(container, fn) {
 }
 
 // True when a key press is typing (an input, textarea, select or editable element has it).
+// Checkboxes, radios and button inputs take no text, so a shortcut letter there is not typing.
+const NO_TEXT_INPUTS = new Set(['checkbox', 'radio', 'button', 'submit', 'reset']);
 export function isTyping(target) {
   if (!target || !target.closest) return false;
-  return !!target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]');
+  const el = target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]');
+  return !!el && !(el.tagName === 'INPUT' && NO_TEXT_INPUTS.has(String(el.type).toLowerCase()));
 }
 
 // ---------------------------------------------------------------- formatting

@@ -208,7 +208,7 @@ test('GET /api/run-file: names from a fixed list, the plan from run.json, gate l
   for (const q of ['name=log&gate=99-nope&check=test:web', 'name=log&gate=06-checks-r2&check=test:nope', 'name=log&gate=06-checks-r2&check=g0.diffcheck']) {
     assert.equal((await get(`/api/run-file?id=${REVIEW_GATE}&${q}`)).status, 404, q);
   }
-  assert.deepEqual(Object.keys(RUN_FILES).sort(), ['answer', 'commit-msg', 'diagnosis', 'diff', 'proof', 'review', 'stopped-patch', 'triage']);
+  assert.deepEqual(Object.keys(RUN_FILES).sort(), ['answer', 'candidates', 'commit-msg', 'diagnosis', 'diff', 'proof', 'review', 'stopped-patch', 'triage']);
 });
 
 test('text is redacted and cut at 2 MB', async () => {
@@ -302,7 +302,8 @@ test('handlers with a fake manager: start returns the run id; actions get the pa
     action: async (id, name, payload) => {
       calls.push(['action', id, name, payload]);
       if (name === 'park') throw new HttpError(409, 'The run is busy with a stage. Wait for it, or cancel the run.');
-      return { message: 'Done it.', run: { id, project: 'example', pipeline: 'refactor', status: 'running', stages: [] } };
+      const extra = name === 'next-slice' ? { childRunId: '261022-120500-feature-y' } : name === 'report' ? { report: { message: 'Saved privately.', file: 'r.md', path: 'C:\\x' } } : {};
+      return { message: 'Done it.', ...extra, run: { id, project: 'example', pipeline: 'refactor', status: 'running', stages: [] } };
     },
     actionsFor: async () => [{ action: 'cancel', enabled: true, reason: '' }],
   };
@@ -317,6 +318,10 @@ test('handlers with a fake manager: start returns the run id; actions get the pa
   assert.equal(out.message, 'Done it.');
   assert.deepEqual(out.run.actions, [{ action: 'cancel', enabled: true, reason: '' }]);
   await assert.rejects(table['POST /api/runs/park'](fakeReq({ id: PLAN })), e => e.status === 409);
+  // next-slice hands back the child run to open; report says where it saved (and nothing more).
+  assert.equal((await table['POST /api/runs/next-slice'](fakeReq({ id: PLAN }))).childRunId, '261022-120500-feature-y');
+  assert.deepEqual((await table['POST /api/runs/report'](fakeReq({ id: PLAN }))).report, { message: 'Saved privately.', file: 'r.md' });
+  assert.equal(out.childRunId, undefined);
   assert.ok(Object.keys(table).every(k => /^(GET|POST) \/api\/[a-z0-9/-]+$/.test(k)));
   const without = routes({ dataDir: join(base, 'none') });
   await assert.rejects(without['POST /api/runs'](fakeReq({ project: 'example', pipeline: 'explain' })), e => e.status === 503);

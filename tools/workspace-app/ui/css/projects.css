@@ -17,6 +17,20 @@
 .memory .files button.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .memory pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 12.5px; max-height: 60vh; overflow: auto; }
 
+/* Linked checkouts: the real path wraps inside its badge; a disabled button's reason gets its own line */
+.linked-badge { display: inline-block; max-width: 100%; white-space: normal; overflow-wrap: anywhere; font-weight: 500; border-radius: 8px; }
+.linked-badge .mono { font-size: var(--t-sm); }
+.project-reason { flex-basis: 100%; }
+
+/* The Repositories card, folded at the bottom: its summary is the card head */
+details.repos > summary { cursor: pointer; list-style: none; justify-content: flex-start; }
+details.repos > summary::-webkit-details-marker { display: none; }
+details.repos > summary::before { content: "▸"; color: var(--muted); width: 12px; }
+details.repos[open] > summary::before { content: "▾"; }
+details.repos:not([open]) > summary { border-bottom: 0; }
+details.repos > summary:hover h3 { color: var(--accent); }
+.repos-tools { display: flex; justify-content: space-between; align-items: center; gap: var(--s3); flex-wrap: wrap; margin-bottom: var(--s2); }
+
 @media (max-width: 760px) {
   .agent { grid-template-columns: 1fr; }
   .agent .row-actions { grid-row: auto; grid-column: 1; justify-content: flex-start; }

@@ -1,0 +1,60 @@
+/* The runs list (UI-LISTS, views/runs.js). Linked after app.css in index.html; narrow-screen rules
+   for this view go here too. Below 1180 px the table turns into one small card per run, each
+   value under its column name (the td's data-label), so nothing scrolls sideways. */
+
+/* ---------- Filters */
+.runs-filters { display: flex; flex-wrap: wrap; gap: var(--s3); align-items: flex-end; margin-bottom: var(--s4); }
+.runs-filter { display: grid; gap: 2px; font-size: var(--t-sm); font-weight: 600; color: var(--muted); }
+.runs-filter select {
+  min-width: 170px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--card); color: var(--text); font-size: var(--t-md); font-weight: 400;
+}
+
+/* ---------- The table */
+.runs-wrap { overflow-x: auto; }
+table.runs-table { width: 100%; border-collapse: collapse; font-size: var(--t-md); }
+.runs-table th {
+  text-align: left; font-size: var(--t-sm); color: var(--muted); font-weight: 600; white-space: nowrap;
+  padding: 8px; border-bottom: 1px solid var(--border);
+}
+.runs-table td { padding: 9px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.runs-table tbody tr:last-child td { border-bottom: 0; }
+.runs-table tbody tr:hover td { background: var(--hover); }
+/* Waiting and running rows get the same left edge as the .row cards elsewhere */
+.runs-table tr.waiting td:first-child { box-shadow: inset 3px 0 0 var(--amber); }
+.runs-table tr.running td:first-child { box-shadow: inset 3px 0 0 var(--blue); }
+.runs-cell-title { min-width: 180px; }
+.runs-title { font-weight: 600; overflow-wrap: anywhere; }
+.runs-sub { color: var(--muted); font-size: var(--t-sm); overflow-wrap: anywhere; }
+.runs-status { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.runs-num { white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* A long branch name is cut with an ellipsis (its title and the screen reader have it whole) */
+.runs-branch code { display: inline-block; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.runs-cell-open { text-align: right; white-space: nowrap; }
+.runs-more { justify-content: center; }
+
+@media (max-width: 1180px) {
+  .runs-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .runs-table, .runs-table tbody, .runs-table td { display: block; }
+  .runs-table tbody tr {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px 16px;
+    padding: var(--s3) var(--s4); border-bottom: 1px solid var(--border);
+  }
+  .runs-table tbody tr:last-child { border-bottom: 0; }
+  .runs-table td { padding: 0; border: 0; min-width: 0; }
+  .runs-table tbody tr:hover td { background: none; }
+  .runs-table td[data-label]::before {
+    content: attr(data-label); display: block; font-size: var(--t-xs); color: var(--muted);
+    text-transform: uppercase; letter-spacing: .05em; font-weight: 600;
+  }
+  .runs-cell-title, .runs-cell-open { grid-column: 1 / -1; }
+  .runs-branch code { max-width: 100%; }
+  .runs-cell-open { text-align: left; }
+  .runs-table tr.waiting td:first-child, .runs-table tr.running td:first-child { box-shadow: none; }
+  .runs-table tr.waiting { box-shadow: inset 3px 0 0 var(--amber); }
+  .runs-table tr.running { box-shadow: inset 3px 0 0 var(--blue); }
+}
+@media (max-width: 760px) {
+  .runs-filters { display: grid; grid-template-columns: 1fr; }
+  .runs-filter select { min-width: 0; width: 100%; }
+}

@@ -43,6 +43,8 @@ export const RUN_FILES = Object.freeze({
   answer: ['final/answer.json'],
   diagnosis: ['final/diagnosis.json'],
   triage: ['final/triage.json'],
+  // The architecture scan's candidates ({ref, probe, path, line, text}) for the decide gate.
+  candidates: ['inputs/candidates.json'],
 });
 const GATE_DIR_RE = /^\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const CHECK_ID_RE = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,99}$/;
@@ -364,7 +366,11 @@ export function routes({ dataDir, getEngine }) {
       const manager = await engine();
       const out = await manager.action(id, name, payload);
       const run = (out && out.run) || await store.findRun(dataDir, id).catch(() => null);
-      return { ok: true, message: (out && out.message) || 'Done.', run: await viewFor(manager, run) };
+      // next-slice answers with the child run to open, report with where it saved the report.
+      const extra = {};
+      if (out && out.childRunId && RUN_ID_RE.test(String(out.childRunId))) extra.childRunId = String(out.childRunId);
+      if (out && out.report && typeof out.report === 'object') extra.report = { message: redact(String(out.report.message || '')), file: String(out.report.file || '') };
+      return { ok: true, message: (out && out.message) || 'Done.', ...extra, run: await viewFor(manager, run) };
     };
   }
   return table;

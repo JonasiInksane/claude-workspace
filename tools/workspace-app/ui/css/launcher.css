@@ -1,0 +1,154 @@
+/* The launcher (UI-LAUNCHER, views/launcher.js; mockup #v-launcher). Linked after app.css in
+   index.html; narrow-screen rules for this view go here too. Every rule is scoped to the
+   launcher's section (#view-launcher), so its names (.plan, .field, .seg, .care...) can't leak
+   into the other views. A choice is never shown by colour alone: checked pills and cards are
+   also bold, a chosen image gets a check mark, and a disabled card is greyed with its reason. */
+
+/* ---------- Pipeline pills */
+#view-launcher .pipes { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: var(--s3); }
+#view-launcher .pipe {
+  border: 1px solid var(--border); background: var(--card); border-radius: 999px; padding: 4px 12px;
+  cursor: pointer; font-weight: 500; font-size: var(--t-md);
+}
+#view-launcher .pipe:hover { border-color: var(--accent); }
+#view-launcher .pipe[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); font-weight: 700; }
+/* A pipeline that can't start here: still pressable, the form says why */
+#view-launcher .pipe.off { color: var(--muted); border-style: dashed; }
+
+/* ---------- The form and the plan beside it */
+#view-launcher .launch-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(300px, 1fr); }
+#view-launcher .launch-form { padding: var(--s5); display: grid; gap: var(--s4); align-content: start; min-width: 0; }
+#view-launcher .launch-plan {
+  padding: var(--s5); background: var(--panel); border-left: 1px solid var(--border);
+  border-radius: 0 var(--radius) 0 0; min-width: 0;
+}
+#view-launcher .launch-plan h3 { font-size: var(--t-md); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 var(--s2); }
+#view-launcher .launch-plan h3:not(:first-child) { margin-top: var(--s4); }
+#view-launcher .launch-plan .where { margin-top: var(--s3); overflow-wrap: anywhere; }
+/* While a new preview loads, the old one fades a little (no animation) */
+#view-launcher [aria-busy="true"] { opacity: .6; }
+
+/* ---------- Fields */
+#view-launcher .field { display: grid; gap: 4px; font-weight: 600; font-size: var(--t-md); border: 0; margin: 0; padding: 0; min-width: 0; }
+#view-launcher .field > label { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+#view-launcher .field.big-q > label > span:first-child,
+#view-launcher .field.big-q > legend { font-size: var(--t-lg); }
+#view-launcher .field legend { padding: 0; margin-bottom: 4px; }
+#view-launcher .field small { font-weight: 400; color: var(--muted); }
+#view-launcher .field input[type="text"], #view-launcher .field textarea {
+  padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg);
+  font-weight: 400; font-size: var(--t-base); min-width: 0; width: 100%;
+}
+#view-launcher .field input.narrow { width: 6em; }
+#view-launcher .field textarea { resize: vertical; min-height: 64px; }
+#view-launcher .field [aria-invalid="true"] { border-color: var(--red); }
+#view-launcher .field .form-error { margin-top: 0; font-weight: 400; }
+#view-launcher .field .note { font-weight: 400; margin-top: 6px; }
+#view-launcher label.check { font-size: var(--t-md); }
+
+/* Options and the prompt preview: collapsible boxes */
+#view-launcher details.opts { border: 1px solid var(--border); border-radius: 10px; min-width: 0; }
+#view-launcher details.opts > summary {
+  cursor: pointer; padding: 10px 12px; font-size: var(--t-md); display: flex; gap: 8px; flex-wrap: wrap; list-style: none;
+}
+#view-launcher details.opts > summary::-webkit-details-marker { display: none; }
+#view-launcher details.opts > summary::before { content: "\25B8"; color: var(--muted); }
+#view-launcher details.opts[open] > summary::before { content: "\25BE"; }
+#view-launcher details.opts[open] > summary { border-bottom: 1px solid var(--border); }
+#view-launcher .opts-body { padding: var(--s3); display: grid; gap: var(--s4); }
+#view-launcher details.opts > pre { margin: var(--s3); }
+
+/* A select as pills (radios) */
+#view-launcher .seg { display: flex; flex-wrap: wrap; gap: 6px; font-weight: 400; }
+#view-launcher .seg label { position: relative; cursor: pointer; }
+#view-launcher .seg input, #view-launcher .care input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+#view-launcher .seg span {
+  display: inline-block; border: 1px solid var(--border); border-radius: 999px; padding: 3px 11px;
+  font-size: var(--t-md); background: var(--card);
+}
+#view-launcher .seg input:checked + span { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+#view-launcher .seg input:focus-visible + span, #view-launcher .care input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* "How careful?" cards */
+#view-launcher .care { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; font-weight: 400; }
+#view-launcher .care label { position: relative; cursor: pointer; }
+#view-launcher .care span {
+  display: block; height: 100%; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  font-size: var(--t-sm); color: var(--muted); background: var(--card);
+}
+#view-launcher .care span b { display: block; font-size: var(--t-base); color: var(--text); }
+#view-launcher .care input:checked + span { background: var(--accent-soft); border-color: var(--accent); border-width: 2px; padding: 7px 9px; }
+#view-launcher .care input:checked + span b { color: var(--accent); }
+#view-launcher .care input:disabled + span { opacity: .55; cursor: not-allowed; }
+#view-launcher .care input:disabled + span b::after { content: " (off)"; font-weight: 400; }
+
+/* The finding picker: radios in a scrolling list */
+#view-launcher .pick-list { display: grid; gap: 6px; max-height: 320px; overflow: auto; padding: 2px; font-weight: 400; }
+#view-launcher .pick {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; cursor: pointer;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card);
+}
+#view-launcher .pick:hover { border-color: var(--accent); }
+#view-launcher .pick:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+#view-launcher .pick input { margin: 3px 0 0; }
+#view-launcher .pick-body { display: grid; gap: 2px; min-width: 0; }
+#view-launcher .pick-top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+#view-launcher .pick-top .mono { font-weight: 600; }
+#view-launcher .pick-title { overflow-wrap: anywhere; }
+#view-launcher .pick small { color: var(--muted); font-size: var(--t-sm); }
+
+/* The image picker: thumbnails as radios */
+#view-launcher .img-pick {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px;
+  max-height: 340px; overflow: auto; padding: 2px; font-weight: 400;
+}
+#view-launcher .img-pick label { position: relative; cursor: pointer; min-width: 0; }
+#view-launcher .img-pick input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+#view-launcher .img-card {
+  display: flex; flex-direction: column; height: 100%; border: 1px solid var(--border); border-radius: 8px;
+  overflow: hidden; background: var(--card); font-size: var(--t-sm);
+}
+#view-launcher .img-card img, #view-launcher .img-none { width: 100%; aspect-ratio: 4 / 3; background: var(--code-bg); }
+#view-launcher .img-card img { display: block; object-fit: cover; }
+#view-launcher .img-none { display: grid; place-items: center; color: var(--muted); }
+#view-launcher .img-name { padding: 4px 6px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#view-launcher .img-card small { padding: 0 6px 4px; color: var(--muted); }
+#view-launcher .img-pick input:checked + .img-card { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+#view-launcher .img-pick input:checked + .img-card .img-name { color: var(--accent); font-weight: 600; }
+#view-launcher .img-pick input:checked + .img-card .img-name::before { content: "\2713  "; }
+#view-launcher .img-pick input:focus-visible + .img-card { outline: 2px solid var(--accent); outline-offset: 2px; }
+#view-launcher .img-note { grid-column: 1 / -1; }
+
+/* ---------- The plan: stages with who, what it cannot do */
+#view-launcher .plan { list-style: none; margin: 0; padding: 0; }
+#view-launcher .plan li {
+  display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 8px; padding: 5px 0;
+  font-size: var(--t-md); border-bottom: 1px dashed var(--border);
+}
+#view-launcher .plan li:last-child { border-bottom: 0; }
+#view-launcher .plan small { display: block; color: var(--muted); font-size: var(--t-sm); overflow-wrap: anywhere; }
+#view-launcher .who { font-size: var(--t-sm); font-weight: 600; border-radius: 999px; padding: 0 6px; text-align: center; height: fit-content; margin-top: 1px; }
+#view-launcher .who.code { background: var(--code-bg); color: var(--muted); }
+#view-launcher .who.claude { background: var(--violet-soft); color: var(--violet); }
+#view-launcher .who.you { background: var(--amber-soft); color: var(--amber); }
+#view-launcher .cannot { margin: 0; padding-left: 18px; font-size: var(--t-md); display: grid; gap: 2px; }
+
+/* ---------- Refusals and the footer */
+#view-launcher .launch-notes { display: grid; gap: 6px; padding: var(--s3) var(--s5); }
+#view-launcher .launch-notes:first-child { padding-top: var(--s4); padding-bottom: 0; }
+#view-launcher .launch-grid + .launch-notes { border-top: 1px solid var(--border); }
+#view-launcher .launch-foot { justify-content: flex-end; }
+#view-launcher .launch-why { color: var(--text); max-width: 60ch; }
+
+/* ---------- Narrow screens (the breakpoints of app.css: 1080, 760) */
+@media (max-width: 1080px) {
+  #view-launcher .launch-grid { grid-template-columns: 1fr; }
+  #view-launcher .launch-plan { border-left: 0; border-top: 1px solid var(--border); border-radius: 0; }
+}
+@media (max-width: 760px) {
+  #view-launcher .launch-form, #view-launcher .launch-plan { padding: var(--s4); }
+  #view-launcher .launch-notes { padding: var(--s3) var(--s4); }
+  #view-launcher .care { grid-template-columns: 1fr; }
+  #view-launcher .launch-foot .push { flex-basis: 100%; margin-left: 0; }
+  #view-launcher .launch-why { flex-basis: 100%; }
+}

@@ -5,7 +5,7 @@
 // Run: node --test tools/workspace-app/routes/cockpit.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { selfRecord } from '../core/proc.mjs';
 import { acquire } from '../runs/locks.mjs';
@@ -208,6 +208,15 @@ test('POST /api/project/profile-init copies the example once; a second time is 4
   assert.equal((await call(api, 'POST /api/project/profile-init', { body: { project: 'ghost' } })).status, 404);
   assert.equal((await call(api, 'POST /api/project/profile-init', { body: { project: 'x/../y' } })).status, 400);
   assert.ok(!existsSync(join(h.dataDir, 'profiles', 'ghost.json')));
+});
+
+test('POST /api/project/profile-init in a hub without the example profile is a 404, not a crash', async t => {
+  const h = await routeHub(t, { profile: null });
+  rmSync(join(h.root, 'pipelines', 'app', 'profiles', 'example.json'));
+  const r = await call(routes(h.ctx, quietDeps), 'POST /api/project/profile-init', { body: { project: 'example' } });
+  assert.equal(r.status, 404);
+  assert.match(r.body.error, /example profile .* could not be read/);
+  assert.ok(!existsSync(join(h.dataDir, 'profiles', 'example.json')));
 });
 
 test('POST /api/project/worktree-setup starts the setup-worktree pipeline; the engine\'s 409 and the checks before it come through', async t => {

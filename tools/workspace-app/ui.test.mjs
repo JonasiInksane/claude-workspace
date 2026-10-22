@@ -55,12 +55,16 @@ test('route aliases: #library shows views/tools.js, the old #home shows Today', 
   assert.equal(hashFor('library'), '#library');
 });
 
+// View files that stay on disk but are no longer views (the old dashboard, replaced by Today).
+const RETIRED_VIEWS = ['home'];
+
 test('views: every ui/views/<id>.js is registered in main.js, says its id, and its CSS is linked', () => {
   const main = read('main.js');
   const index = read('index.html');
   const registry = main.match(/const VIEWS = \[([^\]]*)\]/)[1].split(',').map(s => s.trim()).filter(Boolean);
   const views = readdirSync(join(uiDir, 'views')).filter(n => n.endsWith('.js')).map(n => n.slice(0, -3));
-  assert.deepEqual([...views].sort(), [...registry].sort(), 'VIEWS in main.js lists exactly the files in ui/views/');
+  assert.deepEqual(views.filter(id => !RETIRED_VIEWS.includes(id)).sort(), [...registry].sort(),
+    'VIEWS in main.js lists exactly the files in ui/views/ (apart from retired ones)');
   for (const id of views) {
     assert.match(main, new RegExp(`import ${id} from './views/${id}\\.js';`), `main.js imports views/${id}.js as ${id}`);
     const src = read(`views/${id}.js`);
@@ -76,17 +80,18 @@ test('views: every ui/views/<id>.js is registered in main.js, says its id, and i
   assert.ok(existsSync(join(uiDir, 'app.css')) && index.indexOf('/app.css') < index.indexOf('/css/'), 'app.css comes first');
 });
 
-test('views: the shell registers the wave-3 screens; home stays registered but leaves the nav', () => {
+test('views: the shell registers the wave-3 screens; Today replaced the old dashboard (home)', () => {
   const main = read('main.js');
   const registry = main.match(/const VIEWS = \[([^\]]*)\]/)[1].split(',').map(s => s.trim());
-  for (const id of ['today', 'cockpit', 'health', 'launcher', 'run', 'review', 'runs', 'home', 'tools']) {
+  for (const id of ['today', 'cockpit', 'health', 'launcher', 'run', 'review', 'runs', 'tools']) {
     assert.ok(registry.includes(id), `${id} is in VIEWS`);
   }
+  assert.ok(!registry.includes('home'), 'home is no longer a view (#home shows Today)');
   assert.equal(registry[0], 'today', 'Today comes first');
   // The plain nav entries: no Dashboard (home) among them.
   const plain = main.match(/for \(const v of \[([^\]]*)\]\) \{\r?\n {4}if \(v\.visible/)[1].split(',').map(s => s.trim());
   assert.deepEqual(plain, ['projects', 'flows', 'tools', 'images', 'assets']);
-  assert.match(read('views/today.js'), /import home from '\.\/home\.js';/, 'Today renders the old dashboard until wave 3b');
+  assert.doesNotMatch(code(read('views/today.js')), /from '\.\/home\.js'/, 'Today no longer renders the old dashboard');
 });
 
 test('index.html: the shell dialogs, the live regions, and nothing the CSP would block', () => {

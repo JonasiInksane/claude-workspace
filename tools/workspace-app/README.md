@@ -1,9 +1,11 @@
 # Workspace app
 
-A small local app for this workspace, opened in its own Edge window: a dashboard (inbox,
-flows, active reports, projects), flows (saved prompts with reference images, run in the hub,
-a project or one agent), a Tools view with a button for every skill and workspace tool,
-project cards that start Claude, per-project agents (create, edit, archive and restore, start
+A small local app for this workspace, opened in its own Edge window: Today (what waits for
+you, what runs, next up, health, inbox, active reports), a cockpit and Health screen per
+profiled project, headless pipeline runs (launcher, live run, review gate and commit; see
+"Runs" below), flows (saved prompts with reference images, run in the hub, a project or one
+agent), the Library with a button for every skill and workspace tool, the pipelines and the
+settings, project cards that start Claude, per-project agents (create, edit, archive and restore, start
 isolated, view memory), image upload (drag and drop, Ctrl+V, or choose files) into the hub
 inbox, a chosen agent's image folder or a flow, and an Assets view for projects with an asset
 pipeline: 3D models (`projects/game-dev`: renders, check results, a 3D view and your verdict)
@@ -35,7 +37,7 @@ runs just opens another window.
 | `state.mjs` | `buildState`: everything the page shows (`GET /api/state`), async; git runs as child processes, requests during a build share it |
 | `lookup.mjs` | Finds the project, agent, flow, image target or asset project a request names (or throws 404/400); `launchableOrThrow` |
 | `routes/*.mjs` | The JSON API by area: `state`, `images`, `agents`, `assets`, `launch` (start Claude, open places), `flows`, `tools` (skills, workspace tools), `projects` (new, clone, list repos) |
-| `catalog.mjs` | The Tools view's list: skills (with their form fields and how the prompt is built) and workspace tools |
+| `catalog.mjs` | The Library's list: skills (with their form fields and how the prompt is built) and workspace tools |
 | `uploads.mjs` | Image targets, type check by content, dated folders, no overwrites |
 | `launch.mjs` | Builds the commands for terminals, Explorer, the editor and the window; runs workspace tools and collects their output |
 | `claude-prompt.mjs` | Runs in the new terminal: starts `claude <prompt>` with the prompt (and readable folders) from a prompt file, `tools/lib/prompt-file.mjs` |
@@ -52,7 +54,7 @@ runs just opens another window.
 | `ui/store.js` | The shared state (`state`, `view`, `sub`, `currentProject`, `settings`, `pipelines`, run signals), `setState`, `subscribe`, `refresh`, `go()`, the hash helpers, `openLauncher` and the title badge |
 | `ui/dialog.js` | `openDialog` (with an unsaved-changes guard), `closeDialog`, `formDialog` |
 | `ui/parts/*.js` | Shared pieces: the palette, the intent box, sparkline, bar, status dot and badge |
-| `ui/views/*.js` | One file per view: `today` (shows the old `home` view until it is built), `cockpit`, `health`, `launcher`, `run`, `review`, `runs` (placeholders until wave 3b), `flows`, `tools` (Library), `projects`, `assets`, `images`, with their dialogs |
+| `ui/views/*.js` | One file per view: `today`, `cockpit`, `health`, `launcher`, `run`, `review`, `runs`, `flows`, `tools` (Library), `projects`, `assets`, `images`, with their dialogs (`home`, the old dashboard, is no longer a view; `#home` shows Today) |
 | `ui/app.css`, `ui/css/*.css` | Tokens, layout and shared components; styles for one view in `css/<view>.css` |
 | `ui/viewer.js` | The 3D view: a small WebGL2 GLB viewer, no libraries (base colour, metal/roughness and normal maps; studio light and a fake sky; turntable, wireframe). No Draco or meshopt compression, skins or morphs |
 | `ui/sprite-viewer.js` | The sprite views, no libraries: `loadSprite` (the sheet's Aseprite-style JSON, frames by `<anim>_<direction>` tag), an HD-2D diorama (WebGL2: the sprite as a billboard in a small pixel-art scene, sun shadows the sprite casts, a torch, normal-mapped light and glowing pixels, tilt-shift depth of field, bloom, vignette, day/night, a walk-around mode that faces the way it moves) and a pixel view (integer zoom, play/step). A missing direction plays its mirror (west from east), then the nearest one |
@@ -142,7 +144,7 @@ the project locks), `baselines/`, `checks/`, `findings/`, `metrics/`, `worktrees
 - Programs start with argument lists, never through a shell string. PowerShell gets its command
   base64-encoded. Project folders with unusual characters in their name can't be started from
   the app.
-- The Tools view sends only an id and form values. The server builds every prompt and command
+- The Library sends only an id and form values. The server builds every prompt and command
   line from `catalog.mjs` and checks each value (known project, listed option, length, date
   format, kebab-case names, a plain `https://` or `git@` clone URL), so the page can't start
   anything that isn't on that list.

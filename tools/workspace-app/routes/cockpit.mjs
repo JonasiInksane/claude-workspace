@@ -450,6 +450,8 @@ export function routes(ctx, deps = {}) {
       let r;
       try { r = createFromExample(ctx.root, ctx.dataDir, p.name); } catch (e) {
         if (e && e.status) throw new HttpError(e.status, e.message);
+        // A hub without pipelines/app/profiles/example.json: nothing to copy, not a crash.
+        if (e && /example profile .* could not be read/.test(e.message)) throw new HttpError(404, e.message);
         throw e;
       }
       return { ok: true, path: r.path, message: `Created the ${p.name} profile from the example. Replace its synthetic values with the project's own.` };

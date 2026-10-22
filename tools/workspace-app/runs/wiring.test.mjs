@@ -48,6 +48,15 @@ test('createEngine: the manager with the launcher functions; without claude a st
   assert.equal(typeof m.engine.claudeStage.claudeEnv, 'function');
   await assert.rejects(createEngine({ dataDir: dir }), /workspace root/);
   await assert.rejects(createEngine({ root: dir }), /data folder/);
+
+  // Fake-Claude mode: Take over never reaches the launcher (no real terminal, no real claude).
+  const saved = process.env.WS_APP_TEST;
+  process.env.WS_APP_TEST = '1';
+  t.after(() => { if (saved === undefined) delete process.env.WS_APP_TEST; else process.env.WS_APP_TEST = saved; });
+  const fake = await createEngine({ root: join(dir, 'hub'), dataDir: join(dir, 'data2'), actions, engineOptions: { fakeClaude: true } });
+  assert.deepEqual(await fake.engine.startClaude({ dir: 'y', resume: 'sid-1' }), { sessionId: 'sid-1', fake: true });
+  assert.equal(calls.length, 1, 'the launcher was not called');
+  assert.equal(typeof fake.engine.runTool, 'function');
 });
 
 test('createEngine: a function command is asked per stage with the stage options', async t => {

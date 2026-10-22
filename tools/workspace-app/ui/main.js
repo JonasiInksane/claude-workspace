@@ -43,8 +43,9 @@ import assets from './views/assets.js';
 import images from './views/images.js';
 
 // Every view module. A new view: its module here, and its CSS file (if any) in index.html.
-// home stays registered (Today renders it until wave 3b) but has no nav entry.
-const VIEWS = [today, cockpit, health, launcher, run, review, runs, home, flows, tools, projects, assets, images];
+// home (the old dashboard) is no longer a view: Today replaced it, and #home shows Today
+// (store.ROUTE_VIEWS). Its import above stays until views/home.js itself is retired.
+const VIEWS = [today, cockpit, health, launcher, run, review, runs, flows, tools, projects, assets, images];
 const byId = new Map(VIEWS.map(v => [v.id, v]));
 const sections = new Map();
 let shown = ''; // the view on screen, '' before the first show()

@@ -1,6 +1,16 @@
-// Projects: the Repositories card (projects/repos.json) and one card per project, with its
-// agents (start isolated, edit, memory, images, new, archive and restore).
-import { act, api, h, launch, openPlace, plural, qs, toast } from '../lib.js';
+// Projects: one card per project, with its agents (start isolated, edit, memory, images, new,
+// archive and restore), then the Repositories card (projects/repos.json), folded at the bottom.
+//
+// Linked checkouts (SPEC 5.8, R24): a repo that is listed but not on this PC offers Clone and
+// "Link existing checkout…", which links a checkout that lives elsewhere as projects/<name> (a
+// junction; POST /api/projects/link checks the folder, its git top and its origin, and the
+// dialog shows a refusal inline). A linked project shows "Linked: <real path>" and Unlink, which
+// removes only the link (POST /api/projects/unlink; the checkout is never touched). A link whose
+// folder is gone says so and offers Unlink.
+//
+// The view repaints only when the projects, repos or tools changed, so a live-update refresh
+// keeps folded sections, open dialogs and the focus as they are.
+import { act, api, confirmDialog, h, keepFocus, keyed, launch, openPlace, plural, qs, toast } from '../lib.js';
 import { clearGuard, closeDialog, dialog, formDialog, openDialog } from '../dialog.js';
 import { go, refresh, state } from '../store.js';
 import { skillById, skillDialog } from './tools.js';
@@ -17,19 +27,57 @@ function agentRow(p, a) {
       h('span', { class: 'badge' }, plural(a.images, 'image'))),
     h('div', { class: 'agent-desc' }, why || a.description),
     h('div', { class: 'row-actions' },
-      h('button', {
-        class: 'btn primary small', disabled: !usable || !p.launchable || !state.tools.claude,
+      keyed(h('button', {
+        class: 'btn primary small', type: 'button', disabled: !usable || !!launchProblem(p),
         title: 'Opens a terminal with only this agent\'s memory and images',
         on: { click: () => launch({ kind: 'agent', project: p.name, agent: a.name }) },
-      }, 'Start'),
-      h('button', { class: 'btn small', disabled: !a.valid, title: 'Role, description, model and instructions', on: { click: () => editAgentDialog(p, a) } }, 'Edit'),
-      h('button', { class: 'btn small', disabled: !a.isolated || !a.valid, on: { click: () => memoryDialog(p.name, a.name) } }, 'Memory'),
-      h('button', { class: 'btn small', disabled: !a.valid, on: { click: () => { setTarget({ project: p.name, agent: a.name }); go('images'); } } }, 'Images')));
+      }, 'Start'), `agent-${p.name}-${a.name}-start`),
+      keyed(h('button', { class: 'btn small', type: 'button', disabled: !a.valid, title: 'Role, description, model and instructions', on: { click: () => editAgentDialog(p, a) } }, 'Edit'), `agent-${p.name}-${a.name}-edit`),
+      keyed(h('button', { class: 'btn small', type: 'button', disabled: !a.isolated || !a.valid, on: { click: () => memoryDialog(p.name, a.name) } }, 'Memory'), `agent-${p.name}-${a.name}-memory`),
+      keyed(h('button', { class: 'btn small', type: 'button', disabled: !a.valid, on: { click: () => { setTarget({ project: p.name, agent: a.name }); go('images'); } } }, 'Images'), `agent-${p.name}-${a.name}-images`)));
+}
+
+// A <details> whose open state survives repaints (keyed by `id`); `open` is the first state.
+const folded = new Map();
+function foldable(id, open, props, ...children) {
+  const box = h('details', { ...props, open: folded.has(id) ? folded.get(id) : open }, ...children);
+  box.addEventListener('toggle', () => folded.set(id, box.open));
+  return box;
+}
+
+// Why Claude can't start in this project now ('' when it can). Shown as text next to the buttons.
+function launchProblem(p) {
+  if (p.linked && !p.realPath) return 'The linked folder is gone. Unlink it, then link the checkout again.';
+  if (!p.launchable) return 'The folder name has unusual characters; start it from a terminal.';
+  if (!state.tools.claude) return 'Claude Code was not found on this PC, so sessions can\'t start.';
+  return '';
+}
+
+// "Linked: C:\…\checkout", or a red "Link broken" when the folder behind the link is gone.
+function linkBadge(p) {
+  if (!p.linked) return null;
+  return p.realPath
+    ? h('span', { class: 'badge violet linked-badge', title: 'projects/ holds a link to this folder; Claude and git run there' },
+      'Linked: ', h('span', { class: 'mono' }, p.realPath))
+    : h('span', { class: 'badge red' }, 'Link broken: its folder is gone');
+}
+
+// Removes the link projects/<name> after a confirm; the checkout itself is never touched (the
+// server refuses anything that is not a link). Resolves true when the link is gone.
+async function unlink(name) {
+  const ok = await confirmDialog(`Unlink ${name}?`, 'Removes only the link in projects/. Your checkout is not touched.', 'Unlink');
+  if (!ok) return false;
+  const r = await act(api('/api/projects/unlink', { method: 'POST', body: { name } }));
+  refresh();
+  return !!r;
 }
 
 function projectCard(p) {
-  const canLaunch = p.launchable && state.tools.claude;
+  const problem = launchProblem(p);
+  const canLaunch = !problem;
+  const gone = p.linked && !p.realPath;
   const hint = p.launchable ? '' : 'The folder name has unusual characters; start it from a terminal.';
+  const k = what => `project-${p.name}-${what}`;
   const agents = p.agents.length
     ? h('ul', { class: 'agents' }, p.agents.map(a => agentRow(p, a)),
       h('li', { class: 'agent' },
@@ -40,7 +88,7 @@ function projectCard(p) {
     : h('div', { class: 'empty' }, h('b', {}, 'No agents yet'),
       'Add a specialist such as ', h('code', {}, 'asset-builder'), '. Each agent keeps its own memory and image folder.');
   const archived = p.archived.length
-    ? h('details', { class: 'archived' },
+    ? foldable(`archived-${p.name}`, false, { class: 'archived' },
       h('summary', {}, `Archived agents (${p.archived.length})`),
       h('ul', { class: 'agents' }, p.archived.map(x => h('li', { class: 'agent' },
         h('div', { class: 'agent-name' }, x.name || x.archivedAs),
@@ -54,16 +102,19 @@ function projectCard(p) {
   return h('div', { class: 'card project' },
     h('div', { class: 'card-head' },
       h('div', { class: 'project-title' }, h('h3', {}, p.name), h('span', { class: 'badge blue' }, p.label),
-        p.hasClaudeMd ? h('span', { class: 'badge ok' }, 'CLAUDE.md') : h('span', { class: 'badge warn', title: 'Run /onboard-project in a session there' }, 'No CLAUDE.md')),
+        p.hasClaudeMd ? h('span', { class: 'badge ok' }, 'CLAUDE.md') : h('span', { class: 'badge warn', title: 'Run /onboard-project in a session there' }, 'No CLAUDE.md'),
+        linkBadge(p)),
       h('div', { class: 'row-actions' },
-        h('button', { class: 'btn primary small', disabled: !canLaunch, title: hint, on: { click: () => launch({ kind: 'project', project: p.name }) } }, 'Start Claude'),
-        h('button', { class: 'btn small', disabled: !canLaunch, title: hint || 'claude -c in this project', on: { click: () => launch({ kind: 'project', project: p.name, continueLast: true }) } }, 'Continue'),
-        p.hasClaudeMd ? null : h('button', {
-          class: 'btn small', disabled: !canLaunch, title: hint || 'Runs /onboard-project there: maps the repo and writes its CLAUDE.md',
+        keyed(h('button', { class: 'btn primary small', type: 'button', disabled: !canLaunch, title: hint, on: { click: () => launch({ kind: 'project', project: p.name }) } }, 'Start Claude'), k('start')),
+        keyed(h('button', { class: 'btn small', type: 'button', disabled: !canLaunch, title: hint || 'claude -c in this project', on: { click: () => launch({ kind: 'project', project: p.name, continueLast: true }) } }, 'Continue'), k('continue')),
+        p.hasClaudeMd ? null : keyed(h('button', {
+          class: 'btn small', type: 'button', disabled: !canLaunch, title: hint || 'Runs /onboard-project there: maps the repo and writes its CLAUDE.md',
           on: { click: () => skillDialog(skillById('onboard-project'), { project: p.name }) },
-        }, 'Onboard'),
-        h('button', { class: 'btn small', on: { click: () => openPlace({ place: 'project', project: p.name }) } }, 'Folder'),
-        state.tools.editor ? h('button', { class: 'btn small', on: { click: () => openPlace({ place: 'project', project: p.name, with: 'editor' }) } }, state.tools.editor) : null)),
+        }, 'Onboard'), k('onboard')),
+        keyed(h('button', { class: 'btn small', type: 'button', disabled: gone, on: { click: () => openPlace({ place: 'project', project: p.name }) } }, 'Folder'), k('folder')),
+        state.tools.editor ? keyed(h('button', { class: 'btn small', type: 'button', disabled: gone, on: { click: () => openPlace({ place: 'project', project: p.name, with: 'editor' }) } }, state.tools.editor), k('editor')) : null,
+        p.linked ? keyed(h('button', { class: 'btn small', type: 'button', title: 'Removes only the link in projects/; your checkout stays', on: { click: () => unlink(p.name) } }, 'Unlink…'), k('unlink')) : null),
+      problem ? h('p', { class: 'reason project-reason' }, problem) : null),
     h('div', { class: 'card-body' },
       h('div', { class: 'section-label' }, h('span', {}, `Agents (${p.agents.length})`),
         h('button', { class: 'btn small', on: { click: () => newAgentDialog(p) } }, '+ New agent')),
@@ -247,29 +298,123 @@ function addRepoDialog(u) {
     () => api('/api/repos/add', { method: 'POST', body: { name: u.name, requires: reqs.picked() } }).then(r => { refresh(); return r; }));
 }
 
-function reposCard() {
+// Links a checkout that already exists elsewhere on this PC as projects/<name> (a listed repo
+// that isn't here). The server checks the folder (absolute, local, outside the hub, the top of a
+// git checkout whose origin is the listed URL); a refusal shows under the field, which keeps the
+// focus and the text, so it can be corrected. A 409 means projects/<name> is already taken, for
+// example by an old link whose folder is gone (the state can't show those): the dialog then
+// offers to remove that link, which the server does only for a link, never for a folder.
+function linkDialog(x) {
+  const path = h('input', {
+    id: 'linkPath', required: true, autocomplete: 'off', spellcheck: 'false', maxlength: 400,
+    placeholder: `C:\\Users\\you\\code\\${x.name}`, 'aria-describedby': 'linkPathHelp linkPathError',
+  });
+  const error = h('div', { class: 'form-error', id: 'linkPathError', hidden: true });
+  const clear = () => { path.removeAttribute('aria-invalid'); error.hidden = true; fix.hidden = true; };
+  const fix = h('button', {
+    class: 'btn small', type: 'button', hidden: true,
+    on: { click: async () => { if (await unlink(x.name)) { clear(); path.focus(); } } },
+  }, `Remove the old link projects/${x.name}…`);
+  const submit = h('button', { class: 'btn primary', type: 'submit' }, 'Link');
+  const fail = (message, status) => {
+    error.textContent = message;
+    error.hidden = false;
+    fix.hidden = status !== 409;
+    path.setAttribute('aria-invalid', 'true');
+    path.focus();
+  };
+  path.addEventListener('input', clear);
+  // novalidate as an attribute (h() would set the lowercase DOM property, which does nothing), so
+  // an empty field reaches the submit handler and gets the inline error, not a browser bubble.
+  const form = h('form', {
+    class: 'form', novalidate: '',
+    on: {
+      submit: async e => {
+        e.preventDefault();
+        if (!path.value.trim()) { fail('Paste the folder path first.'); return; }
+        submit.disabled = true;
+        try {
+          const r = await api('/api/projects/link', { method: 'POST', body: { name: x.name, path: path.value.trim() } });
+          dialog.close();
+          toast(r.message);
+          refresh();
+        } catch (err) {
+          fail(err.message, err.status);
+        } finally {
+          submit.disabled = false;
+        }
+      },
+    },
+  },
+  h('p', { class: 'muted' }, `Makes projects/${x.name} a link to a checkout you already have. Nothing is cloned or copied, and the `,
+    'checkout is not changed: Claude and git run in its real folder.'),
+  h('label', { for: 'linkPath' }, 'Folder of your checkout',
+    h('small', { id: 'linkPathHelp' }, `Paste the folder of your existing checkout, for example C:\\Users\\…\\${x.name}. `,
+      `It must be the top folder of a git checkout whose origin is ${x.url}.`),
+    path),
+  error,
+  h('div', {}, fix),
+  h('div', { class: 'dialog-actions' }, h('button', { class: 'btn', type: 'button', on: { click: () => dialog.close() } }, 'Cancel'), submit));
+  openDialog(`Link existing checkout: ${x.name}`, form);
+  path.focus();
+}
+
+// One listed repo: its state on this PC and what can be done (Folder; Clone or Link; Unlink).
+function listedRow(x, needs) {
+  const p = state.projects.find(q => q.name === x.name);
+  const linked = !!(p && p.linked);
+  const broken = linked && !p.realPath;
+  const k = what => `repo-${x.name}-${what}`;
+  let badges;
+  if (broken) badges = h('span', { class: 'badge red' }, 'link broken');
+  else if (x.present) {
+    badges = [h('span', { class: `badge ${x.originMatches ? 'ok' : 'warn'}` }, x.originMatches ? 'on this PC' : 'other origin here'),
+      linked ? h('span', { class: 'badge violet' }, 'linked') : null];
+  } else badges = h('span', { class: 'badge' }, 'not on this PC');
+  let actions;
+  if (broken) {
+    actions = keyed(h('button', { class: 'btn small', type: 'button', on: { click: () => unlink(x.name) } }, 'Unlink…'), k('unlink'));
+  } else if (x.present) {
+    actions = keyed(h('button', { class: 'btn small', type: 'button', on: { click: () => openPlace({ place: 'project', project: x.name }) } }, 'Folder'), k('folder'));
+  } else {
+    actions = h('div', { class: 'row-actions' },
+      keyed(h('button', {
+        class: 'btn small primary', type: 'button', title: 'A fresh git clone into projects/, in a terminal',
+        on: { click: () => act(api('/api/repos/clone', { method: 'POST', body: { name: x.name } })) },
+      }, 'Clone'), k('clone')),
+      keyed(h('button', { class: 'btn small', type: 'button', title: 'Use a checkout you already have elsewhere on this PC', on: { click: () => linkDialog(x) } },
+        'Link existing checkout…'), k('link')));
+  }
+  const sub = broken ? `projects/${x.name} links to a folder that is gone · listed: ${x.url}`
+    : linked ? `${x.url} · linked to ${p.realPath}`
+      : x.originMatches || !x.present ? x.url : `listed: ${x.url} · here: ${x.origin}`;
+  return h('li', {},
+    h('div', { class: 'main' },
+      h('div', { class: 'title repo-title' }, x.name, badges, needs(x.requires)),
+      h('div', { class: 'sub', title: x.url }, sub)),
+    actions);
+}
+
+// The Repositories card, folded (a <details>) unless `open`; its summary counts what needs a look.
+function reposCard(open) {
   const r = state.repos;
   const needs = reqs => reqs.map(q => h('span', { class: `badge ${r.have[q] ? 'ok' : 'warn'}`, title: r.have[q] ? 'Found on this PC' : 'Not found on this PC' },
     r.have[q] ? REQ_LABEL[q] : `${REQ_LABEL[q]} missing`));
-  const listed = r.list.map(x => h('li', {},
-    h('div', { class: 'main' },
-      h('div', { class: 'title repo-title' }, x.name,
-        x.present ? h('span', { class: `badge ${x.originMatches ? 'ok' : 'warn'}` }, x.originMatches ? 'on this PC' : 'other origin here')
-          : h('span', { class: 'badge' }, 'not on this PC'),
-        needs(x.requires)),
-      h('div', { class: 'sub', title: x.url }, x.originMatches ? x.url : `listed: ${x.url} · here: ${x.origin}`)),
-    x.present
-      ? h('button', { class: 'btn small', on: { click: () => openPlace({ place: 'project', project: x.name }) } }, 'Folder')
-      : h('button', { class: 'btn small primary', on: { click: () => act(api('/api/repos/clone', { method: 'POST', body: { name: x.name } })) } }, 'Clone')));
+  const listed = r.list.map(x => listedRow(x, needs));
   const unlisted = r.unlisted.map(u => h('li', {},
     h('div', { class: 'main' },
       h('div', { class: 'title repo-title' }, u.name, h('span', { class: 'badge warn' }, 'not listed')),
       h('div', { class: 'sub' }, u.origin ? `${u.origin} · another PC won't get it` : 'No GitHub remote yet: push it first, then list it')),
-    u.origin ? h('button', { class: 'btn small', on: { click: () => addRepoDialog(u) } }, 'Add to list') : null));
-  return h('div', { class: 'card' },
-    h('div', { class: 'card-head' }, h('h3', {}, 'Repositories'),
-      h('button', { class: 'btn small', on: { click: cloneDialog } }, 'Clone a repo…')),
+    u.origin ? keyed(h('button', { class: 'btn small', type: 'button', on: { click: () => addRepoDialog(u) } }, 'Add to list'), `repo-${u.name}-add`) : null));
+  const missing = r.list.filter(x => !x.present).length;
+  const counts = [plural(r.list.length, 'listed repo'), missing ? `${missing} not on this PC` : '', r.unlisted.length ? `${r.unlisted.length} not listed` : '']
+    .filter(Boolean).join(' · ');
+  return foldable('repos', open, { class: 'card repos' },
+    h('summary', { class: 'card-head repos-summary' }, h('h3', {}, 'Repositories'), h('span', { class: 'muted small' }, counts)),
     h('div', { class: 'card-body' },
+      h('div', { class: 'repos-tools' },
+        h('span', { class: 'muted small' }, 'Clone a listed repo, link a checkout you already have, or list a project for your other PCs.'),
+        keyed(h('button', { class: 'btn small', type: 'button', on: { click: cloneDialog } }, 'Clone a repo…'), 'repos-clone')),
       r.error ? h('div', { class: 'form-error' }, r.error) : null,
       listed.length || unlisted.length ? h('ul', { class: 'list' }, listed, unlisted)
         : h('div', { class: 'empty' }, 'No repos listed yet. Clone one, or list a project once it is on GitHub.')),
@@ -278,16 +423,26 @@ function reposCard() {
       'projects here or with Setup.ps1 -Mode Install. A clone runs in a terminal, where GitHub may ask you to sign in.'));
 }
 
+let lastSignature = '';
+
+// Projects first, the Repositories card folded at the bottom (open when there is no project
+// yet, since cloning or linking is then the only way forward). Repaints only on a change.
 function render(el) {
+  // The run counts change during every run and are not shown here, so they don't count.
+  const signature = JSON.stringify([state.projects.map(({ waiting, running, ...p }) => p), state.repos, state.tools]);
+  if (signature === lastSignature && el.firstChild) return;
+  lastSignature = signature;
   const head = h('div', { class: 'view-head' }, h('div', {}, h('h2', {}, 'Projects'),
-    h('p', {}, 'Each project is its own repo in projects/. Its agents keep their own memory and images.')));
-  if (!state.projects.length) {
-    el.replaceChildren(head, reposCard(), h('div', { class: 'card' }, h('div', { class: 'empty' },
-      h('b', {}, 'No projects yet'), 'Clone one of yours above, or start Claude in the hub and run ', h('code', {}, '/new-project <name> nextjs'),
-      ' (or game).')));
-    return;
-  }
-  el.replaceChildren(head, h('div', { class: 'stack' }, reposCard(), state.projects.map(projectCard)));
+    h('p', {}, 'Each project is its own repo in projects/, or a link to a checkout elsewhere. Its agents keep their own memory and images.')));
+  keepFocus(el, () => {
+    if (!state.projects.length) {
+      el.replaceChildren(head, h('div', { class: 'stack' }, h('div', { class: 'card' }, h('div', { class: 'empty' },
+        h('b', {}, 'No projects yet'), 'Clone or link one of yours below, or start Claude in the hub and run ', h('code', {}, '/new-project <name> nextjs'),
+        ' (or game).')), reposCard(true)));
+      return;
+    }
+    el.replaceChildren(head, h('div', { class: 'stack' }, state.projects.map(projectCard), reposCard(false)));
+  });
 }
 
 export default {

@@ -423,3 +423,22 @@ test('the preview shows the effective launch, the assets with what a run would r
   const chosen = (await ws.call('POST /api/flows/run', { slug: any, preview: true, project: 'example' })).body;
   assert.deepEqual([chosen.project, chosen.launch.appendSystemPrompt, chosen.assets.map(a => a.ref), chosen.note], ['example', 'Cents only.', ['shared:logo', 'example:palette'], '']);
 });
+
+test('the preview lists what Run would refuse: a file changed by hand (409) and a prompt and rules too long for one command line', async t => {
+  const ws = setup(t);
+  const { style } = await withLibrary(ws);
+  const { body: { slug } } = await ws.call('POST /api/flows', { ...refactor, askRequired: false, assets: 'shared:style-guide' });
+  assert.deepEqual((await ws.call('POST /api/flows/run', { slug, preview: true })).body.problems, []);
+  writeFileSync(fileOf(ws.root, `inbox/attachments/_assets/style-guide/${style.versions[0].file}`), 'edited by hand');
+  const changed = (await ws.call('POST /api/flows/run', { slug, preview: true })).body;
+  assert.deepEqual(changed.problems, ['the file of shared:style-guide v1 no longer matches the SHA-256 the library recorded for it (it was changed after it was saved)']);
+  const run = await ws.call('POST /api/flows/run', { slug });
+  assert.deepEqual([run.status, run.body.error.endsWith(changed.problems[0])], [409, true], 'the run refuses what the preview showed');
+  // 15,000 characters of rules and a 16,000-character prompt, both with spaces, so quoted: more than 30,000.
+  await saveSettings(ws.dataDir, 'example', { rules: 'x '.repeat(7500) }, { basedOn: 0 });
+  const long = (await ws.call('POST /api/flows', { ...refactor, title: 'Long', askRequired: false, prompt: 'y '.repeat(8000) })).body.slug;
+  const p = (await ws.call('POST /api/flows/run', { slug: long, preview: true })).body;
+  assert.equal(p.problems.length, 1);
+  assert.match(p.problems[0], /^the prompt and the project rules are too long for one Windows command line: \d+ characters once quoted, at most 30000/);
+  assert.equal(ws.calls.length, 0, 'a preview starts nothing');
+});

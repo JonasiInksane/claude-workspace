@@ -23,6 +23,7 @@ import {
   archiveFlow, checkFlow, checkRunNotes, flowImages, flowImagesDir, flowLaunch, getFlow, isAnyProject, LIMITS as FLOW_LIMITS,
   parseFlowAssets, readCaptions, restoreFlow, runPrompt, saveFlow, setCaption, skippedFlowImages, SLUG_RE,
 } from '../../lib/flows.mjs';
+import { commandTextProblem } from '../../lib/prompt-file.mjs';
 import { realProjectDir } from '../../lib/projects.mjs';
 import { assetLine, assetProblems, assetRecords, resolveAssets, verifyFiles } from '../attached-assets.mjs';
 import { allDone } from '../core/git.mjs';
@@ -76,8 +77,9 @@ export function routes({ root, actions, dataDir }) {
 
   // The preview of a run (POST /api/flows/run with preview): the prompt with the assets a run
   // would list, the effective launch (the project's defaults, tools and rules added), and in
-  // `problems` what a run would refuse. A flow for any project shows its project's part once
-  // `requested` names one. Nothing is started or written.
+  // `problems` what a run would refuse: an asset that is gone or whose file changed (runInputs),
+  // and a prompt and rules too long for one Windows command line (writePromptFile). A flow for
+  // any project shows its project's part once `requested` names one. Nothing is started or written.
   async function previewRun(f, { images, captions, notes, notesError, launch, requested }) {
     const out = { ok: true, notesError, launch, prompt: '', project: '', projectSettings: null, assets: [], problems: [], note: '' };
     let project = '';
@@ -91,8 +93,11 @@ export function routes({ root, actions, dataDir }) {
     try { items = await resolveRunAssets(f, project, settings); } catch (e) { out.problems.push(e.message); }
     out.problems.push(...assetProblems(items));
     const usable = items.filter(i => !i.missing);
+    out.problems.push(...await verifyFiles(usable));
     out.prompt = runPrompt(f, images, notes, captions, usable.map((a, i) => assetLine(a, i)));
     try { out.launch = withProjectSettings(launch, settings); } catch (e) { out.problems.push(e.message); }
+    const tooLong = commandTextProblem(out.prompt, out.launch);
+    if (tooLong) out.problems.push(tooLong);
     out.project = project;
     out.projectSettings = settings ? settingsRef(settings) : null;
     out.assets = items.map(i => ({ ref: i.ref, pin: i.pin, version: i.version, kind: i.kind, title: i.title, archived: !!i.archived, missing: !!i.missing }));

@@ -12,8 +12,8 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  encodePs, explorerArgs, psCommand, psq, realActions, recordSession, SESSION_KINDS, sessionLaunch, sessionsFile, terminalCommand,
-  withProjectSettings, wtArg, wtPath,
+  encodePs, explorerArgs, needsPromptFile, psCommand, psq, realActions, recordSession, SESSION_KINDS, sessionLaunch, sessionsFile,
+  terminalCommand, withProjectSettings, wtArg, wtPath,
 } from './launch.mjs';
 import {
   checkLaunch, COMMAND_TEXT_BUDGET, launchArgs, mergeSettings, promptSessionArgs, quotedLength, takePromptFile, UUID_RE, writePromptFile,
@@ -540,6 +540,42 @@ test('a project without saved settings starts as before and records projectSetti
   await actions.startAgent({ project: 'example', agent: 'artist', title: 'example: artist', sessionId: ID });
   assert.ok(commands()[2].endsWith(`'--session-id' '${ID}'`), 'no prompt file when there is nothing to hand over');
   assert.deepEqual(sessions().map(s => [s.project, s.projectSettings]), [['example', null], ['Odd Name', null], ['example', null]]);
+});
+
+test('pre-approved tools without rules reach a session without a prompt too: through a prompt file, into its settings file', async t => {
+  const { actions, commands, sessions, dir } = recorded(t);
+  const data = join(dir, 'data');
+  const v1 = await saveSettings(data, 'example', { allowedTools: 'Read, Bash(npm test:*)', defaults: { model: 'opus' } }, { basedOn: 0 });
+  // Start Claude here: no prompt and no rules, but tools that only a settings file can carry.
+  const plain = await actions.startClaude({ dir: 'C:\\code\\example', title: 'example', kind: 'project', project: 'example' });
+  assert.match(commands()[0], /claude-prompt\.mjs' '[^']*\.json'$/);
+  const handed = takePromptFile(promptFileIn(commands()[0]));
+  assert.deepEqual(handed, { prompt: '', readDirs: [], launch: { sessionId: plain.sessionId, model: 'opus', allowedTools: ['Read', 'Bash(npm test:*)'] } });
+  // What claude-prompt.mjs makes of it: the tools in the session's settings file.
+  const built = promptSessionArgs(handed);
+  assert.deepEqual(built.args, ['--session-id', plain.sessionId, '--model', 'opus', '--settings', built.settingsPath]);
+  assert.deepEqual(JSON.parse(built.settings), { permissions: { allow: ['Read', 'Bash(npm test:*)'] } });
+  // Continue in the project: the same way (-c has no id, so no line).
+  await actions.startClaude({ dir: 'C:\\code\\example', title: 'example', continueLast: true, kind: 'project', project: 'example' });
+  assert.deepEqual(takePromptFile(promptFileIn(commands()[1])).launch, { continueLast: true, model: 'opus', allowedTools: ['Read', 'Bash(npm test:*)'] });
+  assert.deepEqual(sessions().map(s => [s.kind, s.projectSettings]), [['project', { version: 1, sha256: v1.sha256 }]]);
+  // Defaults alone still go straight on claude's command line.
+  const v2 = await saveSettings(data, 'example', { allowedTools: null }, { basedOn: 1 });
+  await actions.startClaude({ dir: 'C:\\code\\example', title: 'example', kind: 'project', project: 'example', sessionId: ID });
+  assert.equal(commands()[2], `Set-Location -LiteralPath 'C:\\code\\example'; & 'C:\\bin\\claude.exe' '--session-id' '${ID}' '--model' 'opus'`);
+  assert.deepEqual(sessions()[1].projectSettings, { version: 2, sha256: v2.sha256 });
+  // Folders to read without asking need the file as well, also without a prompt.
+  const hub = await actions.startClaude({ dir, title: 'Workspace hub', readDirs: ['C:\\img'], kind: 'hub' });
+  assert.deepEqual(takePromptFile(promptFileIn(commands()[3])), { prompt: '', readDirs: ['C:\\img'], launch: { sessionId: hub.sessionId } });
+});
+
+test('needsPromptFile: a prompt, rules, pre-approved tools or readable folders need a prompt file; flags alone do not', () => {
+  assert.equal(needsPromptFile(), false);
+  assert.equal(needsPromptFile({ prompt: '', readDirs: [], launch: { sessionId: ID, model: 'opus', permissionMode: 'plan', effort: 'low', allowedTools: [] } }), false);
+  assert.equal(needsPromptFile({ launch: { continueLast: true, resume: undefined } }), false);
+  for (const input of [{ prompt: 'Go' }, { readDirs: ['C:\\img'] }, { launch: { appendSystemPrompt: 'Rules.' } }, { launch: { allowedTools: ['Read'] } }]) {
+    assert.equal(needsPromptFile(input), true, JSON.stringify(input));
+  }
 });
 
 test('settings that can not be read, too many tools or too long a command line stop the start before a terminal opens', async t => {

@@ -15,9 +15,10 @@
 // skill or a flow there, an agent) gets the project's current settings, applied here once for
 // every route: the rules as --append-system-prompt, the defaults for what its own launch leaves
 // empty, the pre-approved tools added to its own. Its sessions.jsonl line records the version
-// (projectSettings; null when the project has none). The rules never go into the PowerShell
-// command: such a session always starts through a prompt file (tools/lib/prompt-file.mjs), and
-// claude-prompt.mjs or agent-session.mjs hand them to claude as an argument of their own spawn.
+// (projectSettings; null when the project has none). A session with rules or pre-approved tools
+// always starts through a prompt file (tools/lib/prompt-file.mjs, needsPromptFile): the rules
+// never go into the PowerShell command, claude-prompt.mjs or agent-session.mjs hand them to
+// claude as an argument of their own spawn, and the tools go into the settings file they write.
 // Hub sessions and takeovers (a run's stage, which has the rules of its run's version) get none
 // and record none. A continued or resumed session keeps the system prompt it started with until
 // it is compacted (Claude Code's --system-prompt-snapshot, on by default in 2.1.309).
@@ -108,6 +109,15 @@ export function withProjectSettings(launch, settings) {
   const checked = checkLaunch(launchWithSettings(launch, settings));
   if (checked.error) throw new Error(`launch: ${checked.error}`);
   return checked.launch;
+}
+
+// True when a Claude session can't start with its flags straight on claude's command line, so
+// it starts through a prompt file (claude-prompt.mjs) instead: launchArgs has no flag for a first
+// prompt, the rules (appendSystemPrompt), pre-approved tools (they go into a settings file) or
+// readable folders, and the rules must never go into a PowerShell command anyway.
+export function needsPromptFile({ prompt = '', readDirs = [], launch = {} } = {}) {
+  const has = v => (Array.isArray(v) ? v.length > 0 : !!v);
+  return has(prompt) || has(readDirs) || has(launch.appendSystemPrompt) || has(launch.allowedTools);
 }
 
 // Programs a terminal tab may not start directly: .cmd and .bat need cmd.exe (a shell).
@@ -234,13 +244,13 @@ export function realActions({ root, tools = findTools(), windowStyle, dataDir = 
   return {
     tools,
     // Starts claude in a terminal tab at `dir` and resolves with { sessionId } ('' for -c).
-    // Without `prompt` or rules, the flags go straight on claude's command line (--resume <id> or
-    // --session-id <id>, --settings <file>, --permission-mode <m>, ...). With `prompt`, or with
-    // project rules, everything goes through a prompt file (tools/lib/prompt-file.mjs explains
-    // why), with `readDirs` the session may read without asking. `kind` and `project` are for
-    // sessions.jsonl and the project's settings (see the top of this file); without a kind, a
-    // resume counts as a takeover (the only resume the app starts), so it gets the takeover mode
-    // check too.
+    // With only flags, they go straight on claude's command line (--resume <id> or
+    // --session-id <id>, --settings <file>, --permission-mode <m>, ...). With `prompt`, project
+    // rules, pre-approved tools or `readDirs` (folders the session may read without asking),
+    // everything goes through a prompt file (needsPromptFile; tools/lib/prompt-file.mjs explains
+    // why). `kind` and `project` are for sessions.jsonl and the project's settings (see the top of
+    // this file); without a kind, a resume counts as a takeover (the only resume the app starts),
+    // so it gets the takeover mode check too.
     async startClaude({ dir, title, continueLast = false, prompt, readDirs = [], launch = {}, resume, sessionId, kind, project = '' }) {
       if (!tools.claude) throw new Error('Claude Code was not found (PATH or %USERPROFILE%\\.local\\bin).');
       const s = sessionLaunch({ launch, resume, sessionId, continueLast });
@@ -255,7 +265,7 @@ export function realActions({ root, tools = findTools(), windowStyle, dataDir = 
       }
       const settings = await settingsFor(k, project);
       const l = withProjectSettings(s.launch, settings);
-      const command = prompt || l.appendSystemPrompt
+      const command = needsPromptFile({ prompt, readDirs, launch: l })
         ? psCommand(dir, node, [join(appDir, 'claude-prompt.mjs'), writePromptFile({ prompt, readDirs, launch: l })])
         : psCommand(dir, tools.claude, launchArgs(l));
       await terminal(dir, title, command);

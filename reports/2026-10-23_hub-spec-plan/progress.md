@@ -48,7 +48,7 @@ bottom is chronological.
 | A3/A4 UI | Settings tab, Assets tab and library screens | done (merged `00369b6`); review state unknown, covered by A-review | `pm/w2a-settings-assets-ui` |
 | A6 | Run input manifest, attached assets into runs, flows and sessions; wave-1 follow-ups | done (merged `eb3f13b`); review state unknown, covered by A-review | `pm/w2b-run-provenance` |
 | A7 | Ask panel | done (merged `f5355af`) | `pm/w2c-ask-panel` |
-| A-review | Independent review of the whole Part A diff, fixes | in progress: review done (0 high, 7 medium, ~20 low), fixes on 4 branches | `pm/w3a..w3d` |
+| A-review | Independent review of the whole Part A diff, fixes | done: 0 high, 7 medium, ~20 low, all fixed; a review of the fixes found 2 medium + 5 low, fixed in `cf7daf0`..`30a3a4a` | `pm/w3a..w3d` |
 | A-docs | README, flows README, decision note, report revision | todo | |
 
 ### Part B: Nextjs-Workspace (`projects/nextjs-workspace`)
@@ -180,3 +180,12 @@ the missing slices (the briefs are in the script file).
   `scratchpad/stray-actions.patch`; left uncommitted.
 - 2026-10-23: Agent worktrees are created under `.claude/worktrees/` (git-ignored) and may check
   out with CRLF fixtures (`core.autocrlf=true`); three run tests then fail there for the A0 reason.
+- 2026-10-23: Review of the merged fixes (`git diff 145aa47 project-model`, one fresh reviewer):
+  2 medium, 5 low, all fixed by hand. Medium: a tab change cancelled before the browser moved
+  pushed a duplicate settings entry (leave guard now does nothing when the address is still the
+  guarded one); the edited-manifest save exception let `waiting` and `in-terminal` through, so a
+  hand-edited run could be taken over (exception limited to stopping statuses, takeover refuses
+  with 409). Low: `show()` kept `history.state` (the guard's mark) when it corrects an address;
+  dead `readVerified` removed; stale comments; README notes the settings-save 400 and the SVG
+  rule's price (Markdown that starts with markup and shows an inline SVG is refused). Full
+  suite: 1,537 tests, 1,536 pass, 0 fail, 1 skipped. Next: A-docs, then one real Ask run.

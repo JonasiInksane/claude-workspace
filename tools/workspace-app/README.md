@@ -178,7 +178,9 @@ A project's rules (Markdown, at most 20,000 characters), default model, effort a
 mode, pre-approved tools and attached assets are saved by `project-settings.mjs` as numbered
 versions in the data folder: `projects/<project>/settings/v<N>.json`, written once and never
 changed; the highest is current. A save names the version it was opened at and is refused (409)
-when another save came first; invalid values are a 400 that lists every problem; a save that
+when another save came first; invalid values are a 400 that lists every problem, and so are
+settings every session would refuse (an attached asset that is gone or whose file changed, rules
+and asset list over 20,000 characters together, or too long for one Windows command line); a save that
 changes nothing writes nothing, and a field it leaves out keeps its value. The routes are
 `GET /api/project-settings?project=<name>` (current, versions, limits),
 `GET /api/project-settings/version?project=<name>&v=<n>` and `POST /api/project-settings`
@@ -263,7 +265,9 @@ new, immutable version with its SHA-256. The API is in place; the screens come l
   NUL bytes, at most 2 MB, JSON that parses; a PDF starts with `%PDF-`, at most 25 MB). A file
   name or a declared kind that disagrees is refused, and SVG never gets in, not even as text: a
   text that starts with markup (as every SVG document does) is refused when it has an `<svg>`
-  element, with any prefix, or the SVG namespace anywhere in it.
+  element, with any prefix, or the SVG namespace anywhere in it. The price: a Markdown file that
+  starts with an HTML comment or tag and later shows an inline SVG sample is refused too; start
+  it with ordinary text.
 - `/library-file` serves only a version that the asset's `asset.json` lists, by its own
   `v<n>.<ext>` name inside the asset's folder (a tampered entry or a linked folder is refused),
   with the type that extension stands for (every text kind as `text/plain; charset=utf-8`),

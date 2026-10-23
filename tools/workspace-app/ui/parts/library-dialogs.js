@@ -5,9 +5,10 @@
 // per file, shared or for a project), and the picker of assets to attach (assetPicker: a search
 // and a kind filter over shared assets and the project's own).
 //
-// Every change goes to routes/library.mjs with the number of versions the dialog saw (expect), so
-// a change made elsewhere meanwhile is refused (409); the dialog says so and loads the asset
-// again, keeping what was typed. Typed details are guarded (dialog.js `guard`): Esc, Close or the
+// Every change goes to routes/library.mjs with what the dialog saw (expect): the asset's revision
+// for its details and for Archive or Restore, the number of versions for a new version. A change
+// made elsewhere meanwhile is refused (409); the dialog says so and loads the asset again, keeping
+// what was typed. Typed details are guarded (dialog.js `guard`): Esc, Close or the
 // backdrop ask before they are lost. Files dropped or pasted on an open dialog go to it (main.js
 // hands them to the dialog's upload).
 import { confirmDialog, fmtAgo, fmtSize, fmtTime, h, keyed, plural, toast } from '../lib.js';

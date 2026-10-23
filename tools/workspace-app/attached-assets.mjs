@@ -3,8 +3,8 @@
 // (asset-library.mjs resolveAttachments), checked, and described the same way for every caller:
 //
 //   runs/manager.mjs    a run refuses to start on a problem, copies each file into its inputs/
-//                       (assetInputName) after readVerified checked the bytes, and records them
-//                       in its manifest (runs/manifest.mjs)
+//                       (assetInputName) after verifyFiles checked them, re-checking each copy
+//                       (store.copyInput), and records them in its manifest (runs/manifest.mjs)
 //   launch.mjs          a session in a project may read (not edit) the assets' folders, gets them listed in
 //                       its system prompt after the rules (assetsSystemText) and records them in
 //                       sessions.jsonl (assetRecords)
@@ -13,10 +13,9 @@
 // A missing asset, version or file stops the start (assetProblems), and so does a file whose
 // bytes no longer match the SHA-256 the library recorded (a hand-edited version file). An
 // archived asset is still used: archiving only hides it from the library's listing (archivedNotes).
-import { readFile } from 'node:fs/promises';
 import { dirname, extname } from 'node:path';
 import { resolveAttachments } from './asset-library.mjs';
-import { sha256File, sha256Text } from './core/datadir.mjs';
+import { sha256File } from './core/datadir.mjs';
 
 // Where a run keeps its copies, inside inputs/: assets/<scope>-<id>@v<n>.<ext>.
 export const ASSET_INPUT_DIR = 'assets';
@@ -69,24 +68,8 @@ export function archivedNotes(items = []) {
 
 const mismatch = i => `the file of ${i.ref} v${i.version} no longer matches the SHA-256 the library recorded for it (it was changed after it was saved)`;
 
-// The bytes of every item, each checked against the SHA-256 the library recorded. Returns
-// { files: [{ item, bytes }], problems: [sentence] }; an item with a problem has no file.
-export async function readVerified(items = []) {
-  const files = [];
-  const problems = [];
-  for (const item of items) {
-    let bytes;
-    try { bytes = await readFile(item.path); } catch (e) {
-      problems.push(e.code === 'ENOENT' ? `the file of ${item.ref} v${item.version} is missing` : `the file of ${item.ref} v${item.version} can't be read: ${e.message}`);
-      continue;
-    }
-    if (sha256Text(bytes) !== item.sha256) problems.push(mismatch(item));
-    else files.push({ item, bytes });
-  }
-  return { files, problems };
-}
-
-// The same check without keeping the bytes (a session reads the files itself): [sentence].
+// Every item checked against the SHA-256 the library recorded, as a stream and keeping no bytes
+// (a run copies the files afterwards, store.copyInput, and a session reads them itself): [sentence].
 export async function verifyFiles(items = []) {
   const problems = [];
   for (const item of items) {

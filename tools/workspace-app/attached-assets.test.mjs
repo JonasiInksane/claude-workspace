@@ -10,7 +10,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { addVersion, createAsset, setArchived } from './asset-library.mjs';
 import {
-  archivedNotes, assetDirs, assetInputName, assetLine, assetProblems, assetRecords, assetsSystemText, oneLineTitle, readVerified, resolveAssets,
+  archivedNotes, assetDirs, assetInputName, assetLine, assetProblems, assetRecords, assetsSystemText, oneLineTitle, resolveAssets,
   verifyFiles,
 } from './attached-assets.mjs';
 import { sha256Text } from './core/datadir.mjs';
@@ -66,23 +66,17 @@ test('assetProblems names every attachment a start can not use; an archived one 
   assert.deepEqual(assetProblems([]), []);
 });
 
-test('readVerified and verifyFiles: the bytes must still have the SHA-256 the library recorded', async t => {
+test('verifyFiles: the bytes must still have the SHA-256 the library recorded', async t => {
   const root = await library(t);
   const items = await resolveAssets(root, 'example', [{ ref: 'shared:style-guide', pin: 1 }, { ref: 'example:palette' }]);
-  const ok = await readVerified(items);
-  assert.deepEqual(ok.problems, []);
-  assert.deepEqual(ok.files.map(f => [f.item.ref, f.bytes.length]), [['shared:style-guide', 18], ['example:palette', PNG.length]]);
   assert.deepEqual(await verifyFiles(items), []);
   // A version file edited by hand, and one that is gone.
   writeFileSync(items[0].path, '# Style\nUse pink.\n');
   rmSync(items[1].path);
-  const bad = await readVerified(items);
-  assert.deepEqual(bad.files, []);
-  assert.deepEqual(bad.problems, [
+  assert.deepEqual(await verifyFiles(items), [
     'the file of shared:style-guide v1 no longer matches the SHA-256 the library recorded for it (it was changed after it was saved)',
     'the file of example:palette v1 is missing',
   ]);
-  assert.deepEqual(await verifyFiles(items), bad.problems);
 });
 
 test('assetInputName: assets/<scope>-<id>@v<n>.<ext>, so a shared and a project asset never share a name', () => {

@@ -473,6 +473,7 @@ test('resolveAttachments: shared and own assets, latest or pinned, missing and a
   await refused(resolveAttachments(root, '', [{ ref: logo }]), 400, /only shared assets/);
   assert.equal((await resolveAttachments(root, null, [{ ref: guide }]))[0].version, 2);
   await refused(resolveAttachments(root, 'ghost', []), 404);
+  await refused(resolveAttachments(root, 5, []), 404, /projects\/5 was not found/);
   for (const list of [null, {}, 'shared:guide', [null], [['shared:guide']], [{ ref: 'shared:../x' }], [{ ref: guide, pin: 0 }],
     [{ ref: guide, pin: 'latest' }], [{ ref: guide, pin: '' }], Array.from({ length: 101 }, () => ({ ref: guide }))]) {
     await refused(resolveAttachments(root, 'example', list), 400);

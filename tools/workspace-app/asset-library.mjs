@@ -34,16 +34,17 @@
 // versions its caller saw (expect): another count is a 409, so a stale page can't undo a newer
 // change. A new version with the same SHA-256 as the latest adds nothing and returns the latest.
 //
-// Every export that touches the disk is async. Refusals are HttpErrors that the routes pass on:
+// Every export that reads or writes the library is async (parseRef only checks a ref, and the
+// project folder it names). Refusals are HttpErrors that the routes pass on:
 // 400 bad input, 404 not found, 409 changed meanwhile (or archived), 413 too large, 415 content
 // not accepted, 500 an asset.json that can't be used.
 import { lstat, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
-import { resolveProject } from '../lib/agents.mjs';
 import { ASSET_LIBRARY_DIR, projectNameMap } from '../lib/inbox.mjs';
 import { bmpToPng } from './bmp.mjs';
 import { readJson, sha256Text, writeJsonAtomic } from './core/datadir.mjs';
 import { HttpError } from './http.mjs';
+import { findProject } from './lookup.mjs';
 import { attachmentsRoot, detectImageType, isInside } from './uploads.mjs';
 
 export const ASSET_FORMAT = 1;
@@ -97,17 +98,15 @@ export const assetRef = (scope, project, id) => (scope === 'shared' ? `shared:${
 
 // ---------------------------------------------------------------- names and refs
 
-// The real spelling of an existing project folder, or a 404. A name with a path in it never
-// resolves: resolveProject refuses / \ : and a leading . or _.
-function existingProject(root, name) {
-  const { name: real, error } = resolveProject(root, String(name ?? ''));
-  if (error) throw new HttpError(404, error);
-  return real;
-}
+// The real spelling of an existing project folder, or a 404 (lookup.mjs). A name with a path in
+// it never resolves: resolveProject refuses / \ : and a leading . or _. Anything that is not text
+// (a number in a JSON body) is looked up as text.
+const existingProject = (root, name) => findProject(root, String(name ?? ''));
 
 // Where a ref points: { ref, scope, project, id, dir }, with the ref spelled the way listings
 // spell it ("SHARED:x" is shared:x, "Example:x" is example:x for projects/example). A malformed
-// ref is a 400, a project that doesn't exist a 404. Nothing is read.
+// ref is a 400, a project that doesn't exist a 404. No asset file is read; a project ref only
+// looks the folder up in projects/ (synchronously, as lookup.mjs does).
 export function parseRef(root, ref) {
   const text = typeof ref === 'string' ? ref : '';
   const at = text.indexOf(':');

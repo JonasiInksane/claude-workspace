@@ -37,10 +37,11 @@ bottom is chronological.
 | Step | What | Status | Commit / branch |
 |---|---|---|---|
 | A0 | Line endings for test fixtures (`.gitattributes`) | done | see log |
-| A1+A2 | Project types, tabbed project page, new navigation | todo | |
-| A3 | Project settings and rules (versioned, private) | todo | |
-| A4 | Asset library (shared and per project, versions) | todo | |
-| A5 | Flows shared across projects, flow versions recorded | todo | |
+| A1+A2 | Project types, tabbed project page, new navigation | in progress (WF-A1) | `pm/w1a-project-page` |
+| A3 | Project settings and rules (versioned, private): backend + session/run injection | in progress (WF-A1) | `pm/w1b-project-settings` |
+| A4 | Asset library (shared and per project, versions): backend | in progress (WF-A1) | `pm/w1c-asset-library` |
+| A5 | Flows shared across projects, flow versions recorded | in progress (WF-A1) | `pm/w1d-shared-flows` |
+| A3/A4 UI | Settings tab, Assets tab and library screens | todo (wave 2) | |
 | A6 | Run input manifest, attached assets into runs | todo | |
 | A7 | Ask panel | todo | |
 | A-review | Independent review of the whole Part A diff, fixes | todo | |
@@ -63,6 +64,11 @@ bottom is chronological.
 
 | # | Name | Script | Run id | Result |
 |---|---|---|---|---|
+| WF-A1 | `hub-app-wave-1`: 4 slices (A1+A2, A3 backend, A4 backend, A5), each implement → review-and-fix in its own worktree | `~/.claude/projects/C--dev-claude-workspace/5108b4b5-cc8f-4f47-adae-6ce3174930d6/workflows/scripts/hub-app-wave-1-wf_05cd4a1a-2f8.js` | `wf_05cd4a1a-2f8` | running |
+
+Resume a workflow in the same session with `Workflow({scriptPath, resumeFromRunId})`. In a new
+session the run cache is gone: check which `pm/*` branches exist and have commits, and rerun only
+the missing slices (the briefs are in the script file).
 
 ## Log
 
@@ -72,3 +78,10 @@ bottom is chronological.
 - 2026-10-23: A0 done: `tools/workspace-app/test/fixtures/** -text` in `.gitattributes`,
   fixtures refreshed from the index (269 files, 0 with CR). Workspace app suite: 1,122 tests,
   1,121 pass, 0 fail, 1 skipped.
+- 2026-10-23: Added `tools/workspace-app/test/shots.mjs` (headless Edge screenshots over the
+  DevTools protocol, no dependencies; `--example` = temporary workspace with synthetic code,
+  asset-pipeline and plain projects and the sample runs). Commits ab5305e, 4ff8677.
+- 2026-10-23: WF-A1 launched (run `wf_05cd4a1a-2f8`). Slice branches `pm/w1a..w1d`, merged
+  into `project-model` by hand afterwards.
+- 2026-10-23: Decision: prepare Part B (new repo, architecture doc, dependency install) in
+  parallel with WF-A1 to save time; the two share no files.

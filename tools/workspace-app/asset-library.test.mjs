@@ -249,6 +249,12 @@ test('versions are never overwritten: a stray v<N> file is skipped and stays as 
   assert.equal(r.asset.versionCount, 2, 'expect counts versions, not numbers');
   await refused(assetFile(root, ref, 2), 404, /has no version 2/);
   assert.equal((await addVersion(root, ref, Buffer.from('three'), { expectVersions: 2 })).version, 5);
+  // A stray file with the highest number a version can have: no version is written past it, so
+  // the asset stays readable.
+  writeFileSync(join(dir, 'v999999999.md'), 'put there by hand');
+  await refused(addVersion(root, ref, Buffer.from('four'), { expectVersions: 3 }), 409, /no version number left/);
+  assert.deepEqual((await getAsset(root, ref)).versions.map(v => v.n), [1, 4, 5]);
+  assert.ok(!readdirSync(dir).some(f => f.startsWith('v1000000000')), 'nothing was written past the highest number');
 });
 
 test('archived assets leave the list (unless asked for), take no new versions, and are still served and resolved', async t => {

@@ -58,6 +58,9 @@ const ID_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const DEVICE_NAME = /^(con|prn|aux|nul|com\d|lpt\d)$/;
 // What a stored version file may be called, and the kind and type its extension stands for.
 const VERSION_FILE = /^v([1-9]\d{0,8})\.(png|jpg|gif|webp|md|txt|json|pdf)$/;
+// The highest number VERSION_FILE takes. A version is never written past it, or the record that
+// lists it could no longer be read.
+const MAX_VERSION = 999_999_999;
 const STORED = {
   png: { kind: 'image', type: 'image/png' }, jpg: { kind: 'image', type: 'image/jpeg' },
   gif: { kind: 'image', type: 'image/gif' }, webp: { kind: 'image', type: 'image/webp' },
@@ -412,9 +415,11 @@ async function nextNumber(dir, versions) {
 }
 
 // Writes the bytes as v<n>.<ext> with an exclusive create (the next number when that name is
-// taken) and returns the version entry.
+// taken) and returns the version entry. Never past MAX_VERSION: a stray file with the highest
+// number would otherwise lead to a record this module refuses to read.
 async function writeVersion(dir, n, content, sha256, { note, originalName }) {
   for (let k = n; k < n + 100; k++) {
+    if (k > MAX_VERSION) throw new HttpError(409, `this asset folder has no version number left (a stray file v${MAX_VERSION}.* is in it)`);
     const file = `v${k}.${content.ext}`;
     try {
       await writeFile(join(dir, file), content.data, { flag: 'wx' });

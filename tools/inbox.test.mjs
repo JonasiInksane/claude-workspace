@@ -123,7 +123,29 @@ test('scanInbox skips build-output folders and counts linked project folders', t
 
 test('scanInbox reports a missing inbox without throwing', t => {
   const root = fixture(t);
-  assert.deepEqual(scanInbox(root), { exists: false, items: [], libraries: [], flowImages: 0, processed: 0, truncated: false });
+  assert.deepEqual(scanInbox(root), { exists: false, items: [], libraries: [], flowImages: 0, assetFiles: 0, processed: 0, truncated: false });
+});
+
+test('asset library files (shared and per project) are counted on their own, never as triage items or agent folders', t => {
+  const root = fixture(t);
+  put(root, 'projects/demo/.claude/agents/art.md', '---\nname: art\ndescription: a\nmemory: project\n---\n');
+  put(root, 'inbox/attachments/_assets/style-guide/asset.json', '{}');
+  put(root, 'inbox/attachments/_assets/style-guide/v1.md');
+  put(root, 'inbox/attachments/_ASSETS/logo/v1.png');
+  put(root, 'inbox/attachments/demo/_assets/palette/asset.json', '{}');
+  put(root, 'inbox/attachments/Demo/_Assets/palette/v1.png');
+  put(root, 'inbox/attachments/demo/art/a.png');
+  // A project that is gone: its assets are triage items again, like its images.
+  put(root, 'inbox/attachments/gone/_assets/x/v1.md', 'x', 1_700_000_000);
+  const projects = projectNameMap(root);
+  assert.deepEqual(classify(['attachments', '_assets', 'a', 'v1.md'], projects), { kind: 'asset' });
+  assert.deepEqual(classify(['attachments', 'demo', '_assets', 'a', 'v1.md'], projects), { kind: 'asset' });
+  assert.deepEqual(classify(['attachments', '_assets'], projects), { kind: 'item' }, 'a file named _assets is not the library');
+  const s = scanInbox(root);
+  assert.deepEqual(s.items.map(i => i.path), ['inbox/attachments/gone/_assets/x/v1.md']);
+  assert.equal(s.assetFiles, 5);
+  assert.deepEqual(s.libraries.map(l => [l.path, l.files, l.known]), [['inbox/attachments/demo/art', 1, true]], 'no "_assets" agent folder');
+  assert.equal(scanInbox(root, { maxLibraryFiles: 2 }).truncated, true, 'library files share the library limit');
 });
 
 test('flow images are counted on their own, never as triage items', t => {

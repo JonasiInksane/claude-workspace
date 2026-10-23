@@ -20,6 +20,9 @@ Arguments: `$ARGUMENTS`. If a path is given, triage only that item. If empty, tr
 - Also skip `inbox/attachments/_flows/` (any letter case): each subfolder holds one flow's
   reference images (`flows/README.md`), which stay where they are.
   `inbox/attachments/_hub/` and dated `inbox/attachments/YYYY-MM-DD/` folders are triage items.
+- Also skip `inbox/attachments/_assets/` (any letter case): the workspace app's shared asset
+  library (one folder per asset with `asset.json` and its versions `v1.md`, `v2.png`, ...).
+  `inbox/attachments/<project>/_assets/` is that project's part of it. Never move or rename them.
 - The session status block, the navigator and `node tools/check-workspace.mjs` use exactly this
   rule (`tools/lib/inbox.mjs`). The status block's "Inbox: N items" list is the quickest start.
 - Read each text item (`.md`, `.txt`, `.json`). Look at images and PDFs only as far as needed to decide where they go.

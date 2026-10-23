@@ -32,14 +32,14 @@ runs just opens another window.
 | File | Job |
 |---|---|
 | `server.mjs` | Startup: port 4317 (or a free one), sign-in token, one app per workspace, run recovery before it listens, idle shutdown (never while `isBusy()`), stopping the runs on every exit, opens the window; `--data-dir`, `--fake-claude` (tests only) |
-| `app.mjs` | `createApp`: access checks, the page's static files, `/img` and `/asset-file` (sandboxed), the dispatch to `routes/*.mjs` (`ROUTE_MODULES`), and `ctx.getEngine()` (the run engine, made on first use) |
+| `app.mjs` | `createApp`: access checks, the page's static files, `/img`, `/asset-file` and `/library-file` (sandboxed), the dispatch to `routes/*.mjs` (`ROUTE_MODULES`), and `ctx.getEngine()` (the run engine, made on first use) |
 | `runs/wiring.mjs` | Builds the run engine: the manager (`runs/manager.mjs`) with the real executor and modules, `claude.exe` from the launcher (or the fake in tests); `stopEngine` for exits |
 | `routes/runs.mjs`, `routes/events.mjs` | Runs over HTTP: pipelines, start and preview, the runs list, one run with its timeline and buttons, review data, diffs, run files; `/api/events` (live update signals) |
 | `http.mjs` | `HttpError`, `send`/`json`, body readers, cookie and token helpers, `PAGE_CSP`, and the startup scan of `ui/` (`listUiFiles`) |
 | `state.mjs` | `buildState`: everything the page shows (`GET /api/state`), async; git runs as child processes, requests during a build share it. Each project carries its `type` and `tabs` |
 | `project-types.mjs` | The project types, in order: `code` (has a private profile), `assets` (has an asset pipeline), `generic`; each lists its page's tabs. `projectTypeOf()` returns the first that matches |
 | `lookup.mjs` | Finds the project, agent, flow, image target or asset project a request names (or throws 404/400); `launchableOrThrow` |
-| `routes/*.mjs` | The JSON API by area: `state`, `images`, `agents`, `assets`, `launch` (start Claude, open places), `flows`, `tools` (skills, workspace tools), `projects` (new, clone, list repos), `project-settings` (a project's rules and settings, see "Project settings") |
+| `routes/*.mjs` | The JSON API by area: `state`, `images`, `agents`, `assets`, `launch` (start Claude, open places), `flows`, `tools` (skills, workspace tools), `projects` (new, clone, list repos), `project-settings` (a project's rules and settings, see "Project settings"), `library` (the asset library) |
 | `project-settings.mjs` | A project's rules and settings as numbered, immutable versions in the data folder: save (stale saves 409, every problem listed), read with checks, `rulesBlock` for stage prompts, `launchWithSettings` for sessions |
 | `catalog.mjs` | The Library's list: skills (with their form fields and how the prompt is built) and workspace tools |
 | `uploads.mjs` | Image targets, type check by content, dated folders, no overwrites |
@@ -53,6 +53,7 @@ runs just opens another window.
 | `make-icon.mjs` | Draws `ui/icon.ico` (16 to 256 px) from the same design as `ui/icon.svg`; its PNG encoder is shared with `bmp.mjs` |
 | `bmp.mjs` | BMP to PNG on upload (uncompressed 1, 4, 8, 24 and 32-bit; others are refused with a message) |
 | `assets.mjs` | The Assets view: finds projects with `tools/asset.mjs` (3D) or `tools/sprite.mjs` (sprites) and `assets/`, reads each asset's `asset.json` (`"kind": "sprite"` for a sprite), check reports, renders and brief log, and a sprite's sheet (`export/SPR_<Name>.png`, `.json`, `_N` normal map, `_E` emissive); serves only PNG, JPEG, JSON and GLB files from inside `assets/` (sandboxed); writes a verdict (Approve, Revise, Reject) as the `asset.json` status plus a dated line in the brief's log |
+| `asset-library.mjs` | The asset library (see "Asset library" below): shared and per-project assets with immutable, hashed versions; the content check per kind, refs, listing, uploads, meta, archive, the sandboxed file lookup for `/library-file`, and `resolveAttachments` for runs and flows. `routes/library.mjs` is its API |
 | `ui/index.html` | The page shell: sidebar (the nav `#nav`, and `#navFoot` for Library above the Hub session buttons), `<main>`, the dialog, the palette (`#palette`) and commit dialog (`#commitDialog`), the live-updates pill and the "waiting" live region; links `app.css` then `css/<view>.css`; loads `main.js` as a module |
 | `ui/main.js` | The views registry (`VIEWS`), the sidebar (`ui/parts/nav.js`: Today; Projects with every project under it, a code project with its amber waiting count; Assets; Flows; Runs with up to three review gates under it; Library at the foot, above the Hub session buttons), hash routing with sub-routes (`#project/<name>/<tab>`, `#run/<id>`; a project route the state completes is corrected in place; unknown goes to `#today`; Back works), live updates (one `EventSource('/api/events')`, polling while it is down), keyboard (`Ctrl K`, `g t`/`g p`/`g a`/`g f`/`g r`), notifications, the theme toggle, pasted and dropped images, heartbeat, refresh on focus |
 | `ui/lib.js` | `h()` (data always as text; refuses a `style` prop), `api()`, `act()`, `toast()`, `copy()`, formatting helpers (`fmtAgo`, `fmtDuration`, `fmtClock`), `statusBadge`, focus helpers, `announce`, `confirmDialog`, the "not connected" overlay |
@@ -176,7 +177,38 @@ and fences; start from `pipelines/app/profiles/example.json`), `runs/` (one fold
 the project locks), `baselines/`, `checks/`, `findings/`, `metrics/`, `worktrees/`,
 `projects/<project>/settings/` (the project's rules and settings, one `v<N>.json` per version),
 `settings.json`, `sessions.jsonl` and `flow-runs.jsonl` (one line per flow launch, with the
-flow's version). `pipelines/app/README.md` explains the profile.
+flow's version). `pipelines/app/README.md` explains the profile. The asset library is not in
+the data folder: it lives in the private inbox, next to the images (below).
+
+## Asset library
+
+Files that project settings, flows and runs can attach: shared assets (any project may attach
+them) and a project's own. Images, Markdown/text/JSON and PDF; each upload of new content is a
+new, immutable version with its SHA-256. The API is in place; the screens come later.
+
+- Files: `inbox/attachments/_assets/<id>/` (shared) and `inbox/attachments/<project>/_assets/<id>/`
+  (the project folder must exist). Each holds `asset.json` and the versions `v1.md`, `v2.md`, ...
+  A version file is created once and never overwritten; once `asset.json` lists it, it is never
+  renamed or deleted either (archiving only hides the asset). The inbox is gitignored, and these
+  folders are never triage items (`tools/lib/inbox.mjs`).
+- A ref names an asset everywhere: `shared:<id>` or `<project>:<id>`. The id is kebab-case from
+  the title (at most 60 characters, `-2`, `-3` when taken) and stays when the title changes.
+- `asset.json` (format 1): `format`, `id`, `scope` (`shared` or `project`), `project`, `title`,
+  `kind` (`image`, `text` or `pdf`), `description`, `tags`, `createdAt`, `archived`, and
+  `versions` (`n`, `file`, `sha256`, `bytes`, `type`, `addedAt`, `note`, `originalName`). Only
+  `asset-library.mjs` writes it, through a temporary file and a rename, one change at a time.
+- A new version and a meta change carry `expect`, the number of versions the page saw; another
+  count is a 409. The same bytes as the latest version add nothing (`added: false`).
+
+| Route | Does |
+|---|---|
+| `GET /api/library?project=<name>&archived=1` | Shared assets plus that project's (every project's without `project`); archived ones only with `archived=1` |
+| `GET /api/library/asset?ref=<ref>` | One asset with every version |
+| `POST /api/library/upload?scope=&project=&title=&kind=&description=&tags=&note=&name=` | The raw file as the body: a new asset. With `ref=` and `expect=` (plus `name`, `note`, `kind`): a new version of that asset |
+| `POST /api/library/meta` | `{ ref, title, description, tags, expect }`: the fields given change, the id doesn't |
+| `POST /api/library/archive` | `{ ref, archived }`: archive or restore |
+| `POST /api/library/resolve` | `{ project, attachments: [{ ref, pin }] }`: the version, hash and file each attachment points to (`pin: null` is the latest); `missing` and `archived` are marked; another project's ref is refused |
+| `GET /library-file?ref=<ref>&v=<n>` | One version's file (`&download=1` to save it) |
 
 ## Safety
 
@@ -195,6 +227,14 @@ flow's version). `pipelines/app/README.md` explains the profile.
   overwritten.
 - Images are served only from `inbox/`, with a sandboxing CSP. The page itself has a strict CSP
   and renders every name as text.
+- Asset library uploads are checked by content as well: the bytes decide the kind (PNG, JPEG,
+  GIF or WebP, a BMP saved as PNG, at most 25 MB; `.md`, `.txt` or `.json` as valid UTF-8 without
+  NUL bytes, at most 2 MB, JSON that parses; a PDF starts with `%PDF-`, at most 25 MB). A file
+  name or a declared kind that disagrees is refused, and SVG never gets in, not even as text.
+- `/library-file` serves only a version that the asset's `asset.json` lists, by its own
+  `v<n>.<ext>` name inside the asset's folder (a tampered entry or a linked folder is refused),
+  with the type that extension stands for (every text kind as `text/plain; charset=utf-8`),
+  `nosniff` and the same sandboxing CSP as `/img`.
 - Programs start with argument lists, never through a shell string. PowerShell gets its command
   base64-encoded. Project folders with unusual characters in their name can't be started from
   the app.

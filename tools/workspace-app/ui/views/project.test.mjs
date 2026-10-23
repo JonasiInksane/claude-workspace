@@ -2,8 +2,9 @@
 // Home and End keys move the focus, why Start Claude here is off, the header and the tab bar's
 // ARIA (tablist, tabs with aria-selected, aria-controls and one Tab stop, the tabpanel labelled by
 // its tab), the keys moving the focus, a click opening a tab as its own route (and keeping the
-// focus on it), the type's tabs, and the pages without tabs: no project chosen, a name the server
-// doesn't know, a checkout that isn't linked yet, a link whose folder is gone.
+// focus on it; unsaved work is asked about first), the type's tabs, and the pages without tabs:
+// no project chosen, a name the server doesn't know, a checkout that isn't linked yet, a link
+// whose folder is gone.
 // Run: node tools/run-tests.mjs workspace-app
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,6 +21,7 @@ fakeFetch(path => {
   return { ok: true, pipelines: [], routes: [], runs: [] };
 });
 const store = await import('../store.js');
+const { clearLeaveGuard, setLeaveGuard } = await import('../parts/leave-guard.js');
 const { PANEL_ID, tabId, tabKeyTarget, default: page } = await import('./project.js');
 
 const CODE_TABS = ['overview', 'tasks', 'findings', 'changes', 'checks', 'architecture', 'assets', 'settings'];
@@ -124,6 +126,35 @@ test('the open tab stays as it is; only the route a tab click opened puts the fo
   visit(section, 'example/checks');
   assert.equal(dom.document.activeElement.tagName, 'H2', 'and that click is forgotten once a route showed');
   page.onHide();
+});
+
+test('a tab change the leave guard refuses opens nothing and leaves no tab to take the focus later', () => {
+  const visit = (section, sub) => { page.onHide(); store.setView('project', sub); page.render(section, { sub }); section.querySelector('h2').focus(); page.onShow({ sub }); };
+  const section = setup('example/tasks');
+  page.onShow({ sub: 'example/tasks' });
+  dom.location.hash = '#project/example/tasks';
+  let asked = 0;
+  let discarded = 0;
+  setLeaveGuard({ hash: '#project/example/tasks', dirty: () => true, message: 'Discard your changes?', onDiscard: () => { discarded++; } });
+  dom.window.confirm = () => { asked++; return false; };
+  try {
+    dom.click(section.querySelector(`#${tabId('checks')}`));
+    assert.equal(asked, 1, 'the unsaved work is asked about');
+    assert.equal(dom.location.hash, '#project/example/tasks', 'Cancel: no new route');
+    visit(section, 'example/checks');
+    assert.equal(dom.document.activeElement.tagName, 'H2', 'a later visit (the palette, Back) puts the focus on the heading, not on Checks');
+    // OK: the work is dropped, the tab opens and, once it shows, has the focus.
+    dom.window.confirm = () => { asked++; return true; };
+    setLeaveGuard({ hash: '#project/example/checks', dirty: () => true, onDiscard: () => { discarded++; } });
+    dom.click(section.querySelector(`#${tabId('tasks')}`));
+    assert.deepEqual([asked, discarded, dom.location.hash], [2, 1, '#project/example/tasks']);
+    visit(section, 'example/tasks');
+    assert.equal(dom.document.activeElement, section.querySelector(`#${tabId('tasks')}`));
+  } finally {
+    clearLeaveGuard();
+    delete dom.window.confirm;
+    page.onHide();
+  }
 });
 
 test('a plain project gets its own tabs; More > Agents opens its Agents tab', () => {

@@ -27,8 +27,9 @@
 // The pure helper tabKeyTarget is exported for project.test.mjs.
 import { h, icon, keepFocus, keyed, launch, openPlace } from '../lib.js';
 import {
-  go, goProject, loadPipelines, projectEntry, projectRoute, projectSub, refresh, setCurrentProject, state, sub, tabsOf, view,
+  go, goProject, loadPipelines, projectEntry, projectHash, projectRoute, projectSub, refresh, setCurrentProject, state, sub, tabsOf, view,
 } from '../store.js';
+import { mayLeave } from '../parts/leave-guard.js';
 import { createMemo, patch } from '../parts/patch.js';
 import { dataOf, onData, reload, slot, use } from '../parts/project-data.js';
 import { btn, errorNote, ICONS, startProblem, stateCard } from '../parts/project-ui.js';
@@ -148,10 +149,14 @@ function onTabKey(e) {
 }
 
 // The open tab stays as it is (the focus is already on it); another one opens as a new route,
-// and only that route's onShow moves the focus to it.
+// and only that route's onShow moves the focus to it. Unsaved work (parts/leave-guard.js) is asked
+// about here, before focusTab is set: a change you cancel never shows, so its onShow would never
+// clear focusTab, and a later visit to that tab would put the focus on it instead of the heading.
+// After OK the guard is gone, so main.js doesn't ask again.
 function openTab(name, id) {
   const r = projectRoute(sub);
   if (view === 'project' && r.name === name && r.tab === id) return;
+  if (!mayLeave(projectHash(name, id))) return;
   focusTab = projectSub(name, id);
   goProject(name, id);
 }

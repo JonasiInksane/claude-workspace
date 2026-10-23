@@ -214,7 +214,9 @@ async function readVersion(dataDir, project, n) {
     throw e;
   }
   let data;
-  try { data = JSON.parse(text.replace(/^﻿/, '')); } catch (e) { throw unusable(project, n, file, `it is not valid JSON (${e.message})`); }
+  // A byte order mark (Notepad, PowerShell 5.1) is dropped first.
+  const body = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  try { data = JSON.parse(body); } catch (e) { throw unusable(project, n, file, `it is not valid JSON (${e.message})`); }
   const problem = storedProblem(data, project, n);
   if (problem) throw unusable(project, n, file, problem);
   const { format, version, basedOn, savedAt, rules, defaults, allowedTools, assets, sha256 } = data;

@@ -252,7 +252,7 @@ test('a damaged or hand-edited version is never used, and the error names its fi
   }
   assert.deepEqual(files(dir), ['v1.json', 'v2.json'], 'nothing was written');
   // A byte order mark (Notepad) is fine.
-  writeFileSync(file, `﻿${good}`);
+  writeFileSync(file, String.fromCharCode(0xfeff) + good);
   assert.deepEqual(await currentSettings(dataDir, 'example'), v2);
   // Moving the damaged current version out goes back to the one before it, as the message says.
   writeFileSync(file, '{ damaged');

@@ -75,12 +75,13 @@ test('GET /api/today lists what waits, what runs, recent results, Next up, the i
   const waiting = Object.fromEntries(body.waiting.map(w => [w.runId || w.kind, w]));
   assert.deepEqual([waiting[plan.id].badge, waiting[plan.id].action.href], ['Approve plan', `#run/${plan.id}`]);
   assert.deepEqual([waiting[review.id].badge, waiting[review.id].action.href], ['Review', `#review/${review.id}`]);
-  assert.deepEqual([waiting[decide.id].badge, waiting[decide.id].action.href], ['Decide', '#health/example']);
+  assert.deepEqual([waiting[decide.id].badge, waiting[decide.id].action.href], ['Decide', '#project/example/architecture']);
   assert.deepEqual([waiting[capped.id].badge, waiting[capped.id].status], ['Cap reached', 'capped']);
   assert.match(waiting[plan.id].sub, /^Refactor · Example · waiting at the plan gate$/);
   assert.equal(waiting.baseline.title, 'Smaller baseline available: 2 → 1 known failures');
-  assert.deepEqual([waiting.baseline.badge, waiting.baseline.action.href, waiting.baseline.key], ['Accept?', '#cockpit/example', key]);
+  assert.deepEqual([waiting.baseline.badge, waiting.baseline.action.href, waiting.baseline.key], ['Accept?', '#project/example/checks', key]);
   assert.match(waiting.import.sub, /3 changes proposed/);
+  assert.equal(waiting.import.action.href, '#project/example/findings', 'an import waits on the Findings tab');
   assert.equal(body.waiting.length, 6);
 
   assert.equal(body.running.length, 1);
@@ -97,6 +98,7 @@ test('GET /api/today lists what waits, what runs, recent results, Next up, the i
   assert.deepEqual(body.inbox.groups.map(g => [g.folder, g.text]).sort(), [['inbox', '1 screenshot, 1 PDF, 1 link'], ['inbox/attachments', '2 screenshots']]);
   assert.deepEqual([body.lastWin.text, body.lastWin.project], ['TODO comments 4 → 3', 'example']);
   assert.equal(body.health[0].knownFailures.value, 2);
+  assert.equal(body.health[0].action.href, '#project/example/architecture');
   assert.equal(body.todaySoFar.runs, 7);
 });
 

@@ -11,7 +11,7 @@
 // The shell renders the view on every store change, so the form is kept: it is rebuilt only when
 // the pipeline, the project or the pipeline's definition changes, and the values live here per
 // project and pipeline (leaving and coming back keeps them). A draft handed over by the intent
-// box, the palette or the cockpit (store.launchDraft) starts a fresh form with its text and
+// box, the palette or a project's page (store.launchDraft) starts a fresh form with its text and
 // finding filled in.
 //
 // Special fields: a finding picker (open findings in the order Next up picks them, from GET
@@ -20,7 +20,7 @@
 // (runs/catalog.mjs checkValues): nothing here decides what may run.
 import { api, fmtAgo, h, keepFocus, keyed, toast } from '../lib.js';
 import {
-  clearLaunchDraft, currentProject, go, hashFor, launchDraft, loadPipelines, pipelines, state, sub as routeSub, view,
+  clearLaunchDraft, currentProject, go, goProject, hashFor, launchDraft, loadPipelines, pipelines, state, sub as routeSub, view,
 } from '../store.js';
 
 // ---------------------------------------------------------------- pure helpers (tested)
@@ -217,7 +217,7 @@ const EDIT_HINT = 'One sentence is enough. The first stage finds the files and p
 const hintFor = def => HINTS[def.id] || (def.editing ? EDIT_HINT : def.blurb ? `This run: ${def.blurb}.` : '');
 const FIELD_HINTS = {
   path: 'A folder or file inside the repo. Suggestions come from its folders.',
-  image: 'The newest images in the inbox. Paste one in Images to add it.',
+  image: 'The newest images in the inbox. Paste one in Inbox images (under Assets) to add it.',
 };
 const SEVERITY_CLASS = { critical: 'red', high: 'red', medium: 'amber' };
 const cap = s => (s ? s[0].toUpperCase() + s.slice(1) : s);
@@ -410,10 +410,10 @@ async function start({ viaKeyboard = false } = {}) {
   }
 }
 
-// Cancel: the typed values go, and the cockpit (or Today) shows.
+// Cancel: the typed values go, and the project's page (or Today) shows.
 function cancelForm() {
   if (S.def) dropForm(S.project, S.def.id);
-  if (S.project && profiled(S.project)) go('cockpit', S.project);
+  if (S.project && profiled(S.project)) goProject(S.project);
   else go('today');
 }
 
@@ -425,7 +425,7 @@ function titleText(def, project) {
 }
 
 function header(def, project) {
-  const crumbButton = project ? h('button', { class: 'link', type: 'button', on: { click: () => go('cockpit', project) } }, projectLabel(project)) : null;
+  const crumbButton = project ? h('button', { class: 'link', type: 'button', on: { click: () => goProject(project) } }, projectLabel(project)) : null;
   const title = h('h2', { tabindex: '-1' }, titleText(def, project));
   S.refs = { title, crumb: crumbButton || h('span') };
   return h('div', { class: 'view-head' }, h('div', {},
@@ -567,8 +567,8 @@ function findingChoices(f, id) {
   const out = [];
   if (data.error) out.push(h('p', { class: 'note' }, `The findings could not be loaded: ${data.error}`));
   if (!list || !list.length) {
-    out.push(h('p', { class: 'muted small' }, 'No open findings. Import them from the audit in the cockpit (Audit progress).'),
-      h('div', {}, h('button', { class: 'btn small', type: 'button', on: { click: () => go('cockpit', S.project) } }, 'Open the cockpit')));
+    out.push(h('p', { class: 'muted small' }, 'No open findings. Import them from the audit on the project\'s Findings tab.'),
+      h('div', {}, h('button', { class: 'btn small', type: 'button', on: { click: () => goProject(S.project, 'findings') } }, 'Open Findings')));
     return out;
   }
   for (const item of list) {
@@ -610,7 +610,7 @@ function imagePicks(f, id) {
   else if (images.error) out.push(h('p', { class: 'note img-note' }, `The inbox images could not be loaded: ${images.error}`));
   else if (images.list && !list.length) {
     out.push(h('p', { class: 'muted small img-note' }, 'No images in the inbox yet. ',
-      h('button', { class: 'link', type: 'button', on: { click: () => go('images') } }, 'Open Images'), ' and paste one.'));
+      h('button', { class: 'link', type: 'button', on: { click: () => go('images') } }, 'Open Inbox images'), ' and paste one.'));
   }
   return out;
 }
@@ -640,7 +640,7 @@ function buildForm(def) {
     h('h3', {}, 'Limits'), caps, where);
 
   const top = def.disabledReason ? h('div', { class: 'launch-notes' }, h('p', { class: 'note' }, def.disabledReason, ' ',
-    S.project ? h('button', { class: 'link', type: 'button', on: { click: () => go('cockpit', S.project) } }, 'Open the cockpit')
+    S.project ? h('button', { class: 'link', type: 'button', on: { click: () => goProject(S.project) } }, 'Open the project')
       : h('button', { class: 'link', type: 'button', on: { click: () => go('projects') } }, 'Open Projects'))) : null;
   const notes = h('div', { class: 'launch-notes', hidden: true });
   const why = h('p', { class: 'reason launch-why', id: 'l-why', hidden: true });

@@ -1,13 +1,14 @@
 # Workspace app
 
 A small local app for this workspace, opened in its own Edge window: Today (what waits for
-you, what runs, next up, health, inbox, active reports), a cockpit and Health screen per
-profiled project, headless pipeline runs (launcher, live run, review gate and commit; see
+you, what runs, next up, health, inbox, active reports), a page for every project with the tabs
+of its type (a code project: Overview, Tasks, Findings, Changes, Checks, Architecture; see
+"Project pages" below), headless pipeline runs (launcher, live run, review gate and commit; see
 "Runs" below), flows (saved prompts with reference images, run in the hub, a project or one
 agent), the Library with a button for every skill and workspace tool, the pipelines and the
 settings, project cards that start Claude, per-project agents (create, edit, archive and restore, start
-isolated, view memory), image upload (drag and drop, Ctrl+V, or choose files) into the hub
-inbox, a chosen agent's image folder or a flow, and an Assets view for projects with an asset
+isolated, view memory), image upload (Inbox images, opened from Assets: drag and drop, Ctrl+V,
+or choose files) into the hub inbox, a chosen agent's image folder or a flow, and an Assets view for projects with an asset
 pipeline: 3D models (`projects/game-dev`: renders, check results, a 3D view and your verdict)
 and sprites (`projects/game-dev`, `tools/sprite.mjs`: an HD-2D preview, the pixels, check results and your verdict).
 
@@ -34,7 +35,8 @@ runs just opens another window.
 | `runs/wiring.mjs` | Builds the run engine: the manager (`runs/manager.mjs`) with the real executor and modules, `claude.exe` from the launcher (or the fake in tests); `stopEngine` for exits |
 | `routes/runs.mjs`, `routes/events.mjs` | Runs over HTTP: pipelines, start and preview, the runs list, one run with its timeline and buttons, review data, diffs, run files; `/api/events` (live update signals) |
 | `http.mjs` | `HttpError`, `send`/`json`, body readers, cookie and token helpers, `PAGE_CSP`, and the startup scan of `ui/` (`listUiFiles`) |
-| `state.mjs` | `buildState`: everything the page shows (`GET /api/state`), async; git runs as child processes, requests during a build share it |
+| `state.mjs` | `buildState`: everything the page shows (`GET /api/state`), async; git runs as child processes, requests during a build share it. Each project carries its `type` and `tabs` |
+| `project-types.mjs` | The project types, in order: `code` (has a private profile), `assets` (has an asset pipeline), `generic`; each lists its page's tabs. `projectTypeOf()` returns the first that matches |
 | `lookup.mjs` | Finds the project, agent, flow, image target or asset project a request names (or throws 404/400); `launchableOrThrow` |
 | `routes/*.mjs` | The JSON API by area: `state`, `images`, `agents`, `assets`, `launch` (start Claude, open places), `flows`, `tools` (skills, workspace tools), `projects` (new, clone, list repos) |
 | `catalog.mjs` | The Library's list: skills (with their form fields and how the prompt is built) and workspace tools |
@@ -48,14 +50,14 @@ runs just opens another window.
 | `make-icon.mjs` | Draws `ui/icon.ico` (16 to 256 px) from the same design as `ui/icon.svg`; its PNG encoder is shared with `bmp.mjs` |
 | `bmp.mjs` | BMP to PNG on upload (uncompressed 1, 4, 8, 24 and 32-bit; others are refused with a message) |
 | `assets.mjs` | The Assets view: finds projects with `tools/asset.mjs` (3D) or `tools/sprite.mjs` (sprites) and `assets/`, reads each asset's `asset.json` (`"kind": "sprite"` for a sprite), check reports, renders and brief log, and a sprite's sheet (`export/SPR_<Name>.png`, `.json`, `_N` normal map, `_E` emissive); serves only PNG, JPEG, JSON and GLB files from inside `assets/` (sandboxed); writes a verdict (Approve, Revise, Reject) as the `asset.json` status plus a dated line in the brief's log |
-| `ui/index.html` | The page shell: sidebar, `<main>`, the dialog, the palette (`#palette`) and commit dialog (`#commitDialog`), the live-updates pill and the "waiting" live region; links `app.css` then `css/<view>.css`; loads `main.js` as a module |
-| `ui/main.js` | The views registry (`VIEWS`), the nav (`navItems()`: Today, one entry per profiled project with Health and wins, Runs, Projects, Flows, Library, Images, Assets), hash routing with sub-routes (`#cockpit/<project>`, `#run/<id>`; unknown goes to `#today`; Back works), live updates (one `EventSource('/api/events')`, polling while it is down), keyboard (`Ctrl K`, `g t`/`g p`/`g r`), notifications, the theme toggle, pasted and dropped images, heartbeat, refresh on focus |
+| `ui/index.html` | The page shell: sidebar (the nav `#nav`, and `#navFoot` for Library above the Hub session buttons), `<main>`, the dialog, the palette (`#palette`) and commit dialog (`#commitDialog`), the live-updates pill and the "waiting" live region; links `app.css` then `css/<view>.css`; loads `main.js` as a module |
+| `ui/main.js` | The views registry (`VIEWS`), the sidebar (`ui/parts/nav.js`: Today; Projects with every project under it, a code project with its amber waiting count; Assets; Flows; Runs with up to three review gates under it; Library at the foot, above the Hub session buttons), hash routing with sub-routes (`#project/<name>/<tab>`, `#run/<id>`; a project route the state completes is corrected in place; unknown goes to `#today`; Back works), live updates (one `EventSource('/api/events')`, polling while it is down), keyboard (`Ctrl K`, `g t`/`g p`/`g a`/`g f`/`g r`), notifications, the theme toggle, pasted and dropped images, heartbeat, refresh on focus |
 | `ui/lib.js` | `h()` (data always as text; refuses a `style` prop), `api()`, `act()`, `toast()`, `copy()`, formatting helpers (`fmtAgo`, `fmtDuration`, `fmtClock`), `statusBadge`, focus helpers, `announce`, `confirmDialog`, the "not connected" overlay |
-| `ui/store.js` | The shared state (`state`, `view`, `sub`, `currentProject`, `settings`, `pipelines`, run signals), `setState`, `subscribe`, `refresh`, `go()`, the hash helpers, `openLauncher` and the title badge |
+| `ui/store.js` | The shared state (`state`, `view`, `sub`, `currentProject`, `settings`, `pipelines`, run signals), `setState`, `subscribe`, `refresh`, `go()`, the hash helpers (`projectRoute`, `projectSub`, `goProject`, `canonicalProjectSub`; the old `#cockpit/<name>` and `#health/<name>` read as Overview and Architecture), `openLauncher` and the title badge |
 | `ui/dialog.js` | `openDialog` (with an unsaved-changes guard), `closeDialog`, `formDialog` |
-| `ui/parts/*.js` | Shared pieces: the palette, the intent box, sparkline, bar, status dot and badge |
-| `ui/views/*.js` | One file per view: `today`, `cockpit`, `health`, `launcher`, `run`, `review`, `runs`, `flows`, `tools` (Library), `projects`, `assets`, `images`, with their dialogs (`home`, the old dashboard, is no longer a view; `#home` shows Today) |
-| `ui/app.css`, `ui/css/*.css` | Tokens, layout and shared components; styles for one view in `css/<view>.css` |
+| `ui/parts/*.js` | Shared pieces: the nav, the palette (every project tab is a jump target), the intent box, sparkline, bar, status dot and badge; for the project page `patch.js` (repaint without losing the focus), `project-data.js` (each tab's data, kept fresh), `project-ui.js` (small builders) and `project-actions.js` (buttons several tabs offer) |
+| `ui/views/*.js` | One file per view: `today`, `project` (a project's page, its tabs in `views/project/`), `launcher`, `run`, `review`, `runs`, `flows`, `tools` (Library), `projects`, `assets` (with the Inbox images button), `images` (Inbox images), with their dialogs (`home`, the old dashboard, is no longer a view; `#home` shows Today) |
+| `ui/app.css`, `ui/css/*.css` | Tokens, layout and shared components; styles for one view in `css/<view>.css` (the project page: `project.css`, plus `project-cards.css` for the code tabs' cards and `architecture.css`) |
 | `ui/viewer.js` | The 3D view: a small WebGL2 GLB viewer, no libraries (base colour, metal/roughness and normal maps; studio light and a fake sky; turntable, wireframe). No Draco or meshopt compression, skins or morphs |
 | `ui/sprite-viewer.js` | The sprite views, no libraries: `loadSprite` (the sheet's Aseprite-style JSON, frames by `<anim>_<direction>` tag), an HD-2D diorama (WebGL2: the sprite as a billboard in a small pixel-art scene, sun shadows the sprite casts, a torch, normal-mapped light and glowing pixels, tilt-shift depth of field, bloom, vignette, day/night, a walk-around mode that faces the way it moves) and a pixel view (integer zoom, play/step). A missing direction plays its mirror (west from east), then the nearest one |
 | `ui/sprite-dialog.js` | The Assets view's dialog for a sprite: both sprite views with the animation, direction and lighting controls, the palette, facts, verdict, checks and review images |
@@ -79,6 +81,24 @@ listed names or a checked `https://` / `git@` URL, never into an existing folder
 list" writes a project folder's origin remote into the file.
 The inbox counts come from `tools/lib/inbox.mjs`. Image rules:
 [inbox/README.md](../../inbox/README.md). Agents: [the decision](../../knowledge/decisions/2026-10-21-project-agents.md).
+
+## Project pages
+
+Every project in `projects/` has a page, `#project/<name>/<tab>`; its type
+(`project-types.mjs`) decides the tabs:
+
+| Type | When | Tabs |
+|---|---|---|
+| `code` | it has a private profile (`<dataDir>/profiles/<name>.json`) | Overview, Tasks, Findings, Changes, Checks, Architecture, Assets, Settings |
+| `assets` | it has an asset pipeline (`tools/asset.mjs` or `tools/sprite.mjs` plus `assets/`) | Overview, Assets, Agents, Settings |
+| `generic` | anything else | Overview, Agents, Assets, Settings |
+
+A link without a tab, or with a tab the type doesn't have, opens the first tab; the old
+`#cockpit/<name>` and `#health/<name>` open Overview and Architecture. Tasks groups the runs by
+their root run (`run.parent`); Checks shows every count a check recorded on its own (new,
+pre-existing, flaky). Settings for a non-code project offers "Create from the example", which
+makes it a code project. The tab bar follows the WAI-ARIA tabs pattern: Left, Right, Home and End
+move the focus, Enter or Space opens the tab, and every tab is its own history entry.
 
 ## Runs
 
@@ -166,9 +186,10 @@ the project locks), `baselines/`, `checks/`, `findings/`, `metrics/`, `worktrees
 
 Tests: `node tools/run-tests.mjs workspace-app`. Next to each module is its `*.test.mjs`;
 `test/e2e.test.mjs` drives Explain, Review and a Refactor to its commit through the real app
-and engine with the fake claude, on a synthetic repo.
+and engine with the fake claude, on a synthetic repo. A test of a page module (`ui/**/*.js`)
+renders it in `test/dom.mjs`, a stand-in DOM with a fake `fetch` (`installDom`, `fakeFetch`).
 
-Screens: `node tools/workspace-app/test/shots.mjs --out <dir> --example --routes cockpit/example,runs --theme both`
+Screens: `node tools/workspace-app/test/shots.mjs --out <dir> --example --routes project/example/overview,runs --theme both`
 saves one PNG per route from headless Edge and lists every console error, CSP violation and
 exception the page logged (exit code 1 when there are any). `--example` runs the app on a
 temporary workspace with the synthetic project and the sample runs; without it the tool starts
@@ -182,8 +203,21 @@ the app on this workspace with a temporary data folder. Dev only; needs Node 22+
   with `readJson(req)`. Look names up through `lookup.mjs`, never take a path from the page.
 - **A view:** add `ui/views/<id>.js` (default export `{ id, label, icon, render(el, ctx) }`, plus
   optional `onShow(ctx)` and `onHide()`, which also run when only the sub-route changes, such as
-  another run id) and list it in `VIEWS` in `ui/main.js`; add it to `navItems()` there if it
-  belongs in the sidebar. Its styles go in `ui/css/<id>.css`, linked in `index.html`.
+  another run id) and list it in `VIEWS` in `ui/main.js`. If it belongs in the sidebar, add it to
+  `NAV_VIEWS` in `ui/main.js` (which hands the modules to the nav) and give it its place in
+  `navItems()` or `footItems()` in `ui/parts/nav.js`. Its styles go in `ui/css/<id>.css`, linked in
+  `index.html`.
+- **A project tab:** add `ui/views/project/<id>.js` with the default export
+  `{ id, label, render(el, ctx), onShow?(ctx), onHide?() }`, where
+  `ctx = { state, project /* its /api/state entry */, rest /* the hash after the tab */, go, refresh }`.
+  `render` fills the tab panel `el` on every repaint (patch it with `ui/parts/patch.js`, so the
+  focus and typed text survive); `onShow` starts loading what the tab shows
+  (`use(name, parts)` from `ui/parts/project-data.js`, which keeps those parts fresh) and `onHide`
+  releases it. List the module in `ui/views/project/tabs.js` and its id in the `tabs` of the
+  types that have it in `project-types.mjs`; styles go in `ui/css/project.css`.
+- **A project type:** one entry in `PROJECT_TYPES` in `project-types.mjs`, before `generic`:
+  `{ id, label, tabs, matches({ root, dataDir, name }) }`, plus a tab module for every tab no type
+  had before. `project-types.test.mjs` checks that every tab named there has its module.
 - New files in `ui/` are served after a restart of the app (`.js`, `.css`, `.svg`, `.ico` only).
 - Private data that must not go into this public repo goes under `ctx.dataDir`
   (`%LOCALAPPDATA%\claude-workspace`), never in tracked files.

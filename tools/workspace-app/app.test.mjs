@@ -171,7 +171,21 @@ test('state: run counts per project and in all, profiles, and where a linked pro
   assert.deepEqual(s.runs.atReviewGate, [{ id: '261022-100010-refactor-review-gate', project: 'example', title: 'Refactor: Move cart totals into a cents helper', waiting: 'review' }]);
   const example = s.projects.find(p => p.name === 'example');
   assert.deepEqual([example.linked, example.realPath, example.hasProfile, example.waiting, example.running], [true, realpathSync.native(target), true, 4, 1]);
+  assert.deepEqual([example.type.id, example.tabs[0], example.tabs.includes('findings')], ['code', 'overview', true], 'a profile makes it a code project');
   rmSync(join(dataDir, 'runs'), { recursive: true, force: true });
+});
+
+test('state: every project has a type and the tabs of its page (project-types.mjs)', async t => {
+  put('projects/art-kit/tools/asset.mjs', '// stub\n');
+  put('projects/art-kit/assets/readme.txt', 'x');
+  t.after(() => rmSync(join(root, 'projects', 'art-kit'), { recursive: true, force: true }));
+  assert.equal((await call('POST', '/api/ping')).status, 200);
+  const s = (await call('GET', '/api/state')).json;
+  const of = name => s.projects.find(p => p.name === name);
+  assert.deepEqual([of('we;ird').type, of('we;ird').tabs], [{ id: 'generic', label: 'Plain project' }, ['overview', 'agents', 'assets', 'settings']]);
+  assert.deepEqual([of('art-kit').type, of('art-kit').tabs], [{ id: 'assets', label: 'Asset pipeline' }, ['overview', 'assets', 'agents', 'settings']]);
+  assert.ok(s.assets.some(a => a.project === 'art-kit'), 'the Assets list and the types read the same pipelines');
+  assert.ok(s.projects.every(p => p.type && typeof p.type.id === 'string' && Array.isArray(p.tabs) && p.tabs[0] === 'overview'));
 });
 
 test('uploads go to the chosen agent folder; non-images, unknown agents and huge files are refused', async () => {

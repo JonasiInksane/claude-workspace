@@ -1,5 +1,7 @@
 // Projects: one card per project, with its agents (start isolated, edit, memory, images, new,
 // archive and restore), then the Repositories card (projects/repos.json), folded at the bottom.
+// A card's name opens the project's page (views/project.js); agentsSection() is that page's
+// Agents tab too.
 //
 // Linked checkouts (SPEC 5.8, R24): a repo that is listed but not on this PC offers Clone and
 // "Link existing checkout…", which links a checkout that lives elsewhere as projects/<name> (a
@@ -12,7 +14,7 @@
 // keeps folded sections, open dialogs and the focus as they are.
 import { act, api, confirmDialog, h, keepFocus, keyed, launch, openPlace, plural, qs, toast } from '../lib.js';
 import { clearGuard, closeDialog, dialog, formDialog, openDialog } from '../dialog.js';
-import { go, refresh, state } from '../store.js';
+import { go, goProject, refresh, state } from '../store.js';
 import { skillById, skillDialog } from './tools.js';
 import { setTarget } from './images.js';
 
@@ -72,11 +74,10 @@ async function unlink(name) {
   return !!r;
 }
 
-function projectCard(p) {
-  const problem = launchProblem(p);
-  const canLaunch = !problem;
-  const gone = p.linked && !p.realPath;
-  const hint = p.launchable ? '' : 'The folder name has unusual characters; start it from a terminal.';
+// The agents of a project card, also the project page's Agents tab (views/project/agents.js):
+// each agent with Start, Edit, Memory and Images, the shared images row, + New agent, and the
+// archived agents with Restore (folded).
+export function agentsSection(p) {
   const k = what => `project-${p.name}-${what}`;
   const agents = p.agents.length
     ? h('ul', { class: 'agents' }, p.agents.map(a => agentRow(p, a)),
@@ -84,7 +85,7 @@ function projectCard(p) {
         h('div', { class: 'agent-name' }, 'Shared images', h('span', { class: 'badge' }, plural(p.sharedImages, 'image'))),
         h('div', { class: 'agent-desc' }, 'Every agent of this project can read these.'),
         h('div', { class: 'row-actions' },
-          h('button', { class: 'btn small', on: { click: () => { setTarget({ project: p.name, agent: '_shared' }); go('images'); } } }, 'Images'))))
+          keyed(h('button', { class: 'btn small', type: 'button', on: { click: () => { setTarget({ project: p.name, agent: '_shared' }); go('images'); } } }, 'Images'), k('shared-images')))))
     : h('div', { class: 'empty' }, h('b', {}, 'No agents yet'),
       'Add a specialist such as ', h('code', {}, 'asset-builder'), '. Each agent keeps its own memory and image folder.');
   const archived = p.archived.length
@@ -93,15 +94,30 @@ function projectCard(p) {
       h('ul', { class: 'agents' }, p.archived.map(x => h('li', { class: 'agent' },
         h('div', { class: 'agent-name' }, x.name || x.archivedAs),
         h('div', { class: 'agent-desc' }, x.valid ? x.description : `No usable name in .claude/agents-archived/${x.archivedAs}`),
-        h('div', { class: 'row-actions' }, h('button', {
-          class: 'btn small', disabled: !x.valid,
+        h('div', { class: 'row-actions' }, keyed(h('button', {
+          class: 'btn small', type: 'button', disabled: !x.valid,
           title: 'Moves its file back to .claude/agents/; its memory and images are still there',
           on: { click: () => act(api('/api/agents/restore', { method: 'POST', body: { project: p.name, archivedAs: x.archivedAs } })).then(refresh) },
-        }, 'Restore'))))))
+        }, 'Restore'), k(`restore-${x.archivedAs}`)))))))
     : null;
+  return [
+    h('div', { class: 'section-label' }, h('span', {}, `Agents (${p.agents.length})`),
+      keyed(h('button', { class: 'btn small', type: 'button', on: { click: () => newAgentDialog(p) } }, '+ New agent'), k('new-agent'))),
+    agents, archived,
+  ];
+}
+
+function projectCard(p) {
+  const problem = launchProblem(p);
+  const canLaunch = !problem;
+  const gone = p.linked && !p.realPath;
+  const hint = p.launchable ? '' : 'The folder name has unusual characters; start it from a terminal.';
+  const k = what => `project-${p.name}-${what}`;
   return h('div', { class: 'card project' },
     h('div', { class: 'card-head' },
-      h('div', { class: 'project-title' }, h('h3', {}, p.name), h('span', { class: 'badge blue' }, p.label),
+      h('div', { class: 'project-title' },
+        h('h3', {}, keyed(h('button', { class: 'link project-link', type: 'button', title: 'Opens the project page', on: { click: () => goProject(p.name) } }, p.name), k('page'))),
+        h('span', { class: 'badge blue' }, p.label),
         p.hasClaudeMd ? h('span', { class: 'badge ok' }, 'CLAUDE.md') : h('span', { class: 'badge warn', title: 'Run /onboard-project in a session there' }, 'No CLAUDE.md'),
         linkBadge(p)),
       h('div', { class: 'row-actions' },
@@ -115,10 +131,7 @@ function projectCard(p) {
         state.tools.editor ? keyed(h('button', { class: 'btn small', type: 'button', disabled: gone, on: { click: () => openPlace({ place: 'project', project: p.name, with: 'editor' }) } }, state.tools.editor), k('editor')) : null,
         p.linked ? keyed(h('button', { class: 'btn small', type: 'button', title: 'Removes only the link in projects/; your checkout stays', on: { click: () => unlink(p.name) } }, 'Unlink…'), k('unlink')) : null),
       problem ? h('p', { class: 'reason project-reason' }, problem) : null),
-    h('div', { class: 'card-body' },
-      h('div', { class: 'section-label' }, h('span', {}, `Agents (${p.agents.length})`),
-        h('button', { class: 'btn small', on: { click: () => newAgentDialog(p) } }, '+ New agent')),
-      agents, archived));
+    h('div', { class: 'card-body' }, agentsSection(p)));
 }
 
 // ---------------------------------------------------------------- agent dialogs

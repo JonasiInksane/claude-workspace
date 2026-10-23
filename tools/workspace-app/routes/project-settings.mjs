@@ -11,10 +11,11 @@
 // (basedOn; 0 or null when there were none): 409 when that is not the current one any more, 400
 // listing every problem when a value is invalid. A field left out keeps its current value; a save
 // that changes nothing writes nothing (unchanged: true). Settings that can't be read are a 500
-// whose message names the file.
+// whose message names the file. A save may be larger than the 64 KB of other requests (see
+// MAX_SAVE_BYTES).
 import { EFFORTS, MAX_TOOL_RULES, PERMISSION_MODES } from '../../lib/prompt-file.mjs';
 import { PROJECT_RE } from '../core/datadir.mjs';
-import { HttpError, readJson } from '../http.mjs';
+import { HttpError, readBody } from '../http.mjs';
 import { findProject } from '../lookup.mjs';
 import {
   DEFAULT_KEYS, getSettingsVersion, readSettings, saveSettings, SETTINGS_FIELDS, SETTINGS_LIMITS,
@@ -22,6 +23,15 @@ import {
 
 const BODY_KEYS = ['project', 'basedOn', ...SETTINGS_FIELDS];
 const VERSION_RE = /^[1-9][0-9]{0,8}$/;
+// The body of the largest valid save, with room to spare: 20,000 characters of rules take up to
+// 60,000 bytes in UTF-8 (more with JSON escapes), plus the tools and 50 asset refs. readJson's
+// 64 KB would refuse some valid saves.
+export const MAX_SAVE_BYTES = 256 * 1024;
+
+async function readSave(req) {
+  const buf = await readBody(req, MAX_SAVE_BYTES);
+  try { return JSON.parse(buf.toString('utf8') || '{}'); } catch { throw new HttpError(400, 'invalid JSON'); }
+}
 
 // The project a request names, by its folder's real spelling.
 function settingsProject(root, name) {
@@ -59,7 +69,7 @@ export function routes({ root, dataDir }) {
     },
 
     'POST /api/project-settings': async req => {
-      const b = await readJson(req);
+      const b = await readSave(req);
       if (!b || typeof b !== 'object' || Array.isArray(b)) throw new HttpError(400, 'send the settings as an object');
       const unknown = Object.keys(b).filter(k => !BODY_KEYS.includes(k));
       if (unknown.length) throw new HttpError(400, `"${unknown[0].slice(0, 60)}" is not a project setting (send ${BODY_KEYS.join(', ')})`);

@@ -10,7 +10,7 @@ import { ROUTE_MODULES } from '../app.mjs';
 import { call, routeHub } from '../test/fixtures/routes/hub.mjs';
 import { settingsDir } from '../project-settings.mjs';
 import * as projectSettingRoutes from './project-settings.mjs';
-import { routes } from './project-settings.mjs';
+import { MAX_SAVE_BYTES, routes } from './project-settings.mjs';
 
 async function setup(t) {
   const h = await routeHub(t);
@@ -103,6 +103,21 @@ test('the project must be a folder in projects/ with a name the data folder can 
   const notText = await call(h.api, 'POST /api/project-settings', { body: { project: ['example'], basedOn: 0 } });
   assert.equal(notText.status, 400);
   assert.ok(!existsSync(join(h.dataDir, 'projects')));
+});
+
+test('POST takes the largest valid save, more than the 64 KB of other requests, and refuses far larger bodies', async t => {
+  const h = await setup(t);
+  // 20,000 characters of rules at 3 bytes each in UTF-8, plus 50 attached assets: about 70 KB.
+  const rules = '料'.repeat(20000);
+  const assets = Array.from({ length: 50 }, (_, i) => ({ ref: `shared:${'a'.repeat(180)}-${i}`, pin: null }));
+  assert.ok(Buffer.byteLength(JSON.stringify({ project: 'example', basedOn: 0, rules, assets })) > 64 * 1024);
+  const r = await save(h, { basedOn: 0, rules, assets });
+  assert.equal(r.status, 200, r.body.error);
+  assert.equal(r.body.version, 1);
+  assert.equal((await get(h)).body.current.rules.length, 20000);
+  const huge = await save(h, { basedOn: 1, rules: 'x'.repeat(MAX_SAVE_BYTES) });
+  assert.deepEqual([huge.status, huge.body.error], [413, 'request is larger than 256 KB']);
+  assert.deepEqual(readdirSync(h.dir), ['v1.json']);
 });
 
 test('POST refuses a body that is not a settings object', async t => {

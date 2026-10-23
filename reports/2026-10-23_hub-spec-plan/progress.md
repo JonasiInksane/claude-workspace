@@ -7,15 +7,18 @@ bottom is chronological.
 ## How to resume
 
 1. Read `report.md` (the plan) and this file.
-2. Hub work is on branch **`project-model`** in `C:\dev\claude-workspace` (not pushed). Check
+2. Hub work is on branch **`project-model`** in `C:\dev\claude-workspace`. It and the `pm/*`
+   slice branches are on `origin`; the wave-2 merges are local until pushed. Check
    `git log --oneline main..project-model` against the table below.
-3. The new app is the separate repo `projects/nextjs-workspace` (local only, branch `main`).
+3. The new app is the separate repo `projects/nextjs-workspace` (local only, branch `main`, only on
+   the Node 24 PC without nvm; not in `projects/repos.json`).
    Its own `CLAUDE.md` and `docs/` describe its architecture.
 4. Pick the first step that is not `done`. Workflow scripts used so far are listed under
    "Workflows"; a step marked `in progress` may have a partly merged branch: check
-   `git branch --list "pm/*"` (hub) before redoing it.
-5. Nothing is pushed anywhere. To continue on the other PC, push `project-model` (and later the
-   new repo) first, or copy the folders.
+   `git branch -a --list "*pm/*"` (hub) before redoing it.
+5. To continue on the other PC, push `project-model` (and the new repo) first, or copy the
+   folders. On a checkout made before A0, refresh the test fixtures once (see the log,
+   2026-10-23 wave-2 merge), or three run tests fail on CRLF.
 
 ## Decisions (2026-10-23)
 
@@ -41,9 +44,9 @@ bottom is chronological.
 | A3 | Project settings and rules (versioned, private): backend + session/run injection | done (merged `9531143`) | `pm/w1b-project-settings` |
 | A4 | Asset library (shared and per project, versions): backend | done (merged `fe0f6d0`) | `pm/w1c-asset-library` |
 | A5 | Flows shared across projects, flow versions recorded | done (merged `75fab0f`) | `pm/w1d-shared-flows` |
-| A3/A4 UI | Settings tab, Assets tab and library screens | in progress (WF-A2) | `pm/w2a-settings-assets-ui` |
-| A6 | Run input manifest, attached assets into runs, flows and sessions; wave-1 follow-ups | in progress (WF-A2) | `pm/w2b-run-provenance` |
-| A7 | Ask panel | in progress (WF-A2) | `pm/w2c-ask-panel` |
+| A3/A4 UI | Settings tab, Assets tab and library screens | done (merged `00369b6`); review state unknown, covered by A-review | `pm/w2a-settings-assets-ui` |
+| A6 | Run input manifest, attached assets into runs, flows and sessions; wave-1 follow-ups | done (merged `eb3f13b`); review state unknown, covered by A-review | `pm/w2b-run-provenance` |
+| A7 | Ask panel | done (merged `f5355af`) | `pm/w2c-ask-panel` |
 | A-review | Independent review of the whole Part A diff, fixes | todo | |
 | A-docs | README, flows README, decision note, report revision | todo | |
 
@@ -66,7 +69,7 @@ bottom is chronological.
 | # | Name | Script | Run id | Result |
 |---|---|---|---|---|
 | WF-A1 | `hub-app-wave-1`: 4 slices (A1+A2, A3 backend, A4 backend, A5), each implement → review-and-fix in its own worktree | `~/.claude/projects/C--dev-claude-workspace/5108b4b5-cc8f-4f47-adae-6ce3174930d6/workflows/scripts/hub-app-wave-1-wf_05cd4a1a-2f8.js` | `wf_05cd4a1a-2f8` | done: 8 agents, all slices ready-with-notes |
-| WF-A2 | `hub-app-wave-2`: Settings/Assets UI, run provenance + follow-ups, Ask panel; implement → review-and-fix | `.../workflows/scripts/hub-app-wave-2-wf_d4458441-b73.js` | `wf_d4458441-b73` | running |
+| WF-A2 | `hub-app-wave-2`: Settings/Assets UI, run provenance + follow-ups, Ask panel; implement → review-and-fix | `.../workflows/scripts/hub-app-wave-2-wf_d4458441-b73.js` | `wf_d4458441-b73` | ended without a recorded result; the uncommitted slice work was saved by hand as `w2a additions` and `additions` and pushed; merged on the nvm PC (see log) |
 | WF-B1 | `nws-foundation`: core+db ‖ apps skeleton (same checkout, disjoint folders, no agent commits), then integrate + review | `.../workflows/scripts/nws-foundation-wf_7d149b2a-dab.js` | `wf_7d149b2a-dab` | running |
 
 Resume a workflow in the same session with `Workflow({scriptPath, resumeFromRunId})`. In a new
@@ -106,3 +109,28 @@ the missing slices (the briefs are in the script file).
   check-workspace: only the two known private-marker errors in the old control-plan folder.
   Merged-app screenshots checked. Workflow worktrees removed (all clean).
 - 2026-10-23: WF-A2 launched (run `wf_d4458441-b73`).
+- 2026-10-23: Wave 2 picked up on the nvm PC (Node 20.15.1, Claude Code 2.1.309; no WF-A2
+  script or run cache, no `projects/nextjs-workspace` there). Branch state: w2c has four agent
+  commits (backend, UI, README, a cap-reason fix); w2b has three agent commits plus a hand-saved
+  `additions` commit (launch, flows, project settings, flows and run UI); w2a is one hand-saved
+  `w2a additions` commit. Whether WF-A2's review-and-fix stage finished for w2a and w2b is not
+  known, so A-review must cover them in full. w2a and w2b don't update the README yet (A-docs).
+  Each branch alone: full suite green (w2a 1,424 tests, w2b 1,415, w2c 1,388; 0 fail, 1 skipped).
+- 2026-10-23: Merged w2a, w2b, w2c into `project-model` (`00369b6`, `eb3f13b`, `f5355af`).
+  Conflicts only between w2b and w2c, both additive: the `VARS` list in `runs/prompts.mjs`
+  (`assets` and `context`, both kept) and the imports of `routes/runs.test.mjs` (both kept).
+  Checked by hand: w2b's `routes/runs.mjs` changes (manifestOk, Settings-tab message) survived
+  w2c's move of the run file readers to `runs/run-files.mjs`; `explain/answer.md` has both
+  `{{assets}}` and `{{context}}`. Full suite in a fresh worktree of the merge: 1,499 tests,
+  1,498 pass, 0 fail, 1 skipped. check-workspace: 0 errors, 5 known warnings. Screenshots
+  (shots.mjs with nvm's Node 23.2.0, `--example --seed test/seed-library.mjs --fixtures`, light
+  and dark): Settings tab, project and global Assets, Flows, the explain and review-gate run
+  pages with the Ask button, Findings, and sample-art's Assets; no console errors. Not checked:
+  the run page's Inputs card (the fixture runs predate manifests), the Ask panel opened, a real
+  Ask run.
+- 2026-10-23: CRLF on the nvm PC: its main checkout still has CRLF copies of 239 fixture files
+  (`git ls-files --eol` shows `i/lf w/crlf attr/-text`; A0's refresh only ran on the other PC),
+  so three run tests fail there (run-review, run-diff, contextText) while a fresh checkout
+  passes. Fix once per old checkout: delete the `w/crlf` files under
+  `tools/workspace-app/test/fixtures` and `git checkout -- tools/workspace-app/test/fixtures`.
+  Note: Git Bash's `grep` hides CR bytes; use `git ls-files --eol` to check.

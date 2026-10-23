@@ -36,11 +36,12 @@ runs just opens another window.
 | `http.mjs` | `HttpError`, `send`/`json`, body readers, cookie and token helpers, `PAGE_CSP`, and the startup scan of `ui/` (`listUiFiles`) |
 | `state.mjs` | `buildState`: everything the page shows (`GET /api/state`), async; git runs as child processes, requests during a build share it |
 | `lookup.mjs` | Finds the project, agent, flow, image target or asset project a request names (or throws 404/400); `launchableOrThrow` |
-| `routes/*.mjs` | The JSON API by area: `state`, `images`, `agents`, `assets`, `launch` (start Claude, open places), `flows`, `tools` (skills, workspace tools), `projects` (new, clone, list repos) |
+| `routes/*.mjs` | The JSON API by area: `state`, `images`, `agents`, `assets`, `launch` (start Claude, open places), `flows`, `tools` (skills, workspace tools), `projects` (new, clone, list repos), `project-settings` (a project's rules and settings, see "Project settings") |
+| `project-settings.mjs` | A project's rules and settings as numbered, immutable versions in the data folder: save (stale saves 409, every problem listed), read with checks, `rulesBlock` for stage prompts, `launchWithSettings` for sessions |
 | `catalog.mjs` | The Library's list: skills (with their form fields and how the prompt is built) and workspace tools |
 | `uploads.mjs` | Image targets, type check by content, dated folders, no overwrites |
-| `launch.mjs` | Builds the commands for terminals, Explorer, the editor and the window; runs workspace tools and collects their output |
-| `claude-prompt.mjs` | Runs in the new terminal: starts `claude <prompt>` with the prompt (and readable folders) from a prompt file, `tools/lib/prompt-file.mjs` |
+| `launch.mjs` | Builds the commands for terminals, Explorer, the editor and the window; applies a project's settings to every session started in it; runs workspace tools and collects their output |
+| `claude-prompt.mjs` | Runs in the new terminal: starts `claude <prompt>` with the prompt, the project's rules (`--append-system-prompt`) and readable folders from a prompt file, `tools/lib/prompt-file.mjs` |
 | `../lib/flows.mjs` | Flows: read, check, save, archive and restore `flows/<flow>.md`; build a run's prompt ([flows/README.md](../../flows/README.md)) |
 | `../lib/agents.mjs` | Agents, shared with the CLI tools; editing (`saveAgentText`, refuses renames and stale saves), archiving and restoring live here too |
 | `start-app.ps1` | Starts the server hidden with `--log` (shows a dialog if Node is missing) |
@@ -70,7 +71,7 @@ library always shows its `--dry-run` preview first). A flow's Run starts `claude
 (hub, project) or `agent-session.mjs --prompt-file` (agent) in a terminal, with the flow's
 launch settings as `--permission-mode` / `--model` / `--effort` and its pre-approved tools in
 the settings file (`tools/lib/prompt-file.mjs` checks them; `bypassPermissions` and `dontAsk`
-are refused). Archiving an agent
+are refused), plus the project's settings in a project (see "Project settings"). Archiving an agent
 moves its file to `.claude/agents-archived/`, outside the folder Claude Code loads agents
 from; archiving a flow moves it to `flows/_archived/`. Memory and images always stay.
 In Projects, the Repositories card reads `projects/repos.json` (`tools/lib/repos.mjs`): Clone
@@ -115,6 +116,31 @@ by test identity, so only new failures count. Gate B runs the new tests on the o
 run may touch: forbidden and unticked config files always fail; a file outside the plan waits
 for your OK. A commit needs your click, green gates and the same tree the gates checked.
 
+## Project settings
+
+A project's rules (Markdown, at most 20,000 characters), default model, effort and permission
+mode, pre-approved tools and attached assets are saved by `project-settings.mjs` as numbered
+versions in the data folder: `projects/<project>/settings/v<N>.json`, written once and never
+changed; the highest is current. A save names the version it was opened at and is refused (409)
+when another save came first; invalid values are a 400 that lists every problem; a save that
+changes nothing writes nothing, and a field it leaves out keeps its value. The routes are
+`GET /api/project-settings?project=<name>` (current, versions, limits),
+`GET /api/project-settings/version?project=<name>&v=<n>` and `POST /api/project-settings`
+(`{ project, basedOn, rules, defaults, allowedTools, assets }`).
+
+- **Runs:** a run records the current version when it is created (`projectSettings: { version,
+  sha256 }` in `run.json`, or null), and every fresh Claude stage gets that version's rules as a
+  `<project_instructions source="workspace-rules@v<N>">` block after CLAUDE.md and AGENTS.md. A
+  save during the run changes nothing in it; a recorded version that is gone or no longer matches
+  its hash stops the stage before Claude starts.
+- **Sessions:** every session the app starts in a project (Start Claude here, a skill or a flow
+  there, an agent) gets the current version, applied once in `launch.mjs`: the rules as
+  `--append-system-prompt`, the defaults where its own launch leaves a value empty (a flow's
+  settings win), the pre-approved tools added to its own (20 at most together). Its line in
+  `sessions.jsonl` records `projectSettings`. Hub sessions and takeovers (a run's stage, which has
+  its run's rules already) get none. A continued or resumed session keeps the system prompt it
+  started with until it is compacted (Claude Code 2.1.309, `--system-prompt-snapshot`).
+
 ## Data folder
 
 Everything private lives in `%LOCALAPPDATA%\claude-workspace` (`--data-dir` for another
@@ -122,6 +148,7 @@ folder), never in this public repo: `profiles/<project>.json` (the project's che
 and fences; start from `pipelines/app/profiles/example.json`), `runs/` (one folder per run with
 `run.json`, `timeline.jsonl`, `inputs/`, `stages/`, `gates/`, `final/`, plus `index.jsonl` and
 the project locks), `baselines/`, `checks/`, `findings/`, `metrics/`, `worktrees/`,
+`projects/<project>/settings/` (the project's rules and settings, one `v<N>.json` per version),
 `settings.json` and `sessions.jsonl`. `pipelines/app/README.md` explains the profile.
 
 ## Safety
@@ -154,6 +181,12 @@ the project locks), `baselines/`, `checks/`, `findings/`, `metrics/`, `worktrees
 - A flow run may read only that flow's image folder (`--settings` with
   `permissions.additionalDirectories`), and the prompt reaches Claude through a temp file that
   is deleted as soon as it is read.
+- A project's rules reach a session only as an argument of a Node spawn (`claude-prompt.mjs`,
+  `agent-session.mjs`, which read them from that temp file), never inside a PowerShell command,
+  whose quoting Windows PowerShell 5.1 would change. A prompt and rules too long together for one
+  Windows command line (32,767 characters) are refused before a terminal opens. Settings
+  versions are never overwritten. A read refuses a version whose content doesn't match its
+  stored hash, and a run one that doesn't match the hash the run recorded.
 - Headless Claude stages never get `bypassPermissions` or `dontAsk`; they run `--restricted`
   with a settings file per stage, a scrubbed environment, the prompt on stdin, and caps on
   turns, time and cost. READ stages have no shell; CHECK and EDIT stages may run only

@@ -71,12 +71,13 @@ test('project routes: #project/<name>/<tab>[/<rest>] apart and together; a rest 
   assert.deepEqual(projectRoute('example'), { name: 'example', tab: '', rest: '' });
   assert.deepEqual(projectRoute(''), { name: '', tab: '', rest: '' });
   assert.deepEqual(projectRoute(undefined), { name: '', tab: '', rest: '' });
-  assert.deepEqual(projectRoute('/checks/x'), { name: '', tab: '', rest: '' }, 'no name: nothing else counts');
+  assert.deepEqual(projectRoute('/checks/x'), { name: '', tab: 'checks', rest: '' }, 'no name: the current project\'s tab, and no rest');
   assert.deepEqual(projectRoute('example//x'), { name: 'example', tab: '', rest: '' }, 'no tab: no rest');
   assert.equal(projectSub('example', 'checks'), 'example/checks');
   assert.equal(projectSub('example', 'findings', 'EX-1'), 'example/findings/EX-1');
   assert.equal(projectSub('example', '', 'EX-1'), 'example', 'a rest without a tab is dropped');
-  assert.equal(projectSub('', 'checks'), '');
+  assert.equal(projectSub('', 'checks', 'x'), '/checks', 'no name: the tab of the current project');
+  assert.equal(projectSub('', ''), '');
   assert.equal(projectHash('we;ird', 'overview'), '#project/we%3Bird/overview');
   assert.deepEqual(parseHash(projectHash('we;ird', 'overview')), { id: 'project', sub: 'we;ird/overview' });
 });
@@ -84,7 +85,10 @@ test('project routes: #project/<name>/<tab>[/<rest>] apart and together; a rest 
 test('old routes still work: #cockpit/<name> is the Overview tab, #health/<name> the Architecture tab', () => {
   assert.deepEqual(parseHash('#cockpit/example'), { id: 'project', sub: 'example/overview' });
   assert.deepEqual(parseHash('#health/example'), { id: 'project', sub: 'example/architecture' });
-  assert.deepEqual(parseHash('#cockpit'), { id: 'project', sub: '' }, 'no name: the current project, later');
+  assert.deepEqual(parseHash('#cockpit'), { id: 'project', sub: '/overview' }, 'no name: the current project, later');
+  assert.deepEqual(parseHash('#health'), { id: 'project', sub: '/architecture' }, 'and its tab stays');
+  assert.equal(hashFor('health'), '#project//architecture');
+  assert.deepEqual(parseHash(hashFor('health')), { id: 'project', sub: '/architecture' });
   assert.deepEqual(parseHash('#cockpit/example/extra'), { id: 'project', sub: 'example/overview' });
   assert.equal(hashFor('cockpit', 'example'), '#project/example/overview');
   assert.equal(hashFor('health', 'example'), '#project/example/architecture');
@@ -110,9 +114,13 @@ test('canonicalProjectSub: the state completes a project route (first tab, known
   assert.equal(canonicalProjectSub('', projects, 'notes'), 'notes/overview', 'no name: the current project');
   assert.equal(canonicalProjectSub('', projects, 'gone'), '', 'a current project that is gone gives nothing');
   assert.equal(canonicalProjectSub('', projects, ''), '');
+  assert.equal(canonicalProjectSub('/architecture', projects, 'example'), 'example/architecture', 'a bare #health: the current project\'s Architecture');
+  assert.equal(canonicalProjectSub('/architecture', projects, 'notes'), 'notes/overview', 'a tab the current project has not: its first tab');
+  assert.equal(canonicalProjectSub('/architecture', projects, 'gone'), '');
   assert.equal(canonicalProjectSub('example', null, ''), 'example', 'before the state arrives the route stays');
   assert.equal(canonicalProjectSub('', null, 'example'), '', 'and the current project waits for the state too (it may be stale)');
-  for (const s of ['example', 'notes/checks', 'EXAMPLE', '', 'ghost/x']) {
+  assert.equal(canonicalProjectSub('/architecture', null, 'example'), '/architecture', 'with the tab it names');
+  for (const s of ['example', 'notes/checks', 'EXAMPLE', '', 'ghost/x', '/architecture']) {
     const once = canonicalProjectSub(s, projects, 'example');
     assert.equal(canonicalProjectSub(once, projects, 'example'), once, `stable: ${s}`);
   }

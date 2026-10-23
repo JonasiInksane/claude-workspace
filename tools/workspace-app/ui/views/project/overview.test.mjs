@@ -83,6 +83,19 @@ test('recentRuns: the five newest runs, the waiting ones first; older waiting ru
   assert.equal(recent.length, 3, 'the route\'s list is not changed');
 });
 
+test('recentRuns: a run still running stays in the list however many newer runs started', () => {
+  // A long check started first; then six Ask questions made Explain runs, five of them done.
+  const check = run('261023-080000', 'running', { pipeline: 'check', stage: 'checks' });
+  const asks = ['261023-090001', '261023-090002', '261023-090003', '261023-090004', '261023-090005'].map(id => run(id, 'passed'));
+  const all = mergeRuns([...asks].reverse(), [check, run('261023-090006', 'running')]);
+  assert.deepEqual(recentRuns(all).map(r => r.id),
+    ['261023-090006', '261023-080000', '261023-090005', '261023-090004', '261023-090003', '261023-090002'],
+    'the five newest plus the older running check, the running ones first');
+  // An older run that waits is not added: the card counts it under the list instead.
+  const waits = recentRuns([...asks, run('261023-090006', 'passed'), run('261023-070000', 'waiting', { waiting: 'plan' })]);
+  assert.deepEqual(waits.map(r => r.id), ['261023-090006', '261023-090005', '261023-090004', '261023-090003', '261023-090002']);
+});
+
 const notes = { name: 'notes', label: 'Other', type: { id: 'generic', label: 'Plain project' }, tabs: ['overview', 'agents', 'assets', 'settings'],
   linked: false, realPath: 'C:\\ws\\projects\\notes', hasClaudeMd: true, launchable: true, agents: [], archived: [] };
 

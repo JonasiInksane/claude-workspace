@@ -105,9 +105,11 @@ Every project in `projects/` has a page, `#project/<name>/<tab>`; its type
 | `generic` | anything else | Overview, Agents, Assets, Settings |
 
 A link without a tab, or with a tab the type doesn't have, opens the first tab; the old
-`#cockpit/<name>` and `#health/<name>` open Overview and Architecture. Tasks groups the runs by
-their root run (`run.parent`); Checks shows every count a check recorded on its own (new,
-pre-existing, flaky). Settings for a non-code project offers "Create from the example", which
+`#cockpit/<name>` and `#health/<name>` open Overview and Architecture (without a name, the current
+project's). Tasks groups the runs by
+their root run (`run.parent`); Checks shows every count a check recorded on its own (tests
+passed, failed and skipped, new, pre-existing and flaky failures, checks not run; a line from
+before the test totals shows only its failures). Settings for a non-code project offers "Create from the example", which
 makes it a code project. The tab bar follows the WAI-ARIA tabs pattern: Left, Right, Home and End
 move the focus, Enter or Space opens the tab, and every tab is its own history entry.
 
@@ -298,7 +300,8 @@ Tests: `node tools/run-tests.mjs workspace-app`. Next to each module is its `*.t
 `test/e2e.test.mjs` drives Explain, Review and a Refactor to its commit through the real app
 and engine with the fake claude, on a synthetic repo; `test/ask.e2e.test.mjs` asks about a run,
 follows up and asks about a finding the same way. A test of a page module (`ui/**/*.js`)
-renders it in `test/dom.mjs`, a stand-in DOM with a fake `fetch` (`installDom`, `fakeFetch`).
+renders it in `test/dom.mjs`, a stand-in DOM with a fake `fetch` (`installDom`, `fakeFetch`);
+`ui/main.test.mjs` loads all of `main.js` there, with a browser-like history, to test the routing.
 
 Screens: `node tools/workspace-app/test/shots.mjs --out <dir> --example --routes project/example/overview,runs --theme both`
 saves one PNG per route from headless Edge and lists every console error, CSP violation and

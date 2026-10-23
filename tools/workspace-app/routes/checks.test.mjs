@@ -127,11 +127,15 @@ test('GET /api/checks answers with the last result per level and the history, ne
   const line = (level, chip, at) => ({ at, runId: `261022-10000${at.slice(-2, -1)}-check`, level, treeMode: 'run', baseSha: 'a'.repeat(40), node: '20.15.1', result: 'pass', chip, durationMs: 1000, counts: { new: 0, known: 2, flaky: 0 } });
   await appendHistory(h.dataDir, 'example', line('quick', 'q1', '2026-10-22T09:00:01Z'));
   await appendHistory(h.dataDir, 'example', line('standard', 's1', '2026-10-22T09:00:02Z'));
-  await appendHistory(h.dataDir, 'example', line('quick', 'q2', '2026-10-22T09:00:03Z'));
+  const totals = { new: 0, known: 2, flaky: 0, pass: 40, fail: 2, skip: 1, notRun: 1 };
+  await appendHistory(h.dataDir, 'example', { ...line('quick', 'q2', '2026-10-22T09:00:03Z'), counts: totals });
   const r = await call(api, 'GET /api/checks', { query: { project: 'example' } });
   assert.equal(r.status, 200, r.body.error);
   assert.deepEqual([r.body.last.quick.chip, r.body.last.standard.chip, r.body.last.paranoid], ['q2', 's1', null]);
   assert.deepEqual(r.body.history.map(x => x.chip), ['q2', 's1', 'q1']);
+  // The test totals of a newer line come through; an older line keeps only what it recorded.
+  assert.deepEqual(r.body.last.quick.counts, totals);
+  assert.deepEqual(r.body.last.standard.counts, { new: 0, known: 2, flaky: 0 });
   assert.equal((await call(api, 'GET /api/checks', { query: { project: '..' } })).status, 400);
   assert.equal((await call(api, 'GET /api/checks', { query: { project: 'ghost' } })).status, 404);
 });

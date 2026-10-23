@@ -81,11 +81,12 @@ export const routeOf = id => (own(VIEW_ROUTES, id) ? VIEW_ROUTES[id] : id);
 // Routes of screens that became tabs of the project page: route -> the tab that took over.
 export const LEGACY_TABS = { cockpit: 'overview', health: 'architecture' };
 
-// An old route as the route that replaced it ({ id, sub }); any other route as it is.
+// An old route as the route that replaced it ({ id, sub }); any other route as it is. One without
+// a name keeps its tab for the current project: a bare #health is '/architecture' (projectRoute).
 export function upgradeRoute(id, subPath = '') {
   if (!own(LEGACY_TABS, id)) return { id, sub: subPath };
   const name = String(subPath || '').split('/')[0];
-  return { id: 'project', sub: name ? `${name}/${LEGACY_TABS[id]}` : '' };
+  return { id: 'project', sub: projectSub(name, LEGACY_TABS[id]) };
 }
 
 // '#flows/hero-sprite' <-> { id: 'flows', sub: 'hero-sprite' }. `sub` may hold more slashes;
@@ -103,13 +104,15 @@ export function parseHash(hash = location.hash) {
 }
 
 // The project page's sub-route, '<name>/<tab>/<rest>', as { name, tab, rest } and back. A rest
-// needs a tab; empty parts are left out.
+// needs a name and a tab; empty parts are left out. '/<tab>' (no name) is that tab of the current
+// project, which canonicalProjectSub fills in once the state is there; every other reader goes by
+// the name and sees no project.
 export function projectRoute(subPath = '') {
   const [name = '', tab = '', ...rest] = String(subPath || '').split('/');
-  return { name, tab: name ? tab : '', rest: name && tab ? rest.join('/') : '' };
+  return { name, tab, rest: name && tab ? rest.join('/') : '' };
 }
 export function projectSub(name, tab = '', rest = '') {
-  if (!name) return '';
+  if (!name) return tab ? `/${tab}` : '';
   if (!tab) return String(name);
   return rest ? `${name}/${tab}/${rest}` : `${name}/${tab}`;
 }
@@ -129,7 +132,8 @@ export const tabsOf = p => (p && Array.isArray(p.tabs) && p.tabs.length ? p.tabs
 
 // The project page's sub-route made whole from the state: the project's own spelling, a tab it
 // has (its first tab when the tab is missing or unknown; the rest goes with an unknown tab), and
-// the current project when the route names none. Before the state is loaded, and for a project
+// the current project when the route names none (at the tab the route names, if that project has
+// it: '/architecture' from a bare #health). Before the state is loaded, and for a project
 // the state doesn't list (the page then asks the server about it), the route stays as it is (the
 // current project may still change when the state arrives, so it isn't filled in before).
 export function canonicalProjectSub(subPath, projects = state && state.projects, fallback = currentProject) {
@@ -143,9 +147,13 @@ export function canonicalProjectSub(subPath, projects = state && state.projects,
   return projectSub(p.name, tab, tab === r.tab ? r.rest : '');
 }
 
-// Shows a view, as a new history entry. Going to the view already shown shows it again.
+// Shows a view, as a new history entry. Going to the view already shown shows it again. A
+// project route is completed first, as main.js will show it: the nav's #project/<name> would
+// otherwise be a new entry next to the #project/<name>/overview on screen, which show() then
+// replaces with that same address, so the first Back would seem to do nothing.
 export function go(id, subPath = '') {
-  const hash = hashFor(id, subPath);
+  const r = upgradeRoute(id, subPath);
+  const hash = hashFor(r.id, r.id === 'project' ? canonicalProjectSub(r.sub) : r.sub);
   if (location.hash === hash) window.dispatchEvent(new HashChangeEvent('hashchange'));
   else location.hash = hash;
 }

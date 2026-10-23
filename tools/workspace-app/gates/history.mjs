@@ -3,7 +3,11 @@
 // paranoid result (and a short list) without opening every run folder.
 //
 // - A line is {at, runId, level, treeMode, baseSha, node, result, chip, durationMs,
-//   counts: {new, known, flaky}} (spec 2.10); historyLine() builds it from a check summary.
+//   counts: {new, known, flaky, pass?, fail?, skip?, notRun?}} (spec 2.10); historyLine() builds
+//   it from a check summary. pass, fail and skip are the tests the check's test commands counted
+//   (their TAP totals, a todo test as skipped like tg-check's own report), notRun the checks it
+//   skipped. Lines written before they existed don't have them, and a check that ran no test
+//   command has no test totals: readers show what a line has and never fill in zeros.
 // - Lines go through core/datadir appendJsonl and readJsonl: a write cut off by a crash costs one
 //   line, and readers skip lines that are not valid JSON.
 // - Everything is async: the routes read this on request paths.
@@ -16,9 +20,26 @@ export function historyFile(dataDir, project) {
   return projectPaths(dataDir, project).checksHistory;
 }
 
+const count = v => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0);
+
+// The test totals of a summary's checks: {pass, fail, skip} summed over the rows that carry TAP
+// counts (test commands), or null when none does.
+function testTotals(checks) {
+  const rows = (Array.isArray(checks) ? checks : []).filter(r => r && r.counts && typeof r.counts === 'object');
+  if (!rows.length) return null;
+  const out = { pass: 0, fail: 0, skip: 0 };
+  for (const { counts: c } of rows) {
+    out.pass += count(c.pass);
+    out.fail += count(c.fail);
+    out.skip += count(c.skip) + count(c.todo);
+  }
+  return out;
+}
+
 // The history line for a finished check summary (gates/check.mjs runChecks).
 export function historyLine(summary, { runId = null, at } = {}) {
   const c = summary?.counts || {};
+  const tests = testTotals(summary?.checks);
   return {
     at: at || summary?.endedAt || new Date().toISOString(),
     runId,
@@ -29,7 +50,11 @@ export function historyLine(summary, { runId = null, at } = {}) {
     result: summary?.result,
     chip: summary?.chip || '',
     durationMs: summary?.durationMs ?? 0,
-    counts: { new: c.new || 0, known: c.known || 0, flaky: c.flaky || 0 },
+    counts: {
+      new: c.new || 0, known: c.known || 0, flaky: c.flaky || 0,
+      ...tests,
+      ...(typeof c.notRun === 'number' ? { notRun: count(c.notRun) } : {}),
+    },
   };
 }
 

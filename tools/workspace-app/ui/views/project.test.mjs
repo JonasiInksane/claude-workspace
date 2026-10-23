@@ -104,6 +104,28 @@ test('a click opens the tab as its own route; once it shows, the focus is on tha
   page.onHide();
 });
 
+test('the open tab stays as it is; only the route a tab click opened puts the focus on its tab', () => {
+  // As main.js shows the page after a navigation: render, the heading takes the focus, onShow.
+  const visit = (section, sub) => { page.onHide(); store.setView('project', sub); page.render(section, { sub }); section.querySelector('h2').focus(); page.onShow({ sub }); };
+  const section = setup('example/overview');
+  page.onShow({ sub: 'example/overview' });
+  dom.location.hash = '#project/example/overview';
+  const open = section.querySelector(`#${tabId('overview')}`);
+  open.focus();
+  dom.click(open);
+  assert.equal(dom.location.hash, '#project/example/overview', 'no new route for the tab on show');
+  assert.equal(dom.document.activeElement, open);
+  visit(section, 'example/overview');
+  assert.equal(dom.document.activeElement.tagName, 'H2', 'coming back later (the nav, g p): the heading has the focus, not a tab');
+  dom.click(section.querySelector(`#${tabId('checks')}`));
+  assert.equal(dom.location.hash, '#project/example/checks');
+  visit(section, 'example/tasks');
+  assert.equal(dom.document.activeElement.tagName, 'H2', 'another route showed first (Back): Checks does not take the focus');
+  visit(section, 'example/checks');
+  assert.equal(dom.document.activeElement.tagName, 'H2', 'and that click is forgotten once a route showed');
+  page.onHide();
+});
+
 test('a plain project gets its own tabs; More > Agents opens its Agents tab', () => {
   const section = setup('notes/overview');
   assert.equal(section.querySelector('h2').textContent, 'notes');

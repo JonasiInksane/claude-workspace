@@ -12,8 +12,8 @@
 // Keyboard (WAI-ARIA tabs with manual activation, since a tab may have to load first): the tab
 // bar is one Tab stop (the open tab); Left and Right move the focus to the previous and next tab
 // (wrapping), Home and End to the first and last, and Enter or Space opens the focused tab, which
-// keeps the focus. Each tab has aria-selected and aria-controls; the panel has role="tabpanel"
-// and is labelled by its tab.
+// keeps the focus (on the open tab they do nothing). Each tab has aria-selected and aria-controls;
+// the panel has role="tabpanel" and is labelled by its tab.
 //
 // A project the state doesn't list (a profile or a listed repo whose checkout isn't here, or a
 // name typed by hand) is asked about with GET /api/project: "not linked yet" with the way to link
@@ -27,7 +27,7 @@
 // The pure helper tabKeyTarget is exported for project.test.mjs.
 import { h, icon, keepFocus, keyed, launch, openPlace } from '../lib.js';
 import {
-  go, goProject, loadPipelines, projectEntry, projectRoute, refresh, setCurrentProject, state, sub, tabsOf, view,
+  go, goProject, loadPipelines, projectEntry, projectRoute, projectSub, refresh, setCurrentProject, state, sub, tabsOf, view,
 } from '../store.js';
 import { createMemo, patch } from '../parts/patch.js';
 import { dataOf, onData, reload, slot, use } from '../parts/project-data.js';
@@ -57,7 +57,7 @@ const memo = createMemo();
 let section = null;
 let visible = false;
 let active = null; // the tab on show: { key, mod, release }
-let focusTab = ''; // the tab to focus once the navigation a tab click started is shown
+let focusTab = ''; // '<name>/<tab>' a tab click opened: its tab takes the focus once that route shows
 const asked = new Set(); // projects the state didn't list but the server knows: refreshed once
 
 const tabCtx = (p, r) => ({ state, project: p, rest: r.rest, go, refresh: () => { refresh(); reload(); } });
@@ -147,8 +147,12 @@ function onTabKey(e) {
   tabs[to].focus();
 }
 
+// The open tab stays as it is (the focus is already on it); another one opens as a new route,
+// and only that route's onShow moves the focus to it.
 function openTab(name, id) {
-  focusTab = id;
+  const r = projectRoute(sub);
+  if (view === 'project' && r.name === name && r.tab === id) return;
+  focusTab = projectSub(name, id);
   goProject(name, id);
 }
 
@@ -250,15 +254,16 @@ export default {
   render,
   onShow({ sub: subPath }) {
     visible = true;
-    if (state) {
-      const r = projectRoute(subPath);
-      sync(r, r.name ? projectEntry(r.name) : null);
-    }
-    if (focusTab && section) {
-      const t = section.querySelector(`#${tabId(focusTab)}`);
+    const r = projectRoute(subPath);
+    if (state) sync(r, r.name ? projectEntry(r.name) : null);
+    // A route other than the one a tab click opened (Back, the nav, g p, a corrected route) keeps
+    // the focus where the navigation put it: on the heading.
+    const opened = focusTab ? projectRoute(focusTab) : null;
+    focusTab = '';
+    if (opened && section && opened.name === r.name && opened.tab === r.tab) {
+      const t = section.querySelector(`#${tabId(r.tab)}`);
       if (t) t.focus({ preventScroll: true });
     }
-    focusTab = '';
   },
   onHide() {
     visible = false;

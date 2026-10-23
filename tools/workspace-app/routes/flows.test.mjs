@@ -156,6 +156,9 @@ test('a flow for any project runs in the project the run names, and both launche
   assert.match(a.at, /^\d{4}-\d\d-\d\dT/);
   assert.equal(a.version.sha256, b.version.sha256);
   assert.deepEqual(a.version, await flowVersion(root, slug));
+  // The session gets the same version for its sessions.jsonl line (A5).
+  const { sha256, hubCommit, committed } = a.version;
+  assert.deepEqual(calls.map(c => c.flow), [{ slug, sha256, hubCommit, committed }, { slug, sha256, hubCommit, committed }]);
   // The preview needs no project: the prompt is the same everywhere.
   const preview = await call('POST /api/flows/run', { slug, preview: true });
   assert.deepEqual([preview.status, preview.body.prompt], [200, 'Review what changed.']);

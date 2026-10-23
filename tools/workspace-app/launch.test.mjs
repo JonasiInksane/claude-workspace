@@ -680,19 +680,26 @@ test('a flow passes its resolved assets and settings: no second list, its folder
   await saveSettings(data, 'example', { rules: 'Disk rules.', assets: [{ ref: 'example:palette', pin: null }] }, { basedOn: 0 });
   const items = await resolveAssets(dir, 'example', [{ ref: 'shared:style-guide' }, { ref: 'example:palette' }]);
   const given = { project: 'example', version: 7, sha256: 'a'.repeat(64), rules: 'Rules the flow read.', defaults: {}, allowedTools: '', assets: [] };
+  const flow = { slug: 'x', sha256: 'b'.repeat(64), hubCommit: 'c'.repeat(40), committed: true };
   await actions.startClaude({ dir: 'C:\\code\\example', title: 'Flow: x', prompt: 'Asset 1 ... Asset 2 ...', readDirs: ['C:\\img', dirname(files.style)],
-    kind: 'flow', project: 'example', assets: items, settings: given });
+    kind: 'flow', project: 'example', assets: items, settings: given, flow });
   const handed = takePromptFile(promptFileIn(commands()[0]));
   // An asset folder the caller listed too is read-only all the same.
   assert.deepEqual([handed.readDirs, handed.readOnlyDirs], [['C:\\img'], [dirname(files.style), dirname(files.palette)]]);
   assert.equal(handed.launch.appendSystemPrompt, 'Rules the flow read.', 'the settings it was given, and no asset list');
   assert.deepEqual(sessions()[0].projectSettings, { version: 7, sha256: 'a'.repeat(64) });
   assert.deepEqual(sessions()[0].assets.map(a => a.ref), ['shared:style-guide', 'example:palette']);
+  assert.deepEqual(sessions()[0].flow, flow, 'the flow\'s version (A5)');
   // A hub flow: its shared assets recorded, no settings.
   const shared = items.filter(i => i.ref.startsWith('shared:'));
-  await actions.startClaude({ dir, title: 'Flow: hub', prompt: 'Go', kind: 'flow', assets: shared, settings: undefined });
+  await actions.startClaude({ dir, title: 'Flow: hub', prompt: 'Go', kind: 'flow', assets: shared, settings: undefined, flow });
   assert.deepEqual([sessions()[1].assets.map(a => a.ref), 'projectSettings' in sessions()[1]], [['shared:style-guide'], false]);
   assert.deepEqual(takePromptFile(promptFileIn(commands()[1])).readOnlyDirs, [dirname(files.style)]);
+  // An agent flow records it too; a session that is no flow has none.
+  await actions.startAgent({ project: 'example', agent: 'artist', title: 'Flow: art', prompt: 'Draw', kind: 'flow', assets: [], settings: given, flow });
+  await actions.startClaude({ dir: 'C:\\code\\example', title: 'example', kind: 'project', project: 'example' });
+  assert.deepEqual(sessions().map(s => s.flow), [flow, flow, flow, undefined]);
+  for (const c of commands().slice(2)) takePromptFile(promptFileIn(c)); // clean up the prompt files
 });
 
 test('an attached asset that is gone, or a file changed by hand, stops a session before a terminal opens', async t => {

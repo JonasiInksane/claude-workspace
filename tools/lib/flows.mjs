@@ -207,10 +207,12 @@ function checkFlowFields(root, input) {
   return { error: '', flow };
 }
 
+// `text` is the file as read, so a run can record the version of exactly the text its prompt came
+// from (workspace-app/flow-versions.mjs flowVersion), not of a later read.
 function readFlow(file, slug) {
   let text = '';
   try { text = readFileSync(file, 'utf8'); } catch { return null; }
-  return { slug, file, hash: textHash(text), ...parseFlow(text) };
+  return { slug, file, hash: textHash(text), text, ...parseFlow(text) };
 }
 
 // Every flow in flows/ (README.md and folders left out), with `error` when it can't run now

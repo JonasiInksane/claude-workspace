@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { renderFlow } from '../lib/flows.mjs';
 import { commitAll, makeRepo, runGit, tempDir, writeFiles } from './test/helpers.mjs';
 import {
-  FLOW_RUNS_FILE, flowRunsFile, flowVersion, normalizeText, readFlowRuns, recordFlowRun, RECENT_RUNS, versionChanges,
+  FLOW_RUNS_FILE, flowRunsFile, flowVersion, normalizeText, readFlowRuns, recordFlowRun, RECENT_RUNS, sessionFlowRef, versionChanges,
 } from './flow-versions.mjs';
 
 // git must not find a repository above the temporary folders (one in the user's home, say).
@@ -107,6 +107,27 @@ test('images: the ones a run passes, sorted by name, hashed by their bytes; capt
   const changed = await flowVersion(root, 'review');
   assert.equal(changed.images[0].sha256, sha('other bytes'));
   assert.equal(changed.images[1].sha256, sha(PNG));
+});
+
+test('a run\'s version is of the text, image list and captions it read, not of the files as they are later', async t => {
+  const { root, head } = await hubRepo(t);
+  const dir = join(root, 'inbox', 'attachments', '_flows', 'review');
+  writeFiles(root, { 'inbox/attachments/_flows/review/a.png': PNG, 'inbox/attachments/_flows/review/b.png': PNG });
+  const read = flowText(); // what the run built its prompt from
+  // Edited after the prompt was built: another prompt, a third image, other captions.
+  writeFileSync(join(root, 'flows', 'review.md'), flowText('Something else.'));
+  writeFiles(root, { 'inbox/attachments/_flows/review/c.png': PNG });
+  writeFileSync(join(dir, 'captions.json'), JSON.stringify({ 'a.png': 'changed' }));
+  const v = await flowVersion(root, 'review', { text: read.replace(/\n/g, '\r\n'), images: [join(dir, 'a.png')], captions: { 'a.png': ' logo ' } });
+  assert.deepEqual(v, {
+    sha256: sha(read), hubCommit: head, committed: true, images: [{ file: 'a.png', sha256: sha(PNG) }], captions: sha(JSON.stringify({ 'a.png': 'logo' })),
+  });
+  // Without them, the files as they are now.
+  const now = await flowVersion(root, 'review');
+  assert.deepEqual([now.sha256, now.committed, now.images.map(i => i.file)], [sha(flowText('Something else.')), false, ['a.png', 'b.png', 'c.png']]);
+  // What a flow launch's sessions.jsonl line records of it.
+  assert.deepEqual(sessionFlowRef('review', v), { slug: 'review', sha256: sha(read), hubCommit: head, committed: true });
+  assert.deepEqual(sessionFlowRef('review', null), { slug: 'review', sha256: '', hubCommit: '', committed: false });
 });
 
 test('recordFlowRun appends one line per launch; readFlowRuns gives one flow\'s newest first', async t => {

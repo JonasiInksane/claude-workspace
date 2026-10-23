@@ -7,8 +7,8 @@
 // Where a run starts: a flow for any project (project "*") needs the request's `project`, a
 // known project the app can start in; a flow with a fixed project (or the hub) refuses another
 // one. Every launch that started appends its record, with the flow's version and the exact asset
-// versions it got, to <dataDir>/flow-runs.jsonl (flow-versions.mjs); a refused or failed launch
-// writes nothing.
+// versions it got, to <dataDir>/flow-runs.jsonl (flow-versions.mjs), and its session's line in
+// sessions.jsonl has the flow's hash and hub commit too; a refused or failed launch writes nothing.
 //
 // Assets: a run gets the flow's own attached assets (its `assets` field) and, in a project, the
 // ones the project's settings attach, resolved to exact versions (attached-assets.mjs). They are
@@ -26,7 +26,7 @@ import {
 import { realProjectDir } from '../../lib/projects.mjs';
 import { assetLine, assetProblems, assetRecords, resolveAssets, verifyFiles } from '../attached-assets.mjs';
 import { allDone } from '../core/git.mjs';
-import { flowVersion, readFlowRuns, recordFlowRun, versionChanges } from '../flow-versions.mjs';
+import { flowVersion, readFlowRuns, recordFlowRun, sessionFlowRef, versionChanges } from '../flow-versions.mjs';
 import { HttpError, readJson } from '../http.mjs';
 import { sessionSettings, withProjectSettings } from '../launch.mjs';
 import { findProject, flowOrThrow, launchableOrThrow } from '../lookup.mjs';
@@ -104,7 +104,7 @@ export function routes({ root, actions, dataDir }) {
     // assets as a list (assetList: [{ ref, pin }]).
     'GET /api/flow': async (req, res, url) => {
       const f = flowOrThrow(root, Object.fromEntries(url.searchParams).slug);
-      const { file, ...flow } = f;
+      const { file, text, ...flow } = f;
       const captions = readCaptions(root, f.slug);
       const images = flowImages(root, f.slug).map(abs => ({
         name: basename(abs), path: abs.slice(root.length + 1).split(sep).join('/'), caption: captions[basename(abs)] || '',
@@ -173,10 +173,12 @@ export function routes({ root, actions, dataDir }) {
       // The assets' folders are added by launch.mjs from `assets`, read-only (sessionDirs).
       const readDirs = images.length ? [flowImagesDir(root, f.slug)] : [];
       const title = `Flow: ${f.title || f.slug}`;
-      // The version of the files this prompt was built from, taken before the terminal opens.
-      const version = await flowVersion(root, f.slug);
-      // The session lists no assets a second time; it records them, with the settings they came from.
-      const session = { title, prompt, readDirs, launch, kind: 'flow', assets, settings };
+      // The version of what this prompt was built from (the flow's text, image list and captions
+      // as read above, not read again), taken before the terminal opens.
+      const version = await flowVersion(root, f.slug, { text: stored.text, images, captions });
+      // The session lists no assets a second time; it records them, with the settings they came
+      // from, and the flow's version (A5: sessions.jsonl has it even when flow-runs.jsonl can't).
+      const session = { title, prompt, readDirs, launch, kind: 'flow', assets, settings, flow: sessionFlowRef(f.slug, version) };
       let started;
       if (f.target === 'hub') started = await actions.startClaude({ dir, ...session });
       else if (f.target === 'project') started = await actions.startClaude({ dir, ...session, project });

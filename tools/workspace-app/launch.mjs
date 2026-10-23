@@ -7,9 +7,11 @@
 // Sessions: every interactive Claude session the app starts gets its own id (--session-id, a new
 // UUID) unless it resumes one (--resume <id>), and a line in <dataDir>\sessions.jsonl:
 //   {"at":"…","sessionId":"<uuid>","kind":"hub|project|agent|flow|skill|takeover","project":"…","title":"…",
-//    "projectSettings":{"version":3,"sha256":"…"},"assets":[{"ref":"shared:style-guide","version":2,"sha256":"…"}]}
+//    "projectSettings":{"version":3,"sha256":"…"},"assets":[{"ref":"shared:style-guide","version":2,"sha256":"…"}],
+//    "flow":{"slug":"…","sha256":"…","hubCommit":"…","committed":true}}
 // so the app can find a session again (Take over, Continue). -c (continue the last session) has
-// no id of its own and adds no line.
+// no id of its own and adds no line. `flow` is on a flow launch's line only: the version of the
+// flow that ran (routes/flows.mjs, flow-versions.mjs).
 //
 // Project settings (project-settings.mjs): a session started in a project (Start Claude here, a
 // skill or a flow there, an agent) gets the project's current settings, applied here once for
@@ -91,11 +93,13 @@ export const sessionsFile = dataDir => join(dataDir, 'sessions.jsonl');
 // use, and a torn last line can't swallow this one). Best effort: a session that started stays
 // started even when the line can't be written. `projectSettings` ({ version, sha256 } or null)
 // and `assets` ([{ ref, version, sha256 }]) go in only when given: sessions in a project have
-// them (a flow its assets also in the hub), other hub sessions and takeovers don't.
-export async function recordSession(dataDir, { sessionId, kind, project = '', title = '', projectSettings, assets }, now = new Date()) {
+// them (a flow its assets also in the hub), other hub sessions and takeovers don't. `flow`
+// ({ slug, sha256, hubCommit, committed }, flow-versions.mjs sessionFlowRef) only for a flow.
+export async function recordSession(dataDir, { sessionId, kind, project = '', title = '', projectSettings, assets, flow }, now = new Date()) {
   const line = {
     at: now.toISOString(), sessionId, kind, project, title,
     ...(projectSettings !== undefined ? { projectSettings } : {}), ...(assets !== undefined ? { assets } : {}),
+    ...(flow !== undefined ? { flow } : {}),
   };
   try {
     await appendJsonl(sessionsFile(dataDir), line);
@@ -318,8 +322,9 @@ export function realActions({ root, tools = findTools(), windowStyle, dataDir = 
     // (needsPromptFile; tools/lib/prompt-file.mjs explains why). `kind` and `project` are for sessions.jsonl and the project's settings and assets (see
     // the top of this file); without a kind, a resume counts as a takeover (the only resume the
     // app starts), so it gets the takeover mode check too. `assets` and `settings`: a flow's
-    // resolved assets, already listed in its prompt, and the settings it resolved them with.
-    async startClaude({ dir, title, continueLast = false, prompt, readDirs = [], launch = {}, resume, sessionId, kind, project = '', assets, settings: given }) {
+    // resolved assets, already listed in its prompt, and the settings it resolved them with;
+    // `flow`: the flow's version for its sessions.jsonl line.
+    async startClaude({ dir, title, continueLast = false, prompt, readDirs = [], launch = {}, resume, sessionId, kind, project = '', assets, settings: given, flow }) {
       if (!tools.claude) throw new Error('Claude Code was not found (PATH or %USERPROFILE%\\.local\\bin).');
       const s = sessionLaunch({ launch, resume, sessionId, continueLast });
       const k = kindOf(kind, s.launch.resume ? 'takeover' : project ? 'project' : 'hub');
@@ -339,7 +344,7 @@ export function realActions({ root, tools = findTools(), windowStyle, dataDir = 
         ? psCommand(dir, node, [join(appDir, 'claude-prompt.mjs'), writePromptFile({ prompt, ...dirs, launch: l })])
         : psCommand(dir, tools.claude, launchArgs(l));
       await terminal(dir, title, command);
-      if (s.id) await recordSession(dataDir, { sessionId: s.id, kind: k, project, title, projectSettings: refOf(settings), assets: a.record });
+      if (s.id) await recordSession(dataDir, { sessionId: s.id, kind: k, project, title, projectSettings: refOf(settings), assets: a.record, flow });
       return { sessionId: s.id };
     },
     // Any program in a terminal tab at `dir`, with `env` set for it first (the cockpit's dev
@@ -385,7 +390,7 @@ export function realActions({ root, tools = findTools(), windowStyle, dataDir = 
     // The project's settings and assets are applied as in startClaude; agent-session.mjs gets them,
     // and any other launch setting, through a prompt file (one without a first prompt when there
     // is none). Resolves with { sessionId }.
-    async startAgent({ project, agent, title, prompt, readDirs = [], launch = {}, sessionId, kind, assets, settings: given }) {
+    async startAgent({ project, agent, title, prompt, readDirs = [], launch = {}, sessionId, kind, assets, settings: given, flow }) {
       const k = kindOf(kind, 'agent');
       if (!AGENT_KINDS.includes(k)) throw new Error(`an agent session starts as ${AGENT_KINDS.join(' or ')}, not as ${k}; a takeover goes through startClaude`);
       const s = sessionLaunch({ launch, sessionId });
@@ -399,7 +404,7 @@ export function realActions({ root, tools = findTools(), windowStyle, dataDir = 
       if (newId) args.push('--session-id', newId);
       if (prompt || Object.keys(rest).length) args.push('--prompt-file', writePromptFile({ prompt, ...dirs, launch: rest }));
       await terminal(root, title, psCommand(root, node, args));
-      await recordSession(dataDir, { sessionId: s.id, kind: k, project, title, projectSettings: refOf(settings), assets: a.record });
+      await recordSession(dataDir, { sessionId: s.id, kind: k, project, title, projectSettings: refOf(settings), assets: a.record, flow });
       return { sessionId: s.id };
     },
     openFolder({ dir }) {

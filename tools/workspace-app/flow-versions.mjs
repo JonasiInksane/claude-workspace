@@ -21,6 +21,9 @@
 // `assets` are the exact versions the session was given: the flow's own attachments and its
 // project's (attached-assets.mjs). Lines from before assets were recorded read as [].
 // readFlowRuns gives the newest records of one flow, and versionChanges says what changed since.
+// The session's own line in sessions.jsonl (launch.mjs) gets the flow's slug, sha256, hubCommit
+// and committed as well (sessionFlowRef), so it says which version ran even when this file's
+// line could not be written.
 import { readFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { flowFile, flowImages, readCaptions, SLUG_RE } from '../lib/flows.mjs';
@@ -62,19 +65,18 @@ async function hubState(root, slug, normalized, timeoutMs) {
   }
 }
 
-// The images a run passes, each with the SHA-256 of its bytes. One that is gone between the
-// listing and the hash is left out: the run couldn't read it either.
-async function imageVersions(root, slug) {
-  const hashed = await Promise.all(flowImages(root, slug).map(async file => {
+// The images a run passes (their full paths), each with the SHA-256 of its bytes. One that is
+// gone between the listing and the hash is left out: the run couldn't read it either.
+async function imageVersions(files) {
+  const hashed = await Promise.all(files.map(async file => {
     try { return { file: basename(file), sha256: await sha256File(file) }; } catch { return null; }
   }));
   return hashed.filter(Boolean).sort(byFile);
 }
 
-// The SHA-256 of the captions these images have, the way runPrompt uses them (trimmed, empty
-// ones left out), or '' when none has one.
-function captionsHash(root, slug, images) {
-  const all = readCaptions(root, slug);
+// The SHA-256 of the captions (`all`: captions.json's content) these images have, the way
+// runPrompt uses them (trimmed, empty ones left out), or '' when none has one.
+function captionsHash(all, images) {
   const used = {};
   for (const { file } of images) {
     const c = typeof all[file] === 'string' ? all[file].trim() : '';
@@ -83,18 +85,31 @@ function captionsHash(root, slug, images) {
   return Object.keys(used).length ? sha256Text(canonicalJson(used)) : '';
 }
 
-// The version of flows/<slug>.md as it is now (see the top of this file). Never throws for a git
-// problem; `timeoutMs` caps each git call.
-export async function flowVersion(root, slug, { timeoutMs = VERSION_GIT_TIMEOUT_MS } = {}) {
+// The version of flows/<slug>.md as it is now (see the top of this file). A run passes what it
+// built its prompt from instead: `text` (the flow file as it read it, tools/lib/flows.mjs getFlow),
+// `images` (its list of image paths) and `captions` (captions.json as it read it), so a file that
+// changes in between can't give the record another version than the one that ran. Never throws
+// for a git problem; `timeoutMs` caps each git call.
+export async function flowVersion(root, slug, { timeoutMs = VERSION_GIT_TIMEOUT_MS, text, images, captions } = {}) {
   if (!SLUG_RE.test(String(slug || ''))) return null;
-  let text;
-  try { text = await readFile(flowFile(root, slug), 'utf8'); } catch { return null; }
-  const normalized = normalizeText(text);
-  const [hub, images] = await Promise.all([hubState(root, slug, normalized, timeoutMs), imageVersions(root, slug)]);
+  let read = text;
+  if (typeof read !== 'string') {
+    try { read = await readFile(flowFile(root, slug), 'utf8'); } catch { return null; }
+  }
+  const normalized = normalizeText(read);
+  const files = Array.isArray(images) ? images : flowImages(root, slug);
+  const [hub, hashed] = await Promise.all([hubState(root, slug, normalized, timeoutMs), imageVersions(files)]);
+  const all = captions && typeof captions === 'object' && !Array.isArray(captions) ? captions : readCaptions(root, slug);
   return {
-    sha256: sha256Text(normalized), hubCommit: hub.hubCommit, committed: hub.committed, images, captions: captionsHash(root, slug, images),
+    sha256: sha256Text(normalized), hubCommit: hub.hubCommit, committed: hub.committed, images: hashed, captions: captionsHash(all, hashed),
   };
 }
+
+// What a flow launch's line in sessions.jsonl records of the flow (launch.mjs recordSession):
+// { slug, sha256, hubCommit, committed } of the version that ran ('' and false without one).
+export const sessionFlowRef = (slug, version) => ({
+  slug, sha256: version ? version.sha256 : '', hubCommit: version ? version.hubCommit : '', committed: !!(version && version.committed),
+});
 
 // Appends one launch to flow-runs.jsonl (the folder is made on first use). Throws when the line
 // can't be written; the caller decides whether that matters (a started session stays started).

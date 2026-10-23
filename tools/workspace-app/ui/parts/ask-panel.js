@@ -27,6 +27,7 @@
 // else is parsed. The helpers above the DOM part are pure, for ui/parts/ask-panel.test.mjs.
 import { api, fmtDuration, h, icon, keepFocus, keyed, qs, toast } from '../lib.js';
 import { go, livePoll } from '../store.js';
+import { patch } from './patch.js';
 
 export const PANEL_ID = 'ask-panel';
 export const QUESTION_MAX = 600; // the Explain question's limit (runs/catalog.mjs)
@@ -172,6 +173,8 @@ function build() {
     icon(CLOSE_ICON), 'Close');
   const chip = h('p', { class: 'ask-about' });
   const thread = h('div', { class: 'ask-thread' }); // scrolls; holds the hint or the list of questions
+  const list = h('ol', { class: 'ask-list', 'aria-label': 'Questions and answers' });
+  const empty = h('p', { class: 'ask-empty muted' });
   const live = h('p', { class: 'sr-only', role: 'status', 'aria-live': 'polite' });
   const label = h('label', { for: 'ask-input', class: 'ask-label' }, 'Your question');
   const input = h('textarea', {
@@ -188,7 +191,7 @@ function build() {
   root.addEventListener('keydown', onPanelKey);
   window.addEventListener('hashchange', onRoute);
   host().append(root);
-  ui = { root, title, chip, thread, live, label, input, send: sendBtn, why: whyLine };
+  ui = { root, title, chip, chipFor: '', thread, list, empty, live, label, input, send: sendBtn, why: whyLine };
 }
 
 function onPanelKey(e) {
@@ -382,18 +385,33 @@ function paintForm() {
   ui.why.hidden = !text;
 }
 
+// Repaints in place: the chip only for another subject, and in the thread only the questions
+// whose item shows something new (itemFor), so a pull while a follow-up runs leaves the earlier
+// answers as they are: text selected in one stays selected, and a screen reader keeps its place.
 function paint({ scroll = false } = {}) {
   if (!ui || !current) return;
   const { subject } = current;
-  ui.title.textContent = panelTitle(subject);
+  const title = panelTitle(subject);
+  if (ui.title.textContent !== title) ui.title.textContent = title;
   ui.input.setAttribute('placeholder', PLACEHOLDERS[subject.kind === 'finding' ? 'finding' : subject.label] || PLACEHOLDERS.run);
-  ui.chip.replaceChildren(h('span', { class: 'muted small' }, 'About'), ' ',
-    keyed(h('button', { class: 'chip ask-chip', type: 'button', title: chipText(subject), on: { click: () => go(...subject.route) } }, chipText(subject)), 'ask-chip'));
+  const chip = chipText(subject);
+  if (ui.chipFor !== `${current.key}\n${chip}`) {
+    ui.chipFor = `${current.key}\n${chip}`;
+    ui.chip.replaceChildren(h('span', { class: 'muted small' }, 'About'), ' ',
+      keyed(h('button', { class: 'chip ask-chip', type: 'button', title: chip, on: { click: () => go(...subject.route) } }, chip), 'ask-chip'));
+  }
   const entries = threadOf(current.key).entries;
-  keepFocus(ui.thread, () => ui.thread.replaceChildren(entries.length
-    ? h('ol', { class: 'ask-list', 'aria-label': 'Questions and answers' }, entries.map((e, i) => item(e, i === entries.length - 1)))
-    : h('p', { class: 'ask-empty muted' }, 'Ask about this ', subject.kind === 'finding' ? 'finding' : subject.label || 'run',
-      ': Claude gets what the app knows about it and reads the code to answer. Follow-ups keep the thread.')));
+  keepFocus(ui.thread, () => {
+    if (entries.length) {
+      patch(ui.list, entries.map((e, i) => itemFor(e, i === entries.length - 1)));
+      patch(ui.thread, [ui.list]);
+    } else {
+      const hint = `Ask about this ${subject.kind === 'finding' ? 'finding' : subject.label || 'run'}: Claude gets what the app knows about it and reads the code to answer. Follow-ups keep the thread.`;
+      if (ui.empty.textContent !== hint) ui.empty.textContent = hint;
+      patch(ui.thread, [ui.empty]);
+    }
+  });
+  tick(); // a kept item's clock is as old as its last tick
   paintForm();
   announce(entries[entries.length - 1]);
   if (scroll) ui.thread.scrollTop = ui.thread.scrollHeight || 0;
@@ -425,6 +443,23 @@ const codeNode = text => h('code', {}, String(text).split('/').flatMap((s, i, al
 
 function answerNodes(text) {
   return refParts(String(text || '').trim()).map(p => (p.code ? codeNode(p.text) : p.text));
+}
+
+const items = new WeakMap(); // entry -> { sig, el }: the item built last for it
+
+// The item of one question: the one built last while everything it shows is the same (its state
+// and clock start, its answer, whether it is the latest, and the latest's buttons), else a new one.
+// The clock moves in place (tick).
+function itemFor(e, latest) {
+  const st = questionState(e);
+  const run = e.run || {};
+  const sig = JSON.stringify([e.question, e.id, e.at, e.missing, st, latest, run.outputs && run.outputs.answer, run.durationMs,
+    latest ? [run.actions, acting] : null]);
+  const hit = items.get(e);
+  if (hit && hit.sig === sig) return hit.el;
+  const el = item(e, latest);
+  items.set(e, { sig, el });
+  return el;
 }
 
 // One question with its answer or its state; the buttons only on the latest one.

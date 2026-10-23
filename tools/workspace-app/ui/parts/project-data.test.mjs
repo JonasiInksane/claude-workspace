@@ -1,6 +1,7 @@
 // Tests for the project page's data (parts/project-data.js) with a stand-in DOM and fetch
 // (test/dom.mjs): use() loads only known parts and only for a name; a failed refresh keeps the last
-// answer next to its error and status; a part asked for while it loads loads once more; every
+// answer next to its error and status; a part asked for while it loads loads once more, and a
+// reload() then resolves only with that newer answer; every
 // answer tells the listeners; reload() loads what is in use; the focus listener comes with the
 // first use and goes with the last; liveRunsOf() picks the project's waiting and running runs.
 // Run: node tools/run-tests.mjs workspace-app
@@ -12,11 +13,13 @@ const dom = installDom();
 after(() => dom.uninstall());
 let fail = false;
 let gate = null; // while set, /api/findings answers only when it resolves
+let asked = 0; // every request's number, in the order they were made
 const calls = fakeFetch(async path => {
+  const n = ++asked;
   if (path.startsWith('/api/findings') && gate) await gate.promise;
   if (path.startsWith('/api/runs?status=')) return { ok: true, runs: [{ id: 'r1', project: 'example', status: 'waiting' }, { id: 'r2', project: 'other', status: 'running' }] };
   if (fail) return reply(500, { ok: false, error: 'It broke.' });
-  return { ok: true, path };
+  return { ok: true, path, n };
 });
 const store = await import('../store.js');
 const { dataOf, inUseBy, liveRunsOf, onData, PARTS, reload, slot, use } = await import('./project-data.js');
@@ -75,6 +78,24 @@ test('a part asked for while it loads loads once more afterwards, not twice at o
   assert.equal(count('/api/findings?project=busy'), 2, 'then once more for the second ask');
   a();
   b();
+});
+
+test('reload while a request is out resolves with the load after it, so the caller sees fresh data', async () => {
+  let open;
+  gate = { promise: new Promise(r => { open = r; }) };
+  const release = use('late', ['findings']);
+  await settle(5);
+  const mark = asked; // a change the caller makes now (a save) is newer than the request that is out
+  let done = false;
+  const p = reload('late').then(() => { done = true; });
+  await settle(5);
+  assert.equal(done, false, 'the request that was out has not answered yet');
+  gate = null;
+  open();
+  await p;
+  assert.ok(dataOf(slot('late').findings).n > mark, 'the data is from a request made after the call');
+  assert.equal(count('/api/findings?project=late'), 2);
+  release();
 });
 
 test('reload loads what is in use; the window focus listener lives as long as some use', async () => {

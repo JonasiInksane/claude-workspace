@@ -33,6 +33,10 @@ function showError(box, text) {
   box.hidden = !text;
 }
 
+// True while the page's dialog still shows `body`: work that ends after an await (an upload, a
+// save) closes or retitles the dialog only then, never another dialog opened meanwhile.
+const holds = body => dialog.contains(body);
+
 // ---------------------------------------------------------------- details
 
 // One version in the list: when, how big, its type and original name, its note and hash, with
@@ -126,7 +130,8 @@ function detailDialog(first, { onChange, attach }) {
     noteLabel.hidden = asset.archived;
     archivedNote.hidden = !asset.archived;
     if (attachBtn) attachBtn.textContent = attach.attached() ? `Detach from ${attach.project}` : `Attach to ${attach.project}`;
-    const head = dialog.querySelector('#dialogTitle');
+    // A paint after a late answer (a big upload, a reload) leaves another dialog's title alone.
+    const head = holds(body) ? dialog.querySelector('#dialogTitle') : null;
     if (head) head.textContent = asset.title;
     syncSave();
   }
@@ -230,9 +235,10 @@ function detailDialog(first, { onChange, attach }) {
 // New asset: one asset per file. `places` are { value: 'shared' | 'project:<name>', label };
 // `place` is the one chosen first, `lockPlace` keeps it (a project's Assets tab). `files` (and
 // `pasted`) start the list; more come by drop, paste or choice. onCreated(results) gets the
-// upload answers ({ ref, version, asset }).
+// upload answers ({ ref, version, asset }). An upload can't be called back once sent, so while
+// one runs the dialog stays: Cancel, Close, Esc and the files' ✕ wait for it.
 export function newAssetDialog({ place = 'shared', places = [{ value: 'shared', label: 'Shared' }], lockPlace = false, files = [], pasted = false, onCreated = () => {} } = {}) {
-  const chosen = []; // { file, pasted, problem, error }
+  let chosen = []; // { file, pasted, problem, error }
   const placeSelect = h('select', { id: 'libPlace' }, places.map(p => h('option', { value: p.value }, p.value === 'shared' ? 'Shared: any project can attach it' : `${p.label} only`)));
   placeSelect.value = places.some(p => p.value === place) ? place : (places[0] || { value: 'shared' }).value;
   const lockedLabel = (places.find(p => p.value === placeSelect.value) || { label: '' }).label;
@@ -244,11 +250,13 @@ export function newAssetDialog({ place = 'shared', places = [{ value: 'shared', 
   const list = h('ul', { class: 'lib-files', 'aria-label': 'Files to upload' });
   const error = errorBox();
   const submit = keyed(h('button', { class: 'btn primary', type: 'button' }, 'Upload'), 'na:submit');
+  const cancel = keyed(h('button', { class: 'btn', type: 'button', on: { click: closeDialog } }, 'Cancel'), 'na:cancel');
   let titleTouched = false;
   let busy = false;
 
   const placeOf = () => (placeSelect.value === 'shared' ? { scope: 'shared', project: '' } : { scope: 'project', project: placeSelect.value.slice(8) });
-  const titleFor = c => (chosen.length === 1 ? title.value.trim() : c.pasted ? pastedTitle() : titleFromName(c.file.name) || 'Asset');
+  // `one`: a single file was chosen when Upload was clicked (it takes the typed title).
+  const titleFor = (c, one) => (one ? title.value.trim() : c.pasted ? pastedTitle() : titleFromName(c.file.name) || 'Asset');
 
   function add(more, isPasted = false) {
     for (const f of more) chosen.push({ file: f, pasted: !!isPasted, problem: fileProblem(f), error: '' });
@@ -267,7 +275,8 @@ export function newAssetDialog({ place = 'shared', places = [{ value: 'shared', 
         h('span', { class: 'sub' }, `${fmtSize(c.file.size || 0)}${fileKind(c.file) && fileKind(c.file) !== 'svg' ? ` · ${kindWord(fileKind(c.file))}` : ''}`),
         why ? h('span', { class: 'sub text-red' }, why) : null),
       keyed(h('button', {
-        class: 'icon-btn', type: 'button', 'aria-label': `Remove ${name}`, on: { click: () => { chosen.splice(i, 1); paint(); } },
+        class: 'icon-btn', type: 'button', 'aria-label': `Remove ${name}`, disabled: busy,
+        on: { click: () => { if (busy) return; chosen = chosen.filter(x => x !== c); paint(); } },
       }, '✕'), `na:rm:${i}`));
   }
 
@@ -278,6 +287,7 @@ export function newAssetDialog({ place = 'shared', places = [{ value: 'shared', 
     titleHelp.textContent = chosen.length > 1 ? 'Each file becomes its own asset, titled by its file name.' : 'The id comes from the title and never changes.';
     submit.disabled = busy || !chosen.length || chosen.some(c => c.problem) || (chosen.length === 1 && !title.value.trim());
     submit.textContent = busy ? 'Uploading…' : chosen.length > 1 ? `Upload ${chosen.length} assets` : 'Upload';
+    cancel.disabled = busy;
   }
 
   async function upload() {
@@ -287,11 +297,12 @@ export function newAssetDialog({ place = 'shared', places = [{ value: 'shared', 
     paint();
     const done = [];
     const { scope, project } = placeOf();
-    for (const c of [...chosen]) {
+    const batch = [...chosen];
+    for (const c of batch) {
       try {
-        const r = await uploadNew(c.file, { scope, project, title: titleFor(c), description: description.value, tags: tags.value, note: note.value, pasted: c.pasted });
+        const r = await uploadNew(c.file, { scope, project, title: titleFor(c, batch.length === 1), description: description.value, tags: tags.value, note: note.value, pasted: c.pasted });
         done.push(r);
-        chosen.splice(chosen.indexOf(c), 1);
+        chosen = chosen.filter(x => x !== c);
       } catch (e) {
         c.error = e.network ? 'It could not be read or sent.' : e.message;
       }
@@ -301,8 +312,13 @@ export function newAssetDialog({ place = 'shared', places = [{ value: 'shared', 
       toast(done.length === 1 ? `Added ${done[0].asset.title} (${done[0].ref})` : `Added ${done.length} assets`);
       onCreated(done);
     }
-    if (!chosen.length) { clearGuard(); dialog.close(); return; }
-    showError(error, done.length ? 'Some files were not added; each says why.' : 'Nothing was added; each file says why.');
+    if (!chosen.length) {
+      if (holds(body)) { clearGuard(); dialog.close(); }
+      return;
+    }
+    // Files dropped while it ran wait for the next Upload; only a refused one is an error.
+    const refused = chosen.some(c => c.error);
+    showError(error, !refused ? '' : done.length ? 'Some files were not added; each says why.' : 'Nothing was added; each file says why.');
     paint();
   }
 
@@ -324,11 +340,16 @@ export function newAssetDialog({ place = 'shared', places = [{ value: 'shared', 
     h('label', { for: 'libNewTags' }, 'Tags', h('small', {}, 'Separated by commas.'), tags),
     h('label', { for: 'libNewNote' }, 'Note for the first version', note),
     error);
+  // While an upload runs, Close, Esc and the backdrop are refused too (the guard), with the reason.
+  const guard = () => {
+    if (busy) { showError(error, 'The upload is still running: wait for it to finish.'); return false; }
+    return !dirty() || confirm('Discard this upload?');
+  };
   openDialog('New asset', body, {
     wide: false,
-    guard: () => !dirty() || confirm('Discard this upload?'),
+    guard,
     upload: (f, p) => add(f, p),
-    actions: [h('button', { class: 'btn', type: 'button', on: { click: closeDialog } }, 'Cancel'), submit],
+    actions: [cancel, submit],
   });
   dialog.classList.add('lib-dialog');
   if (files.length) add(files, pasted);
@@ -392,22 +413,23 @@ export function assetPicker({ project, assets = [], attached = [], limit = 50, o
 
   search.addEventListener('input', paint);
   kind.addEventListener('change', paint);
+  const body = h('div', { class: 'form lib-picker' },
+    h('p', { class: 'muted' }, only === 'shared' ? 'Shared assets from the library.' : `Shared assets, and ${project}'s own. Each follows its latest version until you pin one.`),
+    h('div', { class: 'lib-pick-filters' }, search, kind),
+    list, error);
   attach.addEventListener('click', async () => {
     if (attach.disabled) return;
     attach.disabled = true;
     showError(error, '');
     try {
       await onAttach([...chosen]);
-      dialog.close();
+      if (holds(body)) dialog.close();
     } catch (e) {
       showError(error, e.message);
       sync();
     }
   });
-  openDialog(`Attach assets to ${project}`, h('div', { class: 'form lib-picker' },
-    h('p', { class: 'muted' }, only === 'shared' ? 'Shared assets from the library.' : `Shared assets, and ${project}'s own. Each follows its latest version until you pin one.`),
-    h('div', { class: 'lib-pick-filters' }, search, kind),
-    list, error), {
+  openDialog(`Attach assets to ${project}`, body, {
     wide: true,
     actions: [count, h('button', { class: 'btn', type: 'button', on: { click: closeDialog } }, 'Cancel'), attach],
   });

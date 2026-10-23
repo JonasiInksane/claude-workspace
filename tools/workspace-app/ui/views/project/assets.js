@@ -19,7 +19,7 @@
 // are in). A project whose folder name the data folder can't hold has assets but no settings, so
 // nothing can be attached to it. The pure helpers (pipelineAssets, attachedEntries) are exported
 // for assets.test.mjs.
-import { api, h, toast } from '../../lib.js';
+import { api, h, keyed, toast } from '../../lib.js';
 import { dialog } from '../../dialog.js';
 import { state } from '../../store.js';
 import { createMemo, patch } from '../../parts/patch.js';
@@ -147,8 +147,9 @@ function libraryCard(name) {
     const newBtn = btn(`pa:new:${name}`, 'New asset…', () => openNew(name), { cls: 'btn small primary' });
     const own = (listing || []).filter(a => a.scope === 'project');
     const archivedCount = own.filter(a => a.archived).length;
+    // Keyed: toggling it rebuilds the card, and the repaint puts the focus back on it.
     const toggle = archivedCount ? h('label', { class: 'check' },
-      h('input', { type: 'checkbox', checked: showArchived, on: { change: e => { if (e.target.checked) shownArchived.add(name); else shownArchived.delete(name); reload(name); } } }),
+      keyed(h('input', { type: 'checkbox', checked: showArchived, on: { change: e => { if (e.target.checked) shownArchived.add(name); else shownArchived.delete(name); reload(name); } } }), `pa:archived:${name}`),
       `Show archived (${archivedCount})`) : null;
     const head = cardHead('Library assets', toggle, attachShared, newBtn);
     if (!listing) {
@@ -168,7 +169,7 @@ function libraryCard(name) {
       named ? h('div', {},
         h('div', { class: 'section-label' }, h('span', {}, `Attached in its settings (${attached.length})`)),
         attached.length ? h('div', { class: 'lib-grid' }, attached.map(e => attachedCard(name, e, canAttach)))
-          : h('p', { class: 'muted small' }, 'Nothing attached yet. Attach a shared asset, or one of the project\'s own below. Runs and sessions don\'t read attached assets yet; that comes with the run manifest.')) : null,
+          : h('p', { class: 'muted small' }, 'Nothing attached yet. Attach a shared asset, or one of the project\'s own below: runs, sessions and flows started here get what is attached.')) : null,
       h('div', {},
         h('div', { class: 'section-label' }, h('span', {}, named ? `Its own, not attached (${ownShown.length})` : `Its own (${ownShown.length})`)),
         ownShown.length ? h('div', { class: 'lib-grid' }, ownShown.map(a => ownCard(name, a, canAttach)))

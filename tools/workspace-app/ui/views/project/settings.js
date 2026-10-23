@@ -34,7 +34,7 @@ import { api, copy, fmtAgo, fmtTime, h, keyed, plural, toast } from '../../lib.j
 import { closeDialog, dialog, openDialog } from '../../dialog.js';
 import { projectHash } from '../../store.js';
 import { createMemo, patch } from '../../parts/patch.js';
-import { dataOf, reload, slot, use } from '../../parts/project-data.js';
+import { dataOf, reload, requestMark, slot, use } from '../../parts/project-data.js';
 import { btn, cardHead, DATA_NAME_RE, errorNote, loadingBody, minute, short, stateCard } from '../../parts/project-ui.js';
 import { createProfile } from '../../parts/project-actions.js';
 import { clearLeaveGuard, setLeaveGuard } from '../../parts/leave-guard.js';
@@ -148,7 +148,7 @@ function makeEditor(name, d) {
   const ed = {
     name, base: baseOf(d.current), limits: { ...DEFAULT_LIMITS, ...(d.limits || {}) },
     choices: { ...DEFAULT_CHOICES, ...(d.choices || {}) }, assets: [], rows: new Map(),
-    conflict: null, serverProblems: null, error: '', saving: false, library: null, libraryError: '',
+    conflict: null, serverProblems: null, error: '', saving: false, savedMark: 0, library: null, libraryError: '',
     resolved: { key: '', items: [], error: '' }, resolving: '', resolveTimer: 0,
   };
   ed.rules = h('textarea', {
@@ -170,6 +170,7 @@ function makeEditor(name, d) {
   ed.assetList = h('ul', { class: 'st-assets', 'aria-label': 'Attached assets' });
   ed.assetEmpty = h('p', { class: 'muted small st-assets-empty' }, 'No assets attached.');
   ed.assetNote = h('p', { class: 'muted small', hidden: true });
+  ed.libraryBox = h('div', { hidden: true }); // the library could not be read: why, with Try again
   ed.attachBtn = btn(`st:attach:${name}`, 'Attach…', () => openPicker(ed), { describedBy: id('attach-why') });
   ed.attachWhy = h('span', { class: 'reason', id: id('attach-why') });
   ed.assetCount = h('span', { class: 'muted small' });
@@ -215,8 +216,8 @@ function makeEditor(name, d) {
       h('div', { class: 'st-block' },
         h('div', { class: 'st-assets-head' }, h('span', { class: 'st-label' }, 'Attached assets'), ed.assetCount,
           h('span', { class: 'row-actions' }, ed.attachWhy, ed.attachBtn)),
-        h('p', { class: 'muted small' }, 'Saved with each version: each follows its latest version or stays pinned to one. Runs and sessions don\'t read attached assets yet; that comes with the run manifest.'),
-        ed.assetList, ed.assetEmpty, ed.assetNote, ed.problems.assets),
+        h('p', { class: 'muted small' }, 'Saved with each version: each follows its latest version or stays pinned to one. Runs, sessions and flows started here get them in those versions (a run copies them into its inputs). A missing one stops the start; an archived one is still used.'),
+        ed.assetList, ed.assetEmpty, ed.assetNote, ed.libraryBox, ed.problems.assets),
       h('div', { class: 'st-alerts' }, ed.conflictBox, ed.errorBox)),
     h('div', { class: 'card-foot st-foot' }, ed.status, h('span', { class: 'push row-actions' }, ed.why, ed.discardBtn, ed.saveBtn)));
   return ed;
@@ -227,9 +228,20 @@ function editorFor(name, d) {
   return editors.get(name);
 }
 
-// New data for an open editor: the limits and the library; a newer current version replaces a
-// clean editor's values, and marks a dirty one as behind (a save would be refused).
-function syncData(ed, d, library) {
+// True when the settings part `S` shows an older version than the editor's from a request that
+// left before the editor's last save (project-data.js requestMark): versions only grow, so that is
+// the request being late, not news, and it is passed over.
+function isLate(ed, S) {
+  const d = dataOf(S);
+  const v = d && d.current ? d.current.version : 0;
+  return v < ed.base.version && ((S && S.asked) || 0) <= ed.savedMark;
+}
+
+// New data for an open editor (`S`, the settings part): the limits and the library; another
+// current version replaces a clean editor's values, and marks a dirty one as behind (a save would
+// be refused); that mark goes again once the current version is the editor's own again.
+function syncData(ed, S, library) {
+  const d = dataOf(S);
   ed.limits = { ...DEFAULT_LIMITS, ...(d.limits || {}) };
   if (library) {
     ed.library = dataOf(library) ? dataOf(library).assets || [] : ed.library;
@@ -237,13 +249,16 @@ function syncData(ed, d, library) {
   }
   const cur = d.current || null;
   const v = cur ? cur.version : 0;
-  if (!ed.saving && v !== ed.base.version) {
+  if (ed.saving || isLate(ed, S)) { /* nothing to learn from it */ } else if (v !== ed.base.version) {
     if (!isDirty(ed)) rebase(ed, cur);
     else if (!ed.conflict) {
-      ed.conflict = { message: v ? `v${v} of these settings was saved elsewhere since you opened ${ed.base.version ? `v${ed.base.version}` : 'them'}, so a save now would be refused.`
+      ed.conflict = { fromRefresh: true, message: v ? `v${v} of these settings was saved elsewhere since you opened ${ed.base.version ? `v${ed.base.version}` : 'them'}, so a save now would be refused.`
         : `The settings you opened (v${ed.base.version}) are gone from the data folder, so a save now would be refused.` };
     }
-  } else if (cur && v === ed.base.version) ed.base.savedAt = cur.savedAt;
+  } else {
+    if (cur) ed.base.savedAt = cur.savedAt;
+    if (ed.conflict && ed.conflict.fromRefresh) ed.conflict = null;
+  }
   sync(ed);
 }
 
@@ -364,11 +379,17 @@ function renderAssets(ed) {
   ed.assetList.hidden = !nodes.length;
   ed.assetEmpty.hidden = nodes.length > 0;
   setText(ed.assetCount, nodes.length ? `${nodes.length} of at most ${ed.limits.assets}` : '');
-  const note = ed.resolved.error ? `Their state could not be checked: ${ed.resolved.error}` : ed.libraryError ? `The library could not be read: ${ed.libraryError}` : '';
+  const note = ed.resolved.error ? `Their state could not be checked: ${ed.resolved.error}` : '';
   setText(ed.assetNote, note);
   ed.assetNote.hidden = !note;
+  // Built again only when the error changes, so Try again keeps the focus while it still fails.
+  if (ed.libraryBox.dataset.sig !== ed.libraryError) {
+    ed.libraryBox.dataset.sig = ed.libraryError;
+    ed.libraryBox.replaceChildren(...(ed.libraryError ? [errorNote(`The library could not be read: ${ed.libraryError}`, `library:${ed.name}`)] : []));
+  }
+  ed.libraryBox.hidden = !ed.libraryError;
   const full = ed.assets.length >= ed.limits.assets;
-  const why = full ? `At most ${ed.limits.assets} can be attached.` : !ed.library ? 'Loading the library…' : '';
+  const why = full ? `At most ${ed.limits.assets} can be attached.` : ed.libraryError ? 'The library could not be read.' : !ed.library ? 'Loading the library…' : '';
   setText(ed.attachWhy, why);
   ed.attachBtn.disabled = !!why;
 }
@@ -430,6 +451,7 @@ async function save(ed) {
   try {
     const r = await api('/api/project-settings', { method: 'POST', body: saveBody(ed.name, ed.base.version, fields) });
     ed.base = { version: r.version, savedAt: r.unchanged ? ed.base.savedAt : new Date().toISOString(), fields: tidyFields(fields) };
+    ed.savedMark = requestMark();
     ed.conflict = null;
     toast(r.message || `Saved as v${r.version}`);
     reload(ed.name);
@@ -448,17 +470,20 @@ function discard(ed) {
   setFields(ed, ed.base.fields);
   ed.serverProblems = null;
   ed.error = '';
-  const d = dataOf(slot(ed.name).settings);
-  if (d && (d.current ? d.current.version : 0) !== ed.base.version) rebase(ed, d.current);
+  const S = slot(ed.name).settings;
+  const d = dataOf(S);
+  if (d && !isLate(ed, S) && (d.current ? d.current.version : 0) !== ed.base.version) rebase(ed, d.current);
   sync(ed);
   resolveSoon(ed);
 }
 
-// Reload in the conflict note: the current version replaces the draft.
+// Reload in the conflict note: the current version replaces the draft. reload() resolves with an
+// answer to a request made after the click (one already out may predate the newest save).
 async function reloadLatest(ed) {
   await reload(ed.name);
-  const d = dataOf(slot(ed.name).settings);
-  if (!d) { toast('The settings could not be loaded; try again.', true); return; }
+  const S = slot(ed.name).settings;
+  const d = dataOf(S);
+  if (!d || S.error) { toast(S && S.error ? `The settings could not be loaded: ${S.error}` : 'The settings could not be loaded; try again.', true); return; }
   rebase(ed, d.current);
   sync(ed);
   resolveSoon(ed);
@@ -611,7 +636,7 @@ function settingsNodes(name) {
       S && S.error ? h('div', { class: 'card-body' }, errorNote(S.error, 'settings')) : loadingBody()))];
   }
   const ed = editorFor(name, d);
-  syncData(ed, d, slot(name).library);
+  syncData(ed, S, slot(name).library);
   resolveSoon(ed);
   return [
     S.error ? memo(`stale:${name}`, [S.error], () => errorNote(`The settings could not be loaded again: ${S.error}`, 'settings')) : null,

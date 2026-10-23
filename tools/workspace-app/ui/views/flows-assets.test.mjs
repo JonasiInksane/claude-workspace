@@ -3,11 +3,11 @@
 // choices, the saved text, a recorded run's assets, the run dialog's session line and notes), the
 // editor's asset picker in the stand-in DOM (test/dom.mjs): statuses, Attach, a pinned version,
 // Remove (the focus goes to the picker), another target reloads the library, Save sends the list,
-// and the run dialog's preview following the chosen project.
+// and the run dialog's preview following the chosen project (the newest one asked for wins).
 // Run: node tools/run-tests.mjs workspace-app
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { FakeElement, fakeFetch, installDom, settle, textOf } from '../../test/dom.mjs';
+import { FakeElement, fakeEvent, fakeFetch, installDom, settle, textOf } from '../../test/dom.mjs';
 
 const dom = installDom();
 after(() => dom.uninstall());
@@ -36,7 +36,7 @@ const calls = fakeFetch((path, { method, body }) => {
   if (path.startsWith('/api/library?')) return { ok: true, assets: LIBRARY };
   if (path.startsWith('/api/flow-runs?')) return { ok: true, flow: 'demo', current: null, runs: [] };
   if (path === '/api/flows' && method === 'POST') return { ok: true, slug: 'demo', hash: 'h2', message: 'Flow saved' };
-  if (path === '/api/flows/run' && body && body.preview) return preview;
+  if (path === '/api/flows/run' && body && body.preview) return typeof preview === 'function' ? preview(body) : preview;
   return { ok: true, projects: [], flows: [], archivedFlows: [], tools: {} };
 });
 const store = await import('../store.js');
@@ -173,4 +173,34 @@ test('the run dialog previews with the chosen project and shows the effective la
   assert.match(text, /A run would be refused: shared:x has no version 3/);
   assert.match(text, /Archived, still used: shared:logo\./);
   dialogEl().close();
+});
+
+test('the run dialog shows the newest preview: a slow answer for the project before is dropped, and a pending notes preview with it', async () => {
+  store.setState({ projects: [{ name: 'example', launchable: true, agents: [] }, { name: 'notes', launchable: true, agents: [] }], flows: [] });
+  let release = () => {};
+  preview = body => {
+    const r = { ok: true, prompt: `For ${body.project || 'no project'}: ${body.notes}`, launch: {}, notesError: '', project: body.project || '', projectSettings: null, assets: [], problems: [], note: '' };
+    return body.project === 'example' ? new Promise(done => { release = () => done(r); }) : r;
+  };
+  const before = calls.length;
+  const previews = () => calls.slice(before).filter(c => c.path === '/api/flows/run' && c.body.preview).length;
+  await runFlowDialog({ slug: 'any', title: 'Any', target: 'project', project: '*' });
+  await settle(10);
+  const notes = dialogEl().querySelector('#flowNotes');
+  notes.value = 'the hero';
+  notes.dispatchEvent(fakeEvent('input')); // its preview waits 350 ms for more typing
+  const pick = dialogEl().querySelector('#flowProject');
+  for (const name of ['example', 'notes']) {
+    pick.value = name;
+    pick.dispatchEvent(fakeEvent('change'));
+  }
+  await settle(10);
+  release(); // the answer for example comes last
+  await settle(10);
+  assert.equal(dialogEl().querySelector('pre.output').textContent, 'For notes: the hero');
+  const n = previews();
+  await settle(400);
+  assert.equal(previews(), n, 'the project change took the typed notes along; no second preview for them');
+  dialogEl().close();
+  preview = { ok: true, prompt: 'P', launch: {}, notesError: '', project: '', projectSettings: null, assets: [], problems: [], note: '' };
 });

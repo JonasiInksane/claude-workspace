@@ -243,7 +243,9 @@ test('role head: a planted failure is new, a known one stays known, a flaky one 
   const last = await lastPerLevel(h.dataDir, 'example');
   assert.equal(last.quick.result, 'fail');
   assert.equal(last.quick.runId, 'r-head');
-  assert.deepEqual(last.quick.counts, { new: 2, known: 2, flaky: 1 });
+  // The test totals are what the API tests' TAP counted at the first run (the new, the flaky and
+  // the known failure; the charge test passed); the type errors are in new and known only.
+  assert.deepEqual(last.quick.counts, { new: 2, known: 2, flaky: 1, pass: 1, fail: 3, skip: 0, notRun: 0 });
   assert.equal(JSON.parse(readFileSync(join(h.dataDir, 'runs', 'example', '261022-100000-check-test', 'gates', '02-checks', 'summary.json'), 'utf8')).chip, s.chip);
   assert.equal(await loadCandidate(h.dataDir, 'example', s.baselineKey), null);
 });

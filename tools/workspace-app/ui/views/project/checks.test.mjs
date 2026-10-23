@@ -33,6 +33,13 @@ test('checkCounts: every number on its own, with its own word, in a fixed order'
   assert.equal(countsText({ counts: { new: 0, known: 1 } }), '0 new failures · 1 pre-existing failure');
 });
 
+test('checkCounts: a line with the test totals (gates/history.mjs) shows passed, failed, skipped and not run in words', () => {
+  const line = { counts: { new: 1, known: 2, flaky: 0, pass: 52, fail: 3, skip: 2, notRun: 1 } };
+  assert.equal(countsText(line), '52 tests passed · 3 tests failed · 1 new failure · 2 pre-existing failures · 0 flaky · 2 tests skipped · 1 check not run');
+  assert.equal(countsText({ counts: { new: 0, known: 0, flaky: 0, pass: 1, fail: 0, skip: 0, notRun: 2 } }),
+    '1 test passed · 0 tests failed · 0 new failures · 0 pre-existing failures · 0 flaky · 0 tests skipped · 2 checks not run');
+});
+
 test('checkCounts: only real numbers show; unknown keys, text and odd values are left out', () => {
   assert.deepEqual(checkCounts(null), []);
   assert.deepEqual(checkCounts({}), []);
@@ -68,6 +75,25 @@ test('the tab: one row per level with its counts apart, the baseline, and the hi
   assert.equal(history[0].querySelector('button').getAttribute('aria-label'), 'Open the Quick check run (just now)', 'each Open says which check it opens');
   dom.click(el.querySelector('[data-key="check:quick:261022-100007-check-passed"]'));
   assert.equal(dom.location.hash, '#run/261022-100007-check-passed', 'a result opens its check run');
+});
+
+test('the tab: a new line shows passed, failed, skipped and pre-existing apart; an older line only what it has', () => {
+  store.setState({ root: 'C:\\ws', tools: {}, projects: [example], assets: [] });
+  const at = new Date().toISOString();
+  const old = { at, runId: '261020-100000-check-old', level: 'quick', result: 'pass', chip: '0 new · 2 known', durationMs: 4000, counts: { new: 0, known: 2, flaky: 0 } };
+  const now = { ...old, runId: '261022-100000-check-new', level: 'standard', result: 'fail', chip: '1 new · 2 known', counts: { new: 1, known: 2, flaky: 0, pass: 52, fail: 3, skip: 2, notRun: 1 } };
+  slot('example').checks = { data: { last: { quick: old, standard: now, paranoid: null }, history: [now, old] } };
+  slot('example').project = { data: { project: { present: true }, baseline: { key: 'k1', known: 2, baseSha: 'abcdef123456', node: '24.11.1' } } };
+  const el = dom.document.createElement('div');
+  checks.render(el, { state: store.state, project: example, rest: '', go: store.go, refresh: () => {} });
+  const rows = el.querySelectorAll('table.ck-levels tbody tr');
+  const badges = row => row.querySelectorAll('.ck-counts .badge').map(b => b.textContent);
+  assert.deepEqual(badges(rows[0]), ['0 new failures', '2 pre-existing failures', '0 flaky'], 'an older line: no passed or skipped made up');
+  assert.deepEqual(badges(rows[1]),
+    ['52 tests passed', '3 tests failed', '1 new failure', '2 pre-existing failures', '0 flaky', '2 tests skipped', '1 check not run']);
+  const history = el.querySelectorAll('.ck-history li');
+  assert.match(textOf(history[0]), /52 tests passed · 3 tests failed · 1 new failure · 2 pre-existing failures · 0 flaky · 2 tests skipped · 1 check not run/);
+  assert.doesNotMatch(textOf(history[1]), /passed|skipped|not run/);
 });
 
 test('the tab: a first load that fails says so in both cards at once, not Loading…', () => {

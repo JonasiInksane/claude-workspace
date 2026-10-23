@@ -106,8 +106,9 @@ Every project in `projects/` has a page, `#project/<name>/<tab>`; its type
 
 A link without a tab, or with a tab the type doesn't have, opens the first tab; the old
 `#cockpit/<name>` and `#health/<name>` open Overview and Architecture. Tasks groups the runs by
-their root run (`run.parent`); Checks shows every count a check recorded on its own (new,
-pre-existing, flaky). Settings for a non-code project offers "Create from the example", which
+their root run (`run.parent`); Checks shows every count a check recorded on its own (tests
+passed, failed and skipped, new, pre-existing and flaky failures, checks not run; a line from
+before the test totals shows only its failures). Settings for a non-code project offers "Create from the example", which
 makes it a code project. The tab bar follows the WAI-ARIA tabs pattern: Left, Right, Home and End
 move the focus, Enter or Space opens the tab, and every tab is its own history entry.
 

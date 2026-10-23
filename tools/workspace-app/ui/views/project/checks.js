@@ -5,8 +5,9 @@
 // last 20 checks. Checks are code, not Claude: no tokens.
 //
 // Counts: every number GET /api/checks gives for a check shows on its own, with its own word
-// (new failures, pre-existing failures, flaky, and passed or skipped when a line has them); a
-// skipped test or a pre-existing failure is never folded into passed or failed (checkCounts).
+// (tests passed, tests failed, new failures, pre-existing failures, flaky, tests skipped and
+// checks not run; an older line only has the failures); a skipped test or a pre-existing failure
+// is never folded into passed or failed, and a number a line lacks is never shown as 0 (checkCounts).
 //
 // Data: GET /api/checks and GET /api/project (project-data.js `checks` and `project`: the
 // baseline, whether the checkout is here, and the last results when /api/checks has none).
@@ -41,15 +42,19 @@ export function checkResult(line) {
   }
 }
 
-// The count keys a check line may carry, in the order they show, each with its own words.
+// The count keys a check line may carry, in the order they show, each with its own words. pass,
+// fail and skip are tests (gates/history.mjs sums the test commands' TAP counts); new, known and
+// flaky are failures of every kind (tests, type and lint errors), so they need not add up to the
+// tests failed; notRun counts whole checks. A line written before the test totals has none.
 const COUNTS = [
-  ['pass', 'passed', 'passed'], ['passed', 'passed', 'passed'],
-  ['fail', 'failed', 'failed'], ['failed', 'failed', 'failed'],
+  ['pass', 'test passed', 'tests passed'], ['passed', 'passed', 'passed'],
+  ['fail', 'test failed', 'tests failed'], ['failed', 'failed', 'failed'],
   ['new', 'new failure', 'new failures'],
   ['known', 'pre-existing failure', 'pre-existing failures'],
   ['flaky', 'flaky', 'flaky'],
-  ['skip', 'skipped', 'skipped'], ['skipped', 'skipped', 'skipped'],
+  ['skip', 'test skipped', 'tests skipped'], ['skipped', 'skipped', 'skipped'],
   ['todo', 'to do', 'to do'],
+  ['notRun', 'check not run', 'checks not run'],
 ];
 
 // The numbers of a history line ({ counts: { new, known, flaky, ... } }) as separate entries:

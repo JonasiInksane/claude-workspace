@@ -502,8 +502,8 @@ test('g0.ratchets.allowlist: read from the data folder; new off-list procedures 
   writeFiles(env.dir, { [TEAMS]: BASE_FILES[TEAMS].replace('  roster:', '  status: openProcedure.query(() => 1),\n  roster:') });
   const notSetUp = await g0(env, { plan: { files: [TEAMS] }, dataDir });
   assert.equal(notSetUp.row('g0.ratchets.allowlist').status, 'skip');
-  assert.match(notSetUp.row('g0.ratchets.allowlist').reason, /not set up yet/);
-  assert.match(notSetUp.row('g0.tenant').reason, /no allowlist is set up yet/);
+  assert.match(notSetUp.row('g0.ratchets.allowlist').reason, /not set up yet \(the project's Architecture tab, Rebuild allowlist\)/);
+  assert.match(notSetUp.row('g0.tenant').reason, /no allowlist is set up yet: the project's Architecture tab, Rebuild allowlist/);
 
   writeFiles(dataDir, { 'profiles/example.allowlist.json': { version: 1, project: 'example', list: ['invoices.me', 'invoices.publicSummary', 'gone.route'] } });
   const r = await g0(env, { plan: { files: [TEAMS] }, dataDir });
@@ -513,6 +513,8 @@ test('g0.ratchets.allowlist: read from the data folder; new off-list procedures 
   assert.deepEqual(row.details.addedOld, ['teams.roster']);
   assert.deepEqual(row.details.removed, ['gone.route']);
   assert.match(row.reason, /1 new procedure is not on the allowlist: teams\.status; 1 procedure was already off the allowlist at base; .*the allowlist can shrink by 1/);
+  assert.match(row.reason, /rebuild it on the project's Architecture tab/);
+  assert.doesNotMatch(row.reason, /Health and wins/, 'no screen of that name any more');
   // The whole-tree list came from the head files in the probe's scope.
   const whole = r.probes.calls.find(c => c.ids.length === 1 && c.ids[0] === 'procedures');
   assert.deepEqual(whole.only, [ROUTER, TEAMS]);

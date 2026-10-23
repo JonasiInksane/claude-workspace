@@ -12,6 +12,9 @@ import { Readable } from 'node:stream';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { flowRunsFile, flowVersion } from '../flow-versions.mjs';
+import { createAsset, setArchived } from '../asset-library.mjs';
+import { saveSettings } from '../project-settings.mjs';
+import { sha256Text } from '../core/datadir.mjs';
 import * as flowRoutes from './flows.mjs';
 
 function postReq(body) {
@@ -284,4 +287,135 @@ test('GET /api/flow-runs: the newest runs first, what changed since each, and re
   assert.deepEqual([archived.current, archived.runs.length, archived.runs[0].changes], [null, 2, []]);
   for (const bad of ['', '../x', 'Bad Name', 'a/b']) assert.equal((await runs(bad)).status, 400, bad);
   assert.deepEqual((await runs('never-ran')).body, { ok: true, flow: 'never-ran', current: null, runs: [] });
+});
+
+// ---------------------------------------------------------------- attached assets
+
+const PNG = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000000', 'hex');
+
+// The library of the workspace: a shared style guide, a shared logo and example's palette.
+async function withLibrary(ws) {
+  const style = await createAsset(ws.root, { scope: 'shared', title: 'Style guide', originalName: 'style.md' }, Buffer.from('# Style\nUse teal.\n'));
+  const logo = await createAsset(ws.root, { scope: 'shared', title: 'Logo', originalName: 'logo.png' }, PNG);
+  const palette = await createAsset(ws.root, { scope: 'project', project: 'example', title: 'Palette', originalName: 'palette.png' }, PNG);
+  return { style: style.asset, logo: logo.asset, palette: palette.asset };
+}
+const fileOf = (root, rel) => join(root, ...rel.split('/'));
+
+test('a flow saves its attached assets, reads them back as text and a list, and keeps them when a save leaves them out', async t => {
+  const { call, get } = setup(t);
+  const saved = await call('POST /api/flows', { ...refactor, assets: 'shared:style-guide, EXAMPLE:palette@2' });
+  assert.equal(saved.status, 200, saved.body.error);
+  const f = await get(saved.body.slug);
+  assert.equal(f.assets, 'shared:style-guide, example:palette@2');
+  assert.deepEqual(f.assetList, [{ ref: 'shared:style-guide', pin: null }, { ref: 'example:palette', pin: 2 }]);
+  // An editor that doesn't know the field keeps it; one that sends '' removes it.
+  const { assets, ...older } = { ...refactor, assets: undefined };
+  const kept = await call('POST /api/flows', { ...older, slug: saved.body.slug, hash: f.hash, prompt: 'Changed.' });
+  assert.equal(kept.status, 200, kept.body.error);
+  const g = await get(saved.body.slug);
+  assert.equal(g.assets, 'shared:style-guide, example:palette@2');
+  assert.equal((await call('POST /api/flows', { ...refactor, slug: saved.body.slug, hash: g.hash, assets: '' })).status, 200);
+  assert.deepEqual((await get(saved.body.slug)).assetList, []);
+  // Refusals: another project's asset, a malformed ref, a list that is not text.
+  for (const [body, re] of [
+    [{ ...refactor, title: 'Other', assets: 'notes:map' }, /notes:map belongs to projects\/notes; a flow for example can attach shared assets and example's own/],
+    [{ ...refactor, title: 'Hub', target: 'hub', assets: 'example:palette' }, /a hub flow can attach shared assets only/],
+    [{ ...refactor, title: 'Bad', assets: 'style guide' }, /is not an asset/],
+    [{ ...refactor, title: 'List', assets: ['shared:style-guide'] }, /assets must be text/],
+  ]) {
+    const r = await call('POST /api/flows', body);
+    assert.equal(r.status, 400, JSON.stringify(body));
+    assert.match(r.body.error, re);
+  }
+});
+
+test('a run lists the flow\'s and the project\'s assets after the images, may read their folders, and records their versions', async t => {
+  const ws = setup(t);
+  const { style, logo, palette } = await withLibrary(ws);
+  await saveSettings(ws.dataDir, 'example', { rules: 'Cents only.', assets: [{ ref: 'example:palette', pin: null }, { ref: 'shared:style-guide', pin: null }] }, { basedOn: 0 });
+  const { body: { slug } } = await ws.call('POST /api/flows', { ...refactor, askRequired: false, assets: 'shared:logo, shared:style-guide@1' });
+  mkdirSync(join(ws.root, 'inbox', 'attachments', '_flows', slug), { recursive: true });
+  writeFileSync(join(ws.root, 'inbox', 'attachments', '_flows', slug, 'shot.png'), PNG);
+  const r = await ws.call('POST /api/flows/run', { slug });
+  assert.equal(r.status, 200, r.body.error);
+  const c = ws.calls[0];
+  const shot = join(ws.root, 'inbox', 'attachments', '_flows', slug, 'shot.png');
+  const logoFile = fileOf(ws.root, `inbox/attachments/_assets/logo/${logo.versions[0].file}`);
+  const styleFile = fileOf(ws.root, `inbox/attachments/_assets/style-guide/${style.versions[0].file}`);
+  const paletteFile = fileOf(ws.root, `inbox/attachments/example/_assets/palette/${palette.versions[0].file}`);
+  assert.equal(c.prompt, [
+    `Reference images for this task. Read each one before you start:\n- Image 1: ${shot}`,
+    "Assets for this task, from the workspace app's asset library. Read each one before you start:",
+  ].join('\n\n') + `\n- Asset 1: Logo (shared:logo v1, image) at ${logoFile}` +
+    `\n- Asset 2: Style guide (shared:style-guide v1, text) at ${styleFile}` +
+    `\n- Asset 3: Palette (example:palette v1, image) at ${paletteFile}\n\nRefactor what I describe.`);
+  // The flow's own pin (style guide v1) wins over the project's attachment of the same asset.
+  assert.deepEqual(c.assets.map(a => [a.ref, a.version]), [['shared:logo', 1], ['shared:style-guide', 1], ['example:palette', 1]]);
+  assert.deepEqual(c.readDirs, [join(ws.root, 'inbox', 'attachments', '_flows', slug), dirname(logoFile), dirname(styleFile), dirname(paletteFile)]);
+  assert.equal(c.settings.version, 1, 'the settings the assets came from go along');
+  const [line] = ws.records();
+  assert.deepEqual(line.assets, [
+    { ref: 'shared:logo', version: 1, sha256: sha256Text(PNG) },
+    { ref: 'shared:style-guide', version: 1, sha256: sha256Text(Buffer.from('# Style\nUse teal.\n')) },
+    { ref: 'example:palette', version: 1, sha256: sha256Text(PNG) },
+  ]);
+});
+
+test('a flow for any project gets the chosen project\'s assets; a hub flow its shared ones only', async t => {
+  const ws = setup(t);
+  await withLibrary(ws);
+  await saveSettings(ws.dataDir, 'example', { assets: [{ ref: 'example:palette', pin: null }] }, { basedOn: 0 });
+  const any = (await ws.call('POST /api/flows', { ...anyReview, assets: 'shared:logo' })).body.slug;
+  assert.equal((await ws.call('POST /api/flows/run', { slug: any, project: 'example' })).status, 200);
+  assert.equal((await ws.call('POST /api/flows/run', { slug: any, project: 'notes' })).status, 200);
+  assert.deepEqual(ws.calls.map(c => c.assets.map(a => a.ref)), [['shared:logo', 'example:palette'], ['shared:logo']]);
+  const hub = (await ws.call('POST /api/flows', { ...anyReview, title: 'Hub', target: 'hub', assets: 'shared:logo' })).body.slug;
+  assert.equal((await ws.call('POST /api/flows/run', { slug: hub })).status, 200);
+  assert.deepEqual([ws.calls[2].assets.map(a => a.ref), ws.calls[2].settings], [['shared:logo'], undefined]);
+  assert.deepEqual(ws.records().map(r => r.assets.map(a => a.ref)), [['shared:logo', 'example:palette'], ['shared:logo'], ['shared:logo']]);
+});
+
+test('an asset or version that is gone refuses a run (400), a file changed by hand too (409); nothing starts or is recorded', async t => {
+  const ws = setup(t);
+  const { style } = await withLibrary(ws);
+  const pinned = (await ws.call('POST /api/flows', { ...anyReview, title: 'Pinned', assets: 'shared:style-guide@3' })).body.slug;
+  const r = await ws.call('POST /api/flows/run', { slug: pinned, project: 'example' });
+  assert.deepEqual([r.status, r.body.error], [400, "Pinned can't start: shared:style-guide has no version 3"]);
+  const gone = (await ws.call('POST /api/flows', { ...anyReview, title: 'Gone', assets: 'shared:missing' })).body.slug;
+  assert.match((await ws.call('POST /api/flows/run', { slug: gone, project: 'example' })).body.error, /shared:missing is not in the asset library/);
+  await saveSettings(ws.dataDir, 'notes', { assets: [{ ref: 'shared:missing', pin: null }] }, { basedOn: 0 });
+  const plain = (await ws.call('POST /api/flows', { ...anyReview, title: 'Plain' })).body.slug;
+  assert.match((await ws.call('POST /api/flows/run', { slug: plain, project: 'notes' })).body.error, /^Plain can't start: shared:missing is not in the asset library$/, 'the project\'s own attachments too');
+  writeFileSync(fileOf(ws.root, `inbox/attachments/_assets/style-guide/${style.versions[0].file}`), 'edited by hand');
+  const ok = (await ws.call('POST /api/flows', { ...anyReview, title: 'Edited', assets: 'shared:style-guide' })).body.slug;
+  const changed = await ws.call('POST /api/flows/run', { slug: ok, project: 'example' });
+  assert.equal(changed.status, 409);
+  assert.match(changed.body.error, /the file of shared:style-guide v1 no longer matches the SHA-256 the library recorded for it/);
+  assert.deepEqual([ws.calls.length, ws.records()], [0, []]);
+});
+
+test('the preview shows the effective launch, the assets with what a run would refuse, and the project part once one is chosen', async t => {
+  const ws = setup(t);
+  await withLibrary(ws);
+  await setArchived(ws.root, 'shared:logo', true);
+  const v1 = await saveSettings(ws.dataDir, 'example', {
+    rules: 'Cents only.', defaults: { model: 'opus', effort: 'max' }, allowedTools: 'Read, Grep', assets: [{ ref: 'example:palette', pin: null }],
+  }, { basedOn: 0 });
+  const { body: { slug } } = await ws.call('POST /api/flows', { ...refactor, askRequired: false, assets: 'shared:logo, shared:style-guide@4' });
+  const p = (await ws.call('POST /api/flows/run', { slug, preview: true })).body;
+  // The flow's own effort wins; the project's model, tools and rules are added.
+  assert.deepEqual(p.launch, { permissionMode: 'plan', effort: 'high', model: 'opus', allowedTools: ['Read', 'Grep'], appendSystemPrompt: 'Cents only.' });
+  assert.deepEqual([p.project, p.projectSettings], ['example', { version: 1, sha256: v1.sha256 }]);
+  assert.deepEqual(p.assets.map(a => [a.ref, a.version, a.archived, a.missing]), [['shared:logo', 1, true, false], ['shared:style-guide', 4, false, true], ['example:palette', 1, false, false]]);
+  assert.deepEqual(p.problems, ['shared:style-guide has no version 4']);
+  assert.match(p.prompt, /- Asset 1: Logo \(shared:logo v1, image\) at .*\n- Asset 2: Palette \(example:palette v1, image\) at /, 'a missing one is left out of the prompt');
+  assert.equal(ws.calls.length, 0, 'a preview starts nothing');
+  // A flow for any project: nothing of a project until one is chosen.
+  const any = (await ws.call('POST /api/flows', { ...anyReview, title: 'Any', assets: 'shared:logo' })).body.slug;
+  const none = (await ws.call('POST /api/flows/run', { slug: any, preview: true })).body;
+  assert.deepEqual([none.project, none.projectSettings, none.launch, none.note], ['', null, { permissionMode: 'plan' }, 'Choose a project to see its settings and attached assets.']);
+  assert.deepEqual(none.assets.map(a => a.ref), ['shared:logo']);
+  const chosen = (await ws.call('POST /api/flows/run', { slug: any, preview: true, project: 'example' })).body;
+  assert.deepEqual([chosen.project, chosen.launch.appendSystemPrompt, chosen.assets.map(a => a.ref), chosen.note], ['example', 'Cents only.', ['shared:logo', 'example:palette'], '']);
 });

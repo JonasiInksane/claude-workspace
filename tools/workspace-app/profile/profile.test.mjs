@@ -481,7 +481,7 @@ test('runCli --check: valid, missing, invalid and bad arguments', async t => {
   };
   const missing = await run(['--check', 'example', '--data-dir', dataDir]);
   assert.equal(missing.code, 1);
-  assert.match(missing.text, /There is no profile there/);
+  assert.match(missing.text, /There is no profile there\. Use "Create from the example" on the project's Settings tab in the app/);
   writeFiles(dataDir, { 'profiles/example.json': exampleProfile() });
   const ok = await run(['--check', 'example', '--data-dir', dataDir]);
   assert.equal(ok.code, 0, ok.text);

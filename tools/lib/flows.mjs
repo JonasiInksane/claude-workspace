@@ -6,16 +6,21 @@
 //
 // Frontmatter: title, description, target (hub | project | agent), project, agent, optional
 // launch settings permissionMode, model, effort, allowedTools (tools/lib/prompt-file.mjs checks
-// them), and an optional question for every run: ask (the label of the run's text box, at most
-// 120 characters) and askRequired (true: a run needs an answer). Values are written as JSON
-// strings, which are valid YAML, so ": " or "#" in a title can't break the file.
+// them), an optional question for every run: ask (the label of the run's text box, at most
+// 120 characters) and askRequired (true: a run needs an answer), and optional assets from the
+// workspace app's asset library: a comma list of refs, each with an optional @<version> pin,
+// such as "shared:style-guide, game-dev:palette@2" (parseFlowAssets). A hub flow and a flow for
+// any project may attach shared assets only, a project or agent flow shared assets and its
+// project's own. Values are written as JSON strings, which are valid YAML, so ": " or "#" in a
+// title can't break the file.
 // A project flow may name `project: "*"` (ANY_PROJECT): it runs in any project, chosen when you
 // run it, and is valid while at least one project exists. An agent flow always names its
 // project, because an agent belongs to one project.
 // A run starts Claude at the target with the labeled image paths first ("Image 1: <path>" plus
-// an optional caption from the image folder's captions.json), then the prompt, then optional
-// notes for that run (under the flow's ask when it has one); the session may read the image
-// folder without asking.
+// an optional caption from the image folder's captions.json), then the attached assets (the
+// workspace app resolves them and lists one line each, "Asset 1: ..."), then the prompt, then
+// optional notes for that run (under the flow's ask when it has one); the session may read the
+// image folder and the assets' folders without asking.
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { duplicateNames, listAgents, readFrontmatter, resolveProject, textHash } from './agents.mjs';
@@ -28,7 +33,12 @@ export const ANY_PROJECT = '*';
 export const isAnyProject = f => !!f && f.target === 'project' && f.project === ANY_PROJECT;
 export const FLOW_IMAGES_DIR = '_flows';
 export const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-export const LIMITS = { title: 120, description: 300, prompt: 16000, notes: 2000, images: 40, caption: 200, ask: 120 };
+export const LIMITS = { title: 120, description: 300, prompt: 16000, notes: 2000, images: 40, caption: 200, ask: 120, assets: 20 };
+// One attached asset: "shared:<id>" or "<project folder>:<id>", with an optional "@<version>". The
+// id is the asset library's (kebab-case, at most 60 characters); the workspace app's
+// asset-library.mjs parseRef checks the same shape and that the asset exists when a flow runs.
+const ASSET_ITEM_RE = /^([^:,\s][^:,\r\n]*):([a-z0-9]+(?:-[a-z0-9]+)*)(?:@([1-9]\d{0,8}))?$/;
+const ASSET_ID_MAX = 60;
 // What a run passes: the formats Claude Code's Read tool shows as images. BMP uploads are
 // converted to PNG; a BMP copied into the folder by hand is listed but not passed.
 const RUN_IMAGE_RE = /\.(png|jpe?g|gif|webp)$/i;
@@ -64,7 +74,53 @@ export function parseFlow(text) {
   flow.ask = fm.ask || '';
   // Kept as written when it is not a clear true/false, so checkFlow can say what is wrong.
   flow.askRequired = fm.askRequired === undefined || fm.askRequired === '' ? false : readBool(fm.askRequired);
+  flow.assets = typeof fm.assets === 'string' ? fm.assets : '';
   return flow;
+}
+
+// The attached assets in a flow's `assets` text: { list: [{ ref, pin }], error }. "SHARED:x" is
+// spelled shared:x; a project ref keeps its spelling until checkFlow matches it to the flow's
+// project. A malformed item, a ref listed twice, or more than LIMITS.assets is an error.
+export function parseFlowAssets(text) {
+  const items = String(text ?? '').split(',').map(s => s.trim()).filter(Boolean);
+  const list = [];
+  const seen = new Set();
+  for (const raw of items) {
+    const m = ASSET_ITEM_RE.exec(raw);
+    if (!m || m[2].length > ASSET_ID_MAX) {
+      return { list, error: `"${raw.slice(0, 80)}" is not an asset: use shared:<id> or <project>:<id>, with @<version> to pin a version` };
+    }
+    const left = m[1].trim();
+    const ref = `${left.toLowerCase() === 'shared' ? 'shared' : left}:${m[2]}`;
+    if (seen.has(ref.toLowerCase())) return { list, error: `${ref} is attached twice` };
+    seen.add(ref.toLowerCase());
+    list.push({ ref, pin: m[3] ? Number(m[3]) : null });
+  }
+  if (list.length > LIMITS.assets) return { list: list.slice(0, LIMITS.assets), error: `a flow can attach at most ${LIMITS.assets} assets; it has ${list.length}` };
+  return { list, error: '' };
+}
+
+// The `assets` text of a list: "shared:style-guide, game-dev:palette@2".
+export const formatFlowAssets = list => (Array.isArray(list) ? list : []).map(a => (a.pin ? `${a.ref}@${a.pin}` : a.ref)).join(', ');
+
+// Checks a cleaned flow's attached assets against its target: a hub flow and a flow for any
+// project attach shared assets only, a project or agent flow shared assets and its project's own
+// (spelled as its project folder is). Returns { error, text } with the text in its saved form.
+function checkFlowAssets(flow, raw) {
+  const { list, error } = parseFlowAssets(raw);
+  if (error) return { error, text: '' };
+  const own = flow.target !== 'hub' && !isAnyProject(flow) ? flow.project : '';
+  for (const a of list) {
+    const left = a.ref.slice(0, a.ref.indexOf(':'));
+    if (left === 'shared') continue;
+    if (own && left.toLowerCase() === own.toLowerCase()) {
+      a.ref = `${own}${a.ref.slice(left.length)}`;
+      continue;
+    }
+    const where = flow.target === 'hub' ? 'a hub flow' : own ? `a flow for ${own}` : 'a flow for any project';
+    return { error: `${a.ref} belongs to projects/${left}; ${where} can attach ${own ? `shared assets and ${own}'s own` : 'shared assets only'}`, text: '' };
+  }
+  return { error: '', text: formatFlowAssets(list) };
 }
 
 // true/false from frontmatter text or a form value; anything else comes back unchanged.
@@ -83,6 +139,7 @@ export function renderFlow(f) {
   for (const k of LAUNCH_KEYS) if (f[k]) lines.push(`${k}: ${JSON.stringify(f[k])}`);
   if (f.ask) lines.push(`ask: ${JSON.stringify(f.ask)}`);
   if (f.ask && f.askRequired === true) lines.push('askRequired: true');
+  if (f.assets) lines.push(`assets: ${JSON.stringify(f.assets)}`);
   lines.push('---', '', f.prompt.trim(), '');
   return lines.join('\n');
 }
@@ -93,12 +150,23 @@ export function flowLaunch(flow) {
 }
 
 // Checks a flow's fields. Returns { error, flow }: `flow` is cleaned up (trimmed, the project's
-// real spelling or ANY_PROJECT, no project/agent where the target doesn't use them).
+// real spelling or ANY_PROJECT, no project/agent where the target doesn't use them, the attached
+// assets in their saved form, checked against the target).
 export function checkFlow(root, input) {
+  const r = checkFlowFields(root, input);
+  if (r.error) return r;
+  const assets = checkFlowAssets(r.flow, input.assets);
+  if (assets.error) return { error: assets.error, flow: r.flow };
+  r.flow.assets = assets.text;
+  return r;
+}
+
+// Everything checkFlow checks except the attached assets, which depend on the target.
+function checkFlowFields(root, input) {
   const s = k => String(input[k] ?? '').trim();
   const flow = {
     title: s('title').replace(/\s+/g, ' '), description: s('description').replace(/\s+/g, ' '),
-    target: s('target'), project: '', agent: '', prompt: String(input.prompt ?? '').replace(/\r\n/g, '\n').trim(),
+    target: s('target'), project: '', agent: '', prompt: String(input.prompt ?? '').replace(/\r\n/g, '\n').trim(), assets: '',
   };
   const bad = error => ({ error, flow });
   if (!flow.title) return bad('a title is required');
@@ -244,16 +312,21 @@ export function setCaption(root, slug, image, caption) {
 
 // The prompt a run starts with. Images come first, labeled, because Anthropic's vision guidance
 // puts images before the question and labels several as "Image 1:", "Image 2:"; the flow's
-// prompt can refer to them by those labels. Then the prompt, then the run's notes: under the
-// flow's question when it has one ("What do you want to refactor?\n<notes>"), otherwise under
+// prompt can refer to them by those labels. Then the attached assets, one line each as the
+// workspace app describes them ("Asset 1: <title> (<ref> v<n>, <kind>) at <path>",
+// attached-assets.mjs assetLine), then the prompt, then the run's notes: under the flow's
+// question when it has one ("What do you want to refactor?\n<notes>"), otherwise under
 // "Notes for this run:".
-export function runPrompt(flow, images, notes = '', captions = {}) {
+export function runPrompt(flow, images, notes = '', captions = {}, assetLines = []) {
   const parts = [];
   if (images.length) {
     parts.push(['Reference images for this task. Read each one before you start:', ...images.map((p, i) => {
       const c = typeof captions[basename(p)] === 'string' ? captions[basename(p)].trim() : '';
       return `- Image ${i + 1}: ${p}${c ? `\n  What it shows: ${c}` : ''}`;
     })].join('\n'));
+  }
+  if (assetLines.length) {
+    parts.push(["Assets for this task, from the workspace app's asset library. Read each one before you start:", ...assetLines.map(l => `- ${l}`)].join('\n'));
   }
   parts.push(flow.prompt.trim());
   const n = String(notes || '').trim();

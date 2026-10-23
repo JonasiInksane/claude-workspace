@@ -9,6 +9,12 @@
 //   gate card   while the run waits for you (parts/gatecards.js)
 //   result      Explain's answer, a debug run's diagnosis, Check my work's checks table
 //   grid        the stage list and the timeline (parts/timeline.js), with Replay when finished
+//   inputs      the run's input manifest (runs/manifest.mjs, plan row A6): stage prompts with
+//               short hashes, the profile hash, the project settings version (a link to the
+//               project's Settings tab), the attached assets (each a link to its version in the
+//               library), models per stage, Node and Claude Code, the hub commit and whether
+//               pipelines/app was clean, and Copy manifest (JSON). A run from before manifests
+//               says so instead.
 //
 // Data: GET /api/run?id&since, pulled every 2 s while the view is open (store.livePoll: every
 // 10 s while the live stream is up, and at once on a signal for this run). Only new timeline rows
@@ -174,6 +180,112 @@ export function allGreen(run) {
   return !!g && ['green', 'pass'].includes(g.result) && !asList(run.allowances).length;
 }
 
+// ---------------------------------------------------------------- the input manifest (tested)
+
+const short = (hex, n = 8) => String(hex || '').slice(0, n);
+const stageLabel = (run, id) => (asList(run && run.stages).find(s => s.id === id) || {}).label || id;
+
+// The stage prompts of a manifest: { stage, label, file, sha, changed }, where `changed` says an
+// attempt of that stage ran with another version of its template (the run used it as it was then).
+export function promptRows(run) {
+  const m = (run && run.manifest) || {};
+  return asList(m.stagePrompts).map(p => {
+    const st = asList(run.stages).find(s => s.id === p.stage) || {};
+    const changed = asList(st.attempts).some(a => a && a.templateChanged);
+    return { stage: p.stage, label: stageLabel(run, p.stage), file: String(p.file || ''), sha: short(p.sha256), changed };
+  });
+}
+
+// The attached assets of a manifest: { title, ref, version, pin, kind, sha, archived, href }, where
+// href opens that exact version from the library (/library-file).
+export function assetRows(run) {
+  const m = (run && run.manifest) || {};
+  return asList(m.assets).map(a => ({
+    title: String(a.title || a.ref), ref: String(a.ref), version: a.version, pin: a.pin ?? null, kind: String(a.kind || ''), sha: short(a.sha256),
+    archived: !!a.archived, href: `/library-file?${qs({ ref: a.ref, v: a.version })}`,
+  }));
+}
+
+// "Read and answer: sonnet/high · Review: opus/xhigh" ('' without models).
+export function modelText(run) {
+  const m = (run && run.manifest) || {};
+  const models = m.models || {};
+  const efforts = m.efforts || {};
+  return Object.keys(models).map(id => `${stageLabel(run, id)}: ${models[id]}${efforts[id] ? `/${efforts[id]}` : ''}`).join(' · ');
+}
+
+// "Node 24.11.1 · Claude Code 2.1.309": the manifest's versions; a Claude Code version the start
+// didn't know yet comes from the first Claude stage (run.versions), and says so.
+export function versionsText(run) {
+  const v = ((run && run.manifest) || {}).versions || {};
+  const later = run && run.versions && run.versions.claudeCode;
+  const cc = v.claudeCode ? `Claude Code ${v.claudeCode}` : later ? `Claude Code ${later} (reported by the first Claude stage)` : 'Claude Code not known yet (the first Claude stage reports it)';
+  return `Node ${v.node || '?'} · ${cc}`;
+}
+
+// The hub's commit and whether pipelines/app was clean when the run started.
+export function hubText(run) {
+  const hub = ((run && run.manifest) || {}).hub || {};
+  if (!hub.commit) return 'not a git checkout (no commit recorded)';
+  const clean = hub.pipelinesClean === true ? 'pipelines/app had no local changes'
+    : hub.pipelinesClean === false ? 'pipelines/app had local changes' : 'whether pipelines/app had local changes is not known';
+  return `commit ${short(hub.commit, 7)} · ${clean}`;
+}
+
+// Whether the manifest still has the hash it was created with (GET /api/run's manifestOk):
+// { text, bad }, text '' when the page wasn't told.
+export function manifestCheck(run) {
+  if (!run || !run.manifest || typeof run.manifestOk !== 'boolean') return { text: '', bad: false };
+  return run.manifestOk ? { text: 'matches its hash', bad: false } : { text: 'does not match its hash: run.json was changed by hand', bad: true };
+}
+
+// Copies the manifest as JSON (lib.js copy() would show all of it in the toast).
+function copyManifest(manifest) {
+  navigator.clipboard.writeText(`${JSON.stringify(manifest, null, 2)}\n`)
+    .then(() => toast('Copied the input manifest (JSON).'), () => toast('Could not copy to the clipboard', true));
+}
+
+const fact = (label, ...value) => [h('dt', {}, label), h('dd', {}, ...value)];
+// A list row whose parts are separated by spaces, so a screen reader doesn't run them together
+// (the flex gap only separates them on screen).
+const spaced = (...parts) => h('li', {}, parts.filter(Boolean).flatMap((p, i) => (i ? [' ', p] : [p])));
+
+// The Inputs card of a run (exported for the tests).
+export function inputsCard(run) {
+  const head = h('div', { class: 'card-head' }, h('h3', { id: 'run-inputs-h' }, 'Inputs'));
+  const card = h('section', { class: 'card run-inputs-card', 'aria-labelledby': 'run-inputs-h' }, head);
+  const m = run && run.manifest;
+  if (!m) {
+    card.append(h('div', { class: 'card-body' }, h('p', { class: 'muted' },
+      'This run started before the app recorded the inputs of a run (its stage prompts, settings, assets and models), so there is no input manifest to show.')));
+    return card;
+  }
+  head.append(' ', h('span', { class: 'muted small' }, 'recorded when the run started'), ' ',
+    keyed(h('button', { class: 'btn small', type: 'button', 'aria-label': 'Copy the input manifest as JSON', on: { click: () => copyManifest(m) } }, 'Copy manifest'), 'in-copy'));
+  const prompts = promptRows(run);
+  const assets = assetRows(run);
+  const ps = m.projectSettings;
+  const check = manifestCheck(run);
+  card.append(h('div', { class: 'card-body' }, h('dl', { class: 'facts run-inputs' },
+    fact('Stage prompts', prompts.length ? h('ul', { class: 'inputs-list' }, prompts.map(p => spaced(
+      h('span', {}, p.label), h('code', {}, p.file), h('code', { class: 'muted', title: `SHA-256 ${p.sha}…` }, p.sha),
+      p.changed ? h('span', { class: 'badge amber' }, 'changed during the run') : null))) : h('span', { class: 'muted' }, 'none (no Claude stage)')),
+    fact('Profile', m.profile && m.profile.sha256 ? h('code', {}, short(m.profile.sha256)) : h('span', { class: 'muted' }, 'none')),
+    fact('Project settings', ps
+      ? [h('a', { class: 'link', href: `#project/${encodeURIComponent(run.project)}/settings` }, `v${ps.version}`), ' ', h('code', { class: 'muted' }, short(ps.sha256))]
+      : h('span', { class: 'muted' }, 'none saved for this project')),
+    fact('Attached assets', assets.length ? h('ul', { class: 'inputs-list' }, assets.map(a => spaced(
+      h('a', { class: 'link', href: a.href, target: '_blank', rel: 'noopener' }, a.title),
+      h('code', {}, `${a.ref} v${a.version}`), h('span', { class: 'muted' }, `${a.pin ? 'pinned' : 'latest at the start'} · ${a.kind}`),
+      h('code', { class: 'muted' }, a.sha), a.archived ? h('span', { class: 'badge' }, 'archived') : null))) : h('span', { class: 'muted' }, 'none')),
+    fact('Models', modelText(run) || h('span', { class: 'muted' }, 'none (no Claude stage)')),
+    fact('Versions', versionsText(run)),
+    fact('Hub', hubText(run)),
+    fact('Manifest', h('code', {}, short(run.manifestSha256)), check.text ? ' ' : '',
+      check.bad ? h('span', { class: 'badge red' }, check.text) : check.text ? h('span', { class: 'muted' }, check.text) : null))));
+  return card;
+}
+
 // The header's facts: branch, base, where it runs, how careful and why.
 export function metaParts(run) {
   if (!run) return [];
@@ -285,6 +397,7 @@ function mount(section) {
     state: h('div', { class: 'run-state' }),
     gate: h('div', { class: 'run-gate' }),
     result: h('div', { class: 'run-result' }),
+    inputs: h('div', { class: 'run-inputs-box' }),
     stages: h('div', { class: 'run-stages' }),
     est: h('b', { class: 'est-value', title: 'Computed from total_cost_usd. On a subscription this is only an API-price estimate; your usage limit is what counts.' }),
   };
@@ -298,7 +411,8 @@ function mount(section) {
     el.warnings, el.meters, el.state, el.gate, el.result,
     h('div', { class: 'run-grid' },
       h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Stages'), h('span', { class: 'muted small' }, 'Claude · code · you')), el.stages),
-      timeline.el));
+      timeline.el),
+    el.inputs);
   root.addEventListener('keydown', onKey);
   section.replaceChildren(root);
 }
@@ -341,7 +455,17 @@ function paint() {
   paintGate(run);
   paintResult(run);
   paintStages(run);
+  paintInputs(run);
   timeline.setReplayable(!!run && TERMINAL.includes(run.status));
+}
+
+// The Inputs card: rebuilt only when what it shows changed (the manifest is frozen, so mostly
+// once), keeping the focus on Copy manifest.
+function paintInputs(run) {
+  const data = run ? [run.id, run.project, run.manifest || null, run.manifestSha256 || '', run.manifestOk ?? null, (run.versions || {}).claudeCode || '',
+    asList(run.stages).map(s => [s.id, s.label, asList(s.attempts).some(a => a && a.templateChanged)])] : null;
+  if (!changed('inputs', data)) return;
+  keepFocus(el.inputs, () => el.inputs.replaceChildren(...(run ? [inputsCard(run)] : [])));
 }
 
 function paintHead(run) {

@@ -14,6 +14,7 @@ import { createApp } from '../app.mjs';
 import { HttpError } from '../http.mjs';
 import { routes, RUN_FILES, runView, splitDiff, TEXT_MAX } from './runs.mjs';
 import { ACTIONS } from '../runs/actions.mjs';
+import { manifestHash } from '../runs/manifest.mjs';
 import { installRunFixtures } from '../test/fixtures/runs/install.mjs';
 import { removeTree, tempDir } from '../test/helpers.mjs';
 
@@ -98,6 +99,10 @@ test('GET /api/pipelines: the launcher list with the intent rules; a project wit
   const other = await ok('GET', '/api/pipelines?project=other');
   assert.ok(other.pipelines.every(p => /no profile yet/.test(p.disabledReason)));
   for (const bad of ['../x', 'Example', 'a_b']) assert.equal((await get(`/api/pipelines?project=${encodeURIComponent(bad)}`)).status, 400, bad);
+  // A profile with problems points at the project page's Settings tab, which lists them.
+  writeFileSync(join(dataDir, 'profiles', 'broken.json'), '{ "version": 1 }');
+  const broken = await ok('GET', '/api/pipelines?project=broken');
+  assert.match(broken.pipelines.find(p => p.id === 'explain').disabledReason, /^The profile for broken has \d+ problems?; fix (it|them) first \(the project's Settings tab lists (it|them)\)\.$/);
 });
 
 // ---------------------------------------------------------------- the runs list
@@ -154,6 +159,19 @@ test('runView: the stage list follows the pipeline; secrets are redacted', () =>
   assert.ok(!v.statusReason.includes(key));
   assert.equal(v.owner, undefined);
   assert.deepEqual([v.stages[0].label, v.durationMs, v.actions.length], ['Read and answer', 5000, 1]);
+  assert.equal(v.manifestOk, null, 'a run without a manifest');
+});
+
+test('runView: the input manifest comes along, with manifestOk saying whether it still has its hash', async () => {
+  const manifest = { version: 1, stagePrompts: [], profile: { sha256: null }, projectSettings: null, assets: [], models: { answer: 'sonnet' }, efforts: {},
+    versions: { node: '24.11.1', claudeCode: null }, hub: { commit: '', pipelinesClean: null } };
+  const run = { id: 'r', project: 'example', pipeline: 'explain', status: 'passed', stages: [], manifest, manifestSha256: manifestHash(manifest) };
+  const v = runView(run);
+  assert.deepEqual([v.manifest, v.manifestSha256, v.manifestOk], [manifest, manifestHash(manifest), true]);
+  assert.equal(runView({ ...run, manifest: { ...manifest, models: { answer: 'haiku' } } }).manifestOk, false, 'run.json edited by hand');
+  // An old run from the fixtures has none.
+  const old = await ok('GET', `/api/run?id=${PASSED}`);
+  assert.deepEqual([old.run.manifest, old.run.manifestOk], [undefined, null]);
 });
 
 // ---------------------------------------------------------------- review data, diff, files

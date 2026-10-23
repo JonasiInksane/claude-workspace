@@ -800,7 +800,7 @@ export function summaryText(s, gateDir) {
     lines.push('New failures:');
     for (const id of s.tests.new.slice(0, 30)) lines.push(`  ${id}`);
   }
-  if (s.candidate?.written) lines.push(`A baseline candidate was written (${s.candidate.from} -> ${s.candidate.to} known); accept it in the cockpit.`);
+  if (s.candidate?.written) lines.push(`A baseline candidate was written (${s.candidate.from} -> ${s.candidate.to} known); accept it on the project's Checks tab.`);
   if (gateDir) lines.push(`Logs: ${gateDir}`);
   return `${redact(lines.join('\n'))}\n`;
 }
@@ -826,7 +826,7 @@ export async function cliMain(argv, deps = {}) {
   try {
     const dataDir = args.dataDir ? resolve(args.dataDir) : defaultDataDir(deps.env || process.env);
     const loaded = await loadProfile(dataDir, args.project);
-    if (!loaded?.exists) return { code: 1, text: `check: there is no profile for ${args.project} in ${join(dataDir, 'profiles')}. Create one from the example in the cockpit.\n` };
+    if (!loaded?.exists) return { code: 1, text: `check: there is no profile for ${args.project} in ${join(dataDir, 'profiles')}. Create one from the example on the project's Settings tab.\n` };
     if (!loaded.profile || loaded.errors?.length) return { code: 1, text: `check: the profile for ${args.project} has errors:\n${(loaded.errors || []).map(e => `- ${e}`).join('\n')}\n` };
     const profile = loaded.profile;
     if (!profile.levels?.[args.level]) return { code: 1, text: `check: unknown level "${args.level}". Levels: ${Object.keys(profile.levels || {}).join(', ')}.\n` };

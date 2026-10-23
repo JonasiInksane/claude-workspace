@@ -7,7 +7,7 @@
 // Sessions: every interactive Claude session the app starts gets its own id (--session-id, a new
 // UUID) unless it resumes one (--resume <id>), and a line in <dataDir>\sessions.jsonl:
 //   {"at":"…","sessionId":"<uuid>","kind":"hub|project|agent|flow|skill|takeover","project":"…","title":"…",
-//    "projectSettings":{"version":3,"sha256":"…"}}
+//    "projectSettings":{"version":3,"sha256":"…"},"assets":[{"ref":"shared:style-guide","version":2,"sha256":"…"}]}
 // so the app can find a session again (Take over, Continue). -c (continue the last session) has
 // no id of its own and adds no line.
 //
@@ -22,6 +22,15 @@
 // Hub sessions and takeovers (a run's stage, which has the rules of its run's version) get none
 // and record none. A continued or resumed session keeps the system prompt it started with until
 // it is compacted (Claude Code's --system-prompt-snapshot, on by default in 2.1.309).
+//
+// Attached assets (attached-assets.mjs): a session in a project also gets the assets its settings
+// attach, resolved to exact versions and checked (an asset, version or file that is gone, or a
+// file that no longer matches its recorded SHA-256, stops the start). Their list follows the
+// rules in --append-system-prompt, and the session may read their folders without asking
+// (readDirs). A flow builds its own prompt and lists its assets there (routes/flows.mjs): it
+// passes the resolved `assets`, and the `settings` it resolved them with, and gets their folders
+// but no second list. Its line records `assets` ([{ ref, version, sha256 }]) like every session
+// in a project; hub sessions and takeovers record none.
 import { existsSync, lstatSync, statSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -30,6 +39,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { resolveClaude } from '../lib/agents.mjs';
 import { checkLaunch, launchArgs, writePromptFile } from '../lib/prompt-file.mjs';
+import { assetDirs, assetProblems, assetRecords, resolveAssets, verifyFiles } from './attached-assets.mjs';
 import { appendJsonl, defaultDataDir, PROJECT_RE } from './core/datadir.mjs';
 import { currentSettings, launchWithSettings, settingsRef } from './project-settings.mjs';
 
@@ -78,9 +88,13 @@ export const sessionsFile = dataDir => join(dataDir, 'sessions.jsonl');
 // Appends one line to sessions.jsonl (core/datadir.mjs appendJsonl: the folder is made on first
 // use, and a torn last line can't swallow this one). Best effort: a session that started stays
 // started even when the line can't be written. `projectSettings` ({ version, sha256 } or null)
-// goes in only when given: sessions in a project have it, hub sessions and takeovers don't.
-export async function recordSession(dataDir, { sessionId, kind, project = '', title = '', projectSettings }, now = new Date()) {
-  const line = { at: now.toISOString(), sessionId, kind, project, title, ...(projectSettings !== undefined ? { projectSettings } : {}) };
+// and `assets` ([{ ref, version, sha256 }]) go in only when given: sessions in a project have
+// them (a flow its assets also in the hub), other hub sessions and takeovers don't.
+export async function recordSession(dataDir, { sessionId, kind, project = '', title = '', projectSettings, assets }, now = new Date()) {
+  const line = {
+    at: now.toISOString(), sessionId, kind, project, title,
+    ...(projectSettings !== undefined ? { projectSettings } : {}), ...(assets !== undefined ? { assets } : {}),
+  };
   try {
     await appendJsonl(sessionsFile(dataDir), line);
   } catch (e) {
@@ -102,13 +116,54 @@ export function sessionLaunch({ launch = {}, resume, sessionId, continueLast = f
 }
 
 // A checked launch with a project's settings applied (project-settings.mjs launchWithSettings),
-// checked again: the tools together may be too many, the rules too long. Throws with a plain
-// message; without settings the launch comes back as it is.
-export function withProjectSettings(launch, settings) {
-  if (!settings) return launch;
-  const checked = checkLaunch(launchWithSettings(launch, settings));
+// and the list of `assets` after the rules, checked again: the tools together may be too many,
+// the rules too long. Throws with a plain message; without settings or assets the launch comes
+// back as it is.
+export function withProjectSettings(launch, settings, assets = []) {
+  if (!settings && !assets.length) return launch;
+  const checked = checkLaunch(launchWithSettings(launch, settings, assets));
   if (checked.error) throw new Error(`launch: ${checked.error}`);
   return checked.launch;
+}
+
+// The project's current settings for a session of this kind (project-settings.mjs), or undefined
+// where they don't apply: the hub, and a takeover, which continues a run's stage that already has
+// the rules of its run's version. null when the project has none, or has a folder name the data
+// folder keeps no settings for. Settings that can't be read stop the start. routes/flows.mjs reads
+// them through this too, before it builds a flow's prompt.
+export async function sessionSettings(dataDir, kind, project) {
+  if (!project || kind === 'hub' || kind === 'takeover') return undefined;
+  if (!PROJECT_RE.test(project)) return null;
+  try { return await currentSettings(dataDir, project); } catch (e) {
+    throw new Error(`the settings of ${project} could not be read, so nothing was started: ${e.message}`);
+  }
+}
+
+// The assets a project's settings attach, resolved and checked for a session ([] without any):
+// an asset, version or file that is gone, or a file whose bytes no longer match the SHA-256 the
+// library recorded, stops the start with a plain message.
+export async function sessionAssets(root, project, settings) {
+  const attachments = (settings && Array.isArray(settings.assets)) ? settings.assets : [];
+  if (!attachments.length) return [];
+  let items;
+  try { items = await resolveAssets(root, project, attachments); } catch (e) {
+    throw new Error(`the assets attached to ${project} can't be resolved, so nothing was started: ${e.message}`);
+  }
+  const problems = assetProblems(items);
+  if (!problems.length) problems.push(...await verifyFiles(items));
+  if (problems.length) throw new Error(`the assets attached to ${project} can't be used, so nothing was started: ${problems.join('; ')}`);
+  return items;
+}
+
+// Folder lists joined, each folder once (Windows paths ignore case).
+function joinDirs(...lists) {
+  const seen = new Set();
+  return lists.flat().filter(d => {
+    const k = process.platform === 'win32' ? String(d).toLowerCase() : String(d);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 
 // True when a Claude session can't start with its flags straight on claude's command line, so
@@ -229,16 +284,20 @@ export function realActions({ root, tools = findTools(), windowStyle, dataDir = 
     if (!SESSION_KINDS.includes(k)) throw new Error(`unknown session kind "${k}"`);
     return k;
   };
-  // The project's current settings for a session of this kind (project-settings.mjs), or
-  // undefined where they don't apply: the hub, and a takeover, which continues a run's stage that
-  // already has the rules of its run's version. null when the project has none, or has a folder
-  // name the data folder keeps no settings for. Settings that can't be read stop the start.
-  const settingsFor = async (kind, project) => {
+  // The settings a session of this kind gets (sessionSettings): the ones the caller already read
+  // (`given`, a flow that listed its project's assets from them), or the current ones.
+  const settingsFor = async (kind, project, given) => {
     if (!project || kind === 'hub' || kind === 'takeover') return undefined;
-    if (!PROJECT_RE.test(project)) return null;
-    try { return await currentSettings(dataDir, project); } catch (e) {
-      throw new Error(`the settings of ${project} could not be read, so nothing was started: ${e.message}`);
-    }
+    return given !== undefined ? given : sessionSettings(dataDir, kind, project);
+  };
+  // The assets a session gets: the caller's (a flow lists them in its own prompt) or its project's
+  // attached assets, which then go into its system prompt. { items, inSystemPrompt, record }:
+  // `record` is what its sessions.jsonl line gets (undefined: nothing, for the hub and takeovers).
+  const assetsFor = async (project, settings, given) => {
+    if (Array.isArray(given)) return { items: given, inSystemPrompt: [], record: assetRecords(given) };
+    if (settings === undefined) return { items: [], inSystemPrompt: [], record: undefined };
+    const items = settings ? await sessionAssets(root, project, settings) : [];
+    return { items, inSystemPrompt: items, record: assetRecords(items) };
   };
   const refOf = settings => (settings === undefined ? undefined : settingsRef(settings));
   return {
@@ -248,10 +307,11 @@ export function realActions({ root, tools = findTools(), windowStyle, dataDir = 
     // --session-id <id>, --settings <file>, --permission-mode <m>, ...). With `prompt`, project
     // rules, pre-approved tools or `readDirs` (folders the session may read without asking),
     // everything goes through a prompt file (needsPromptFile; tools/lib/prompt-file.mjs explains
-    // why). `kind` and `project` are for sessions.jsonl and the project's settings (see the top of
-    // this file); without a kind, a resume counts as a takeover (the only resume the app starts),
-    // so it gets the takeover mode check too.
-    async startClaude({ dir, title, continueLast = false, prompt, readDirs = [], launch = {}, resume, sessionId, kind, project = '' }) {
+    // why). `kind` and `project` are for sessions.jsonl and the project's settings and assets (see
+    // the top of this file); without a kind, a resume counts as a takeover (the only resume the
+    // app starts), so it gets the takeover mode check too. `assets` and `settings`: a flow's
+    // resolved assets, already listed in its prompt, and the settings it resolved them with.
+    async startClaude({ dir, title, continueLast = false, prompt, readDirs = [], launch = {}, resume, sessionId, kind, project = '', assets, settings: given }) {
       if (!tools.claude) throw new Error('Claude Code was not found (PATH or %USERPROFILE%\\.local\\bin).');
       const s = sessionLaunch({ launch, resume, sessionId, continueLast });
       const k = kindOf(kind, s.launch.resume ? 'takeover' : project ? 'project' : 'hub');
@@ -263,13 +323,15 @@ export function realActions({ root, tools = findTools(), windowStyle, dataDir = 
       if (k === 'takeover' && !s.launch.resume && !prompt) {
         throw new Error("a takeover resumes the stage's session, or starts from a prompt that sums the stage up");
       }
-      const settings = await settingsFor(k, project);
-      const l = withProjectSettings(s.launch, settings);
-      const command = needsPromptFile({ prompt, readDirs, launch: l })
-        ? psCommand(dir, node, [join(appDir, 'claude-prompt.mjs'), writePromptFile({ prompt, readDirs, launch: l })])
+      const settings = await settingsFor(k, project, given);
+      const a = await assetsFor(project, settings, assets);
+      const l = withProjectSettings(s.launch, settings, a.inSystemPrompt);
+      const dirs = joinDirs(readDirs, assetDirs(a.items));
+      const command = needsPromptFile({ prompt, readDirs: dirs, launch: l })
+        ? psCommand(dir, node, [join(appDir, 'claude-prompt.mjs'), writePromptFile({ prompt, readDirs: dirs, launch: l })])
         : psCommand(dir, tools.claude, launchArgs(l));
       await terminal(dir, title, command);
-      if (s.id) await recordSession(dataDir, { sessionId: s.id, kind: k, project, title, projectSettings: refOf(settings) });
+      if (s.id) await recordSession(dataDir, { sessionId: s.id, kind: k, project, title, projectSettings: refOf(settings), assets: a.record });
       return { sessionId: s.id };
     },
     // Any program in a terminal tab at `dir`, with `env` set for it first (the cockpit's dev
@@ -312,22 +374,24 @@ export function realActions({ root, tools = findTools(), windowStyle, dataDir = 
     // An isolated agent session (tools/agent-session.mjs) with a new session id, or the one it
     // resumes (launch.resume, only with a prompt: agent-session takes launch settings from the
     // prompt file). The launch is checked here, so a bad value is refused before a terminal opens.
-    // The project's settings are applied as in startClaude; agent-session.mjs gets them, and any
-    // other launch setting, through a prompt file (one without a first prompt when there is none).
-    // Resolves with { sessionId }.
-    async startAgent({ project, agent, title, prompt, readDirs = [], launch = {}, sessionId, kind }) {
+    // The project's settings and assets are applied as in startClaude; agent-session.mjs gets them,
+    // and any other launch setting, through a prompt file (one without a first prompt when there
+    // is none). Resolves with { sessionId }.
+    async startAgent({ project, agent, title, prompt, readDirs = [], launch = {}, sessionId, kind, assets, settings: given }) {
       const k = kindOf(kind, 'agent');
       if (!AGENT_KINDS.includes(k)) throw new Error(`an agent session starts as ${AGENT_KINDS.join(' or ')}, not as ${k}; a takeover goes through startClaude`);
       const s = sessionLaunch({ launch, sessionId });
       if (s.launch.resume && !prompt) throw new Error('an agent session resumes only together with a prompt');
       if (s.launch.continueLast) throw new Error("an agent session starts new or resumes one by id; it can't continue the last session");
-      const settings = await settingsFor(k, project);
-      const { sessionId: newId, ...rest } = withProjectSettings(s.launch, settings);
+      const settings = await settingsFor(k, project, given);
+      const a = await assetsFor(project, settings, assets);
+      const { sessionId: newId, ...rest } = withProjectSettings(s.launch, settings, a.inSystemPrompt);
+      const dirs = joinDirs(readDirs, assetDirs(a.items));
       const args = [join(toolsDir, 'agent-session.mjs'), project, agent, '--root', root];
       if (newId) args.push('--session-id', newId);
-      if (prompt || Object.keys(rest).length) args.push('--prompt-file', writePromptFile({ prompt, readDirs, launch: rest }));
+      if (prompt || Object.keys(rest).length) args.push('--prompt-file', writePromptFile({ prompt, readDirs: dirs, launch: rest }));
       await terminal(root, title, psCommand(root, node, args));
-      await recordSession(dataDir, { sessionId: s.id, kind: k, project, title, projectSettings: refOf(settings) });
+      await recordSession(dataDir, { sessionId: s.id, kind: k, project, title, projectSettings: refOf(settings), assets: a.record });
       return { sessionId: s.id };
     },
     openFolder({ dir }) {

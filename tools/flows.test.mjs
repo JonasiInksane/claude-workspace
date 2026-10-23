@@ -9,8 +9,8 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import {
-  ANY_PROJECT, archiveFlow, checkFlow, checkRunNotes, flowFile, flowImages, flowImagesDir, getFlow, isAnyProject, listArchivedFlows,
-  listFlows, parseFlow, readCaptions, renderFlow, restoreFlow, runPrompt, saveFlow, setCaption, skippedFlowImages, slugify,
+  ANY_PROJECT, archiveFlow, checkFlow, checkRunNotes, flowFile, flowImages, flowImagesDir, formatFlowAssets, getFlow, isAnyProject, listArchivedFlows,
+  listFlows, parseFlow, parseFlowAssets, readCaptions, renderFlow, restoreFlow, runPrompt, saveFlow, setCaption, skippedFlowImages, slugify,
 } from './lib/flows.mjs';
 import { checkLaunch, launchArgs, promptArgs, splitToolRules, takePromptFile, writePromptFile } from './lib/prompt-file.mjs';
 
@@ -42,13 +42,13 @@ test('renderFlow and parseFlow round-trip, also with quotes, colons and #', () =
   const f = {
     title: 'A "title": #1', description: 'd: e', target: 'agent', project: 'Game', agent: 'artist', prompt: 'Line 1\n\n---\nLine "2"',
     permissionMode: 'plan', model: 'opus', effort: 'high', allowedTools: 'Read, Bash(npm test:*)',
-    ask: 'What: "this" #2?', askRequired: true,
+    ask: 'What: "this" #2?', askRequired: true, assets: 'shared:style-guide, Game:palette@2',
   };
   assert.deepEqual(parseFlow(renderFlow(f)), f);
-  assert.match(renderFlow(f), /\nask: "What: \\"this\\" #2\?"\naskRequired: true\n---/);
-  const plain = { ...f, target: 'hub', permissionMode: '', model: '', effort: '', allowedTools: '', ask: '', askRequired: false };
+  assert.match(renderFlow(f), /\nask: "What: \\"this\\" #2\?"\naskRequired: true\nassets: "shared:style-guide, Game:palette@2"\n---/);
+  const plain = { ...f, target: 'hub', permissionMode: '', model: '', effort: '', allowedTools: '', ask: '', askRequired: false, assets: '' };
   assert.deepEqual(parseFlow(renderFlow(plain)), { ...plain, project: '', agent: '' });
-  assert.doesNotMatch(renderFlow(plain), /permissionMode|model|effort|allowedTools|ask/);
+  assert.doesNotMatch(renderFlow(plain), /permissionMode|model|effort|allowedTools|ask|assets/);
   // An optional question: no askRequired line.
   const optional = { ...plain, ask: 'Anything else?' };
   assert.doesNotMatch(renderFlow(optional), /askRequired/);
@@ -139,7 +139,7 @@ test('every flow in flows/ reads back to the same text and checks out where its 
 test('a project flow for any project ("*") round-trips, saves and lists while a project exists', t => {
   const root = fixture(t);
   const any = { ...base, target: 'project', project: ANY_PROJECT };
-  const f = { ...any, agent: '', permissionMode: '', model: '', effort: '', allowedTools: '', ask: '', askRequired: false };
+  const f = { ...any, agent: '', permissionMode: '', model: '', effort: '', allowedTools: '', ask: '', askRequired: false, assets: '' };
   // Written as a JSON string: an unquoted * would be a YAML alias.
   assert.match(renderFlow(f), /\ntarget: project\nproject: "\*"\n/);
   assert.deepEqual(parseFlow(renderFlow(f)), f);
@@ -249,6 +249,53 @@ test('runPrompt puts labeled images first, then the prompt, then the notes', () 
     'Reference images for this task. Read each one before you start:\n' +
     `- Image 1: ${a}\n  What it shows: the sketch\n- Image 2: ${b}\n\n` +
     'Compare Image 1 with Image 2.\n\nNotes for this run:\nhero only');
+});
+
+test('runPrompt lists the attached assets after the images and before the prompt', () => {
+  const line = 'Asset 1: Style guide (shared:style-guide v2, text) at C:\\ws\\inbox\\attachments\\_assets\\style-guide\\v2.md';
+  assert.equal(runPrompt({ prompt: 'Use Asset 1.' }, ['C:\\imgs\\a.png'], '', {}, [line]),
+    'Reference images for this task. Read each one before you start:\n- Image 1: C:\\imgs\\a.png\n\n' +
+    `Assets for this task, from the workspace app's asset library. Read each one before you start:\n- ${line}\n\nUse Asset 1.`);
+  assert.equal(runPrompt({ prompt: 'p' }, [], '', {}, []), 'p', 'no assets, no section');
+});
+
+test('parseFlowAssets: refs with an optional @version, each once, at most 20', () => {
+  assert.deepEqual(parseFlowAssets(' shared:style-guide, game-dev:palette@2 ,, SHARED:logo@10 '), { error: '', list: [
+    { ref: 'shared:style-guide', pin: null }, { ref: 'game-dev:palette', pin: 2 }, { ref: 'shared:logo', pin: 10 },
+  ] });
+  assert.deepEqual(parseFlowAssets(''), { error: '', list: [] });
+  assert.deepEqual(parseFlowAssets(undefined), { error: '', list: [] });
+  assert.deepEqual(parseFlowAssets('My Game:palette'), { error: '', list: [{ ref: 'My Game:palette', pin: null }] }, 'a folder name with a space');
+  for (const bad of ['style-guide', 'shared:Style', 'shared:a@0', 'shared:a@v2', 'shared:a@2x', ':x', 'shared:x:y', `shared:${'a'.repeat(61)}`]) {
+    assert.match(parseFlowAssets(bad).error, /is not an asset: use shared:<id> or <project>:<id>, with @<version> to pin a version/, bad);
+  }
+  assert.equal(parseFlowAssets('shared:x, SHARED:x@2').error, 'shared:x is attached twice');
+  const many = Array.from({ length: 21 }, (_, i) => `shared:a${i}`).join(', ');
+  assert.equal(parseFlowAssets(many).error, 'a flow can attach at most 20 assets; it has 21');
+  assert.equal(formatFlowAssets([{ ref: 'shared:a', pin: null }, { ref: 'Game:b', pin: 3 }]), 'shared:a, Game:b@3');
+  assert.equal(formatFlowAssets(null), '');
+});
+
+test('checkFlow: a hub flow and a flow for any project attach shared assets only; a project or agent flow its project\'s own too', t => {
+  const root = fixture(t);
+  put(root, 'projects/Other/CLAUDE.md', '# Other');
+  const project = { ...base, target: 'project', project: 'game' };
+  const ok = checkFlow(root, { ...project, assets: 'shared:style-guide, GAME:palette@2' });
+  assert.equal(ok.error, '');
+  assert.equal(ok.flow.assets, 'shared:style-guide, Game:palette@2', 'saved with the project folder\'s spelling');
+  assert.equal(checkFlow(root, { ...base, target: 'agent', project: 'Game', agent: 'artist', assets: 'Game:palette' }).flow.assets, 'Game:palette');
+  assert.equal(checkFlow(root, { ...base, assets: 'shared:style-guide@1' }).flow.assets, 'shared:style-guide@1');
+  assert.match(checkFlow(root, { ...base, assets: 'Game:palette' }).error, /^Game:palette belongs to projects\/Game; a hub flow can attach shared assets only$/);
+  assert.match(checkFlow(root, { ...project, project: ANY_PROJECT, assets: 'Game:palette' }).error, /a flow for any project can attach shared assets only/);
+  assert.match(checkFlow(root, { ...project, assets: 'Other:map' }).error, /^Other:map belongs to projects\/Other; a flow for Game can attach shared assets and Game's own$/);
+  assert.match(checkFlow(root, { ...project, assets: 'nope' }).error, /is not an asset/);
+  // Saved, read back and listed; a hand-edited file with a bad ref lists with its error.
+  const saved = saveFlow(root, { ...project, title: 'With assets', assets: 'shared:style-guide, game:palette@2' });
+  assert.equal(saved.error, '');
+  assert.equal(getFlow(root, saved.slug).assets, 'shared:style-guide, Game:palette@2');
+  assert.match(readFileSync(flowFile(root, saved.slug), 'utf8'), /\nassets: "shared:style-guide, Game:palette@2"\n---/);
+  put(root, 'flows/hand.md', '---\ntitle: "Hand"\ntarget: hub\nassets: "Game:palette"\n---\n\nGo.\n');
+  assert.match(listFlows(root).find(f => f.slug === 'hand').error, /a hub flow can attach shared assets only/);
 });
 
 test('captions are kept per image name and only for images the flow passes', t => {

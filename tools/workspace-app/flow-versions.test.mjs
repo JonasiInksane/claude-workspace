@@ -114,17 +114,20 @@ test('recordFlowRun appends one line per launch; readFlowRuns gives one flow\'s 
   assert.equal(flowRunsFile(dataDir), join(dataDir, FLOW_RUNS_FILE));
   assert.deepEqual(await readFlowRuns(dataDir, 'review'), []);
   const version = { sha256: sha('x'), hubCommit: 'a'.repeat(40), committed: true, images: [], captions: '' };
-  await recordFlowRun(dataDir, { flow: 'review', version, target: 'project', project: 'example', sessionId: 'id-1' }, new Date('2026-10-23T10:00:00Z'));
+  const assets = [{ ref: 'shared:style-guide', version: 2, sha256: sha('s'), path: 'C:\\not\\recorded', title: 'not recorded' }];
+  await recordFlowRun(dataDir, { flow: 'review', version, target: 'project', project: 'example', sessionId: 'id-1', assets }, new Date('2026-10-23T10:00:00Z'));
   await recordFlowRun(dataDir, { flow: 'other', version, target: 'hub' }, new Date('2026-10-23T10:01:00Z'));
   await recordFlowRun(dataDir, { flow: 'review', version, target: 'project', project: 'notes', sessionId: 'id-2' }, new Date('2026-10-23T10:02:00Z'));
   const lines = readFileSync(flowRunsFile(dataDir), 'utf8').trim().split('\n').map(l => JSON.parse(l));
   assert.deepEqual(lines[0], {
     at: '2026-10-23T10:00:00.000Z', flow: 'review', version, target: 'project', project: 'example', agent: '', sessionId: 'id-1',
-  });
-  assert.deepEqual(lines[1], { at: '2026-10-23T10:01:00.000Z', flow: 'other', version, target: 'hub', project: '', agent: '', sessionId: '' });
+    assets: [{ ref: 'shared:style-guide', version: 2, sha256: sha('s') }],
+  }, 'each asset with its ref, version and hash only');
+  assert.deepEqual(lines[1], { at: '2026-10-23T10:01:00.000Z', flow: 'other', version, target: 'hub', project: '', agent: '', sessionId: '', assets: [] });
   const runs = await readFlowRuns(dataDir, 'review');
-  assert.deepEqual(runs.map(r => [r.project, r.sessionId]), [['notes', 'id-2'], ['example', 'id-1']]);
+  assert.deepEqual(runs.map(r => [r.project, r.sessionId, r.assets.length]), [['notes', 'id-2', 0], ['example', 'id-1', 1]]);
   assert.deepEqual(runs[0].version, version);
+  assert.deepEqual(runs[1].assets, [{ ref: 'shared:style-guide', version: 2, sha256: sha('s') }]);
 });
 
 test('readFlowRuns keeps the newest 20, skips broken lines and cleans odd values', async t => {
@@ -141,6 +144,7 @@ test('readFlowRuns keeps the newest 20, skips broken lines and cleans odd values
   appendFileSync(flowRunsFile(dataDir), `${JSON.stringify({
     at: 5, flow: 'review', target: 'project', project: { x: 1 }, sessionId: 'odd',
     version: { sha256: sha('w'), hubCommit: '--evil', committed: 'yes', images: [{ file: 'a.png', sha256: 'nope' }, { file: 'b.png', sha256: sha('b') }, null], captions: 7 },
+    assets: [{ ref: 'shared:a', version: 1, sha256: sha('a') }, { ref: 'shared:b', version: '2', sha256: sha('b') }, { ref: '', version: 1, sha256: sha('c') }, null, 'x'],
   })}\n`);
   appendFileSync(flowRunsFile(dataDir), `${JSON.stringify({ flow: 'review', target: 'hub', version: { sha256: 'short' }, sessionId: 'no-version' })}\n`);
   // A time that is no timestamp, and "committed" without a commit to be committed in.
@@ -150,10 +154,11 @@ test('readFlowRuns keeps the newest 20, skips broken lines and cleans odd values
   })}\n`);
   const [noCommit, last, odd, newest] = await readFlowRuns(dataDir, 'review');
   assert.deepEqual([noCommit.at, noCommit.version.hubCommit, noCommit.version.committed], ['', '', false]);
-  assert.deepEqual(last, { at: '', flow: 'review', version: null, target: 'hub', project: '', agent: '', sessionId: 'no-version' });
+  assert.deepEqual(last, { at: '', flow: 'review', version: null, target: 'hub', project: '', agent: '', sessionId: 'no-version', assets: [] });
   assert.deepEqual(odd, {
     at: '', flow: 'review', target: 'project', project: '', agent: '', sessionId: 'odd',
     version: { sha256: sha('w'), hubCommit: '', committed: false, images: [{ file: 'b.png', sha256: sha('b') }], captions: '' },
+    assets: [{ ref: 'shared:a', version: 1, sha256: sha('a') }],
   });
   // A real launch time stays as written.
   assert.equal(newest.sessionId, 's24');

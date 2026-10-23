@@ -6,7 +6,9 @@
 //                                  disabledReason) and the intent box's routing rules
 //   POST /api/runs                 { project, pipeline, values, preview } -> preview or { runId }
 //   GET  /api/runs                 the runs index (latest line per run) with durationMs
-//   GET  /api/run?id&since         the run (secrets redacted, with its buttons) and timeline rows
+//   GET  /api/run?id&since         the run (secrets redacted, with its buttons, its input manifest
+//                                  and manifestOk: whether the manifest still has its hash) and
+//                                  timeline rows
 //   GET  /api/run-review?id        verdict, findings, notProven, proof, checks summary, files
 //   GET  /api/run-diff?id&file     one file's part of the run's diff
 //   GET  /api/run-file?id&name     a run file by name from a fixed list, or a gate check's log
@@ -26,6 +28,7 @@ import { loadProfile, riskTags } from '../profile/profile.mjs';
 import { loadFindings } from '../findings/store.mjs';
 import { redact, redactDeep } from '../gates/secrets.mjs';
 import * as store from '../runs/store.mjs';
+import { manifestHash } from '../runs/manifest.mjs';
 import { pipelineById, pipelinesForUi } from '../runs/catalog.mjs';
 import { routesForUi } from '../runs/intent.mjs';
 import { ACTIONS } from '../runs/actions.mjs';
@@ -174,10 +177,13 @@ const durationOf = (createdAt, endedAt, now = Date.now()) => {
 };
 
 // The run without the app's internals (owner process, input hashes), secrets redacted, each stage
-// with its label, who and goal from the pipeline, plus the buttons (allowedActions).
+// with its label, who and goal from the pipeline, plus the buttons (allowedActions). Its input
+// manifest (runs/manifest.mjs) comes along as it is, with manifestOk: true while it still has the
+// hash it was created with, false when run.json was edited by hand, null for a run without one.
 export function runView(run, actions = [], def = pipelineById(run.pipeline)) {
   const { owner, inputsHashes, ...rest } = run || {};
   const view = redactDeep(rest);
+  view.manifestOk = run && run.manifest ? manifestHash(run.manifest) === run.manifestSha256 : null;
   const stageDefs = (def && def.stages) || [];
   view.stages = asList(view.stages).map((s, i) => {
     const sd = stageDefs[i] && stageDefs[i].id === s.id ? stageDefs[i] : stageDefs.find(x => x.id === s.id) || {};
@@ -201,7 +207,8 @@ async function profileOf(dataDir, project) {
     if (!r.exists) return { profile: null, problem: '' };
     if (!r.valid) {
       const n = r.errors.length;
-      return { profile: null, problem: `The profile for ${project} has ${n} problem${n === 1 ? '' : 's'}; fix ${n === 1 ? 'it' : 'them'} in the cockpit setup first.` };
+      const them = n === 1 ? 'it' : 'them';
+      return { profile: null, problem: `The profile for ${project} has ${n} problem${n === 1 ? '' : 's'}; fix ${them} first (the project's Settings tab lists ${them}).` };
     }
     return { profile: r.profile, problem: '' };
   } catch (err) {

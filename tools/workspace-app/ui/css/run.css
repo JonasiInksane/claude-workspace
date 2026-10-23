@@ -100,6 +100,14 @@
 .run-view .run-sources, .run-view .run-hyps { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: var(--t-md); }
 .run-view .run-hyps ul { margin: 4px 0 0; padding-left: 18px; }
 
+/* ---------- Inputs (the run's input manifest), below the stages and timeline */
+.run-view .run-inputs-box { margin-top: var(--s4); }
+.run-view .run-inputs-box:empty { display: none; }
+.run-view .run-inputs { grid-template-columns: max-content minmax(0, 1fr); align-items: baseline; }
+.run-view .inputs-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.run-view .inputs-list li { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; min-width: 0; }
+.run-view .run-inputs code { overflow-wrap: anywhere; }
+
 /* ---------- Stages and timeline (parts/timeline.js) */
 .run-view .run-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: var(--s4); align-items: start; }
 .run-view .stages { list-style: none; margin: 0; padding: var(--s2); display: grid; gap: 2px; }
@@ -170,4 +178,6 @@
   .run-view .log li .kind { grid-column: 2; grid-row: 1; }
   .run-view .log li .msg { grid-column: 1 / -1; }
   .run-view .tl-replay { margin-left: 0; }
+  .run-view .run-inputs { grid-template-columns: 1fr; }
+  .run-view .run-inputs dd { margin-bottom: var(--s2); }
 }

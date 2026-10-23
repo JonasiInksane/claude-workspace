@@ -42,7 +42,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { resolveClaude } from '../lib/agents.mjs';
-import { checkLaunch, launchArgs, writePromptFile } from '../lib/prompt-file.mjs';
+import { checkLaunch, commandTextProblem, launchArgs, writePromptFile } from '../lib/prompt-file.mjs';
 import { assetDirs, assetProblems, assetRecords, resolveAssets, verifyFiles } from './attached-assets.mjs';
 import { appendJsonl, defaultDataDir, PROJECT_RE } from './core/datadir.mjs';
 import { currentSettings, launchWithSettings, settingsRef } from './project-settings.mjs';
@@ -161,8 +161,30 @@ export async function sessionAssets(root, project, settings) {
   return items;
 }
 
+// Why every session in `project` would refuse these settings ({ project, rules, defaults,
+// allowedTools, assets }), as sentences ([] when none would): what a start checks (sessionAssets,
+// withProjectSettings, the Windows command line budget) for a session without a prompt of its
+// own, which carries the most in its system prompt (the rules and the list of the assets). A
+// save runs this first (routes/project-settings.mjs), so it can't write settings that block every
+// session in the project: an attached asset that is gone or changed, or rules that don't fit
+// together with the asset list.
+export async function settingsLaunchProblems(root, project, settings) {
+  const attachments = Array.isArray(settings.assets) ? settings.assets : [];
+  let items = [];
+  if (attachments.length) {
+    try { items = await resolveAssets(root, project, attachments); } catch (e) { return [`the attached assets can't be resolved: ${e.message}`]; }
+    const problems = assetProblems(items);
+    if (!problems.length) problems.push(...await verifyFiles(items));
+    if (problems.length) return problems;
+  }
+  let launch;
+  try { launch = withProjectSettings({}, settings, items); } catch (e) { return [e.message.replace(/^launch: /, '')]; }
+  const tooLong = commandTextProblem('', launch);
+  return tooLong ? [tooLong] : [];
+}
+
 // Windows paths ignore case.
-const dirKey = d => (process.platform === 'win32' ? String(d).toLowerCase() : String(d));
+const dirKey =d => (process.platform === 'win32' ? String(d).toLowerCase() : String(d));
 
 // The folders a session may read without asking: the caller's `readDirs` (a flow's images) and
 // the folders of its assets (`items`), which go to readOnlyDirs only, so they get their Edit deny

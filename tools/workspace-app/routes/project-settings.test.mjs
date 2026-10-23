@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROUTE_MODULES } from '../app.mjs';
 import { call, routeHub } from '../test/fixtures/routes/hub.mjs';
+import { createAsset } from '../asset-library.mjs';
 import { settingsDir } from '../project-settings.mjs';
 import * as projectSettingRoutes from './project-settings.mjs';
 import { MAX_SAVE_BYTES, routes } from './project-settings.mjs';
@@ -18,6 +19,8 @@ async function setup(t) {
 }
 const save = (h, body) => call(h.api, 'POST /api/project-settings', { body: { project: 'example', ...body } });
 const get = (h, project = 'example') => call(h.api, 'GET /api/project-settings', { query: { project } });
+// shared:style-guide in the hub's asset library; resolves with the asset.
+const styleGuide = async h => (await createAsset(h.root, { scope: 'shared', title: 'Style guide', originalName: 'style.md' }, Buffer.from('# Style\n'))).asset;
 
 test('GET answers with no settings, the limits and the choices, and writes nothing', async t => {
   const h = await setup(t);
@@ -33,6 +36,7 @@ test('GET answers with no settings, the limits and the choices, and writes nothi
 
 test('POST saves numbered versions; GET lists them newest first; one version can be read back', async t => {
   const h = await setup(t);
+  await styleGuide(h);
   const first = await save(h, { basedOn: 0, rules: '- Money is in cents.', defaults: { model: 'sonnet' }, allowedTools: 'Read, Grep', assets: [{ ref: 'shared:style-guide', pin: null }] });
   assert.equal(first.status, 200, first.body.error);
   assert.deepEqual(Object.keys(first.body), ['ok', 'project', 'version', 'sha256', 'unchanged', 'message']);
@@ -79,6 +83,33 @@ test('POST refuses a stale save with 409 and invalid settings with a 400 that li
   assert.deepEqual(readdirSync(h.dir).sort(), ['v1.json', 'v2.json'], 'nothing else was written');
 });
 
+test('POST refuses settings every session would refuse (400 with the reason) and writes nothing', async t => {
+  const h = await setup(t);
+  const style = await styleGuide(h);
+  const v1 = await save(h, { basedOn: 0, rules: 'Short rules.', assets: [{ ref: 'shared:style-guide', pin: null }] });
+  assert.equal(v1.status, 200, v1.body.error);
+  for (const [body, re] of [
+    [{ assets: [{ ref: 'shared:missing', pin: null }] }, /shared:missing is not in the asset library/],
+    [{ assets: [{ ref: 'shared:style-guide', pin: 4 }] }, /shared:style-guide has no version 4/],
+    // The rules alone fit; with the list of the attached assets after them, the system prompt doesn't.
+    [{ rules: 'x'.repeat(19990) }, /the rules of example and the list of its 1 attached assets come to \d+ characters for the system prompt, more than 20000/],
+    // Every quote takes two characters on a Windows command line.
+    [{ rules: '"'.repeat(15001), assets: [] }, /too long for one Windows command line: 30004 characters once quoted, at most 30000/],
+  ]) {
+    const r = await save(h, { basedOn: 1, ...body });
+    assert.equal(r.status, 400, JSON.stringify(body).slice(0, 80));
+    assert.match(r.body.error, /^The settings were not saved: /);
+    assert.match(r.body.error, re);
+  }
+  // A version file changed by hand is refused too; detaching the asset is a save that works.
+  writeFileSync(join(h.root, 'inbox', 'attachments', '_assets', 'style-guide', style.versions[0].file), 'edited by hand');
+  const changed = await save(h, { basedOn: 1, rules: 'Other rules.' });
+  assert.deepEqual([changed.status, /no longer matches the SHA-256 the library recorded/.test(changed.body.error)], [400, true]);
+  assert.deepEqual(readdirSync(h.dir), ['v1.json'], 'nothing was written');
+  const detached = await save(h, { basedOn: 1, rules: 'Other rules.', assets: [] });
+  assert.deepEqual([detached.status, detached.body.version], [200, 2]);
+});
+
 test('the project must be a folder in projects/ with a name the data folder can hold', async t => {
   const h = await setup(t);
   mkdirSync(join(h.root, 'projects', 'Odd_Name'));
@@ -107,14 +138,15 @@ test('the project must be a folder in projects/ with a name the data folder can 
 
 test('POST takes the largest valid save, more than the 64 KB of other requests, and refuses far larger bodies', async t => {
   const h = await setup(t);
-  // 20,000 characters of rules at 3 bytes each in UTF-8, plus 50 attached assets: about 70 KB.
+  // 20,000 characters of rules (the most a session's system prompt takes), written as JSON
+  // escapes of 6 bytes each, as a client may send them: about 120 KB.
   const rules = '料'.repeat(20000);
-  const assets = Array.from({ length: 50 }, (_, i) => ({ ref: `shared:${'a'.repeat(180)}-${i}`, pin: null }));
-  assert.ok(Buffer.byteLength(JSON.stringify({ project: 'example', basedOn: 0, rules, assets })) > 64 * 1024);
-  const r = await save(h, { basedOn: 0, rules, assets });
+  const body = `{"project":"example","basedOn":0,"rules":"${'\\u6599'.repeat(20000)}"}`;
+  assert.ok(Buffer.byteLength(body) > 64 * 1024);
+  const r = await call(h.api, 'POST /api/project-settings', { body });
   assert.equal(r.status, 200, r.body.error);
   assert.equal(r.body.version, 1);
-  assert.equal((await get(h)).body.current.rules.length, 20000);
+  assert.equal((await get(h)).body.current.rules, rules);
   const huge = await save(h, { basedOn: 1, rules: 'x'.repeat(MAX_SAVE_BYTES) });
   assert.deepEqual([huge.status, huge.body.error], [413, 'request is larger than 256 KB']);
   assert.deepEqual(readdirSync(h.dir), ['v1.json']);

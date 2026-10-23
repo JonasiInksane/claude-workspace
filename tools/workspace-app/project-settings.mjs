@@ -328,8 +328,11 @@ function staleText(project, have, want) {
 // Saves `input` ({ rules, defaults, allowedTools, assets }; a field left out keeps its current
 // value) as the next version and returns it. `basedOn` is the version the editor opened (0 or
 // null: none). 409 when that is not the current one any more, 400 listing every problem, and
-// the current settings unchanged (nothing written) when the save changes nothing.
-export async function saveSettings(dataDir, project, input, { basedOn, now = Date.now } = {}) {
+// the current settings unchanged (nothing written) when the save changes nothing. `check`
+// (optional) runs on the settings a save would write ({ project, ...fields }) and returns the
+// problems that refuse it with a 400 ([] for none): routes/project-settings.mjs passes
+// launch.mjs settingsLaunchProblems, so a save can't write settings every session would refuse.
+export async function saveSettings(dataDir, project, input, { basedOn, now = Date.now, check } = {}) {
   checkProject(project);
   const want = baseVersion(basedOn);
   const dir = settingsDir(dataDir, project);
@@ -341,6 +344,8 @@ export async function saveSettings(dataDir, project, input, { basedOn, now = Dat
     if (problems.length) throw new HttpError(400, problemText(problems));
     const sha256 = settingsHash(value);
     if (current && current.sha256 === sha256) return current;
+    const refused = check ? await check({ project, ...value }) : [];
+    if (refused.length) throw new HttpError(400, problemText(refused));
     const version = have + 1;
     const settings = {
       format: SETTINGS_FORMAT, project, version, basedOn: have || null, savedAt: new Date(now()).toISOString(), ...value, sha256,

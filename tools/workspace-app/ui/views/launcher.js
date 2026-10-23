@@ -217,7 +217,7 @@ const EDIT_HINT = 'One sentence is enough. The first stage finds the files and p
 const hintFor = def => HINTS[def.id] || (def.editing ? EDIT_HINT : def.blurb ? `This run: ${def.blurb}.` : '');
 const FIELD_HINTS = {
   path: 'A folder or file inside the repo. Suggestions come from its folders.',
-  image: 'The newest images in the inbox. Paste one in Images to add it.',
+  image: 'The newest images in the inbox. Paste one in Inbox images (under Assets) to add it.',
 };
 const SEVERITY_CLASS = { critical: 'red', high: 'red', medium: 'amber' };
 const cap = s => (s ? s[0].toUpperCase() + s.slice(1) : s);
@@ -610,7 +610,7 @@ function imagePicks(f, id) {
   else if (images.error) out.push(h('p', { class: 'note img-note' }, `The inbox images could not be loaded: ${images.error}`));
   else if (images.list && !list.length) {
     out.push(h('p', { class: 'muted small img-note' }, 'No images in the inbox yet. ',
-      h('button', { class: 'link', type: 'button', on: { click: () => go('images') } }, 'Open Images'), ' and paste one.'));
+      h('button', { class: 'link', type: 'button', on: { click: () => go('images') } }, 'Open Inbox images'), ' and paste one.'));
   }
   return out;
 }

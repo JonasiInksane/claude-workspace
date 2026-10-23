@@ -1,7 +1,7 @@
 // Tests for the sidebar's entries (parts/nav.js): the order (Today, Projects with every project
 // nested, Assets, Flows, Runs with up to three review gates nested), the amber waiting count of a
 // code project only, the counts' words for screen readers, Library at the foot, and which entry is
-// the screen on show. Run: node tools/run-tests.mjs workspace-app
+// the screen on show (Assets also while Inbox images is). Run: node tools/run-tests.mjs workspace-app
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { footItems, isCurrentItem, MAX_REVIEW_ITEMS, navItems } from './nav.js';
@@ -65,7 +65,10 @@ test('the foot: Library, at the #library route', () => {
   assert.deepEqual(footItems(state, {}), []);
 });
 
-test('isCurrentItem: a project entry covers every tab of its project; Runs covers a run; a gate only its run', () => {
+test('isCurrentItem: a project entry covers every tab of its project; Runs covers a run, Assets its Inbox images; a gate only its run', () => {
+  assert.equal(isCurrentItem({ route: 'assets' }, 'assets', ''), true);
+  assert.equal(isCurrentItem({ route: 'assets' }, 'images', ''), true, 'Inbox images left the nav; Assets opens it');
+  assert.equal(isCurrentItem({ route: 'assets' }, 'project', 'sample-art/assets'), false, 'a project\'s Assets tab belongs to the project entry');
   const p = { route: 'project', sub: 'example' };
   assert.equal(isCurrentItem(p, 'project', 'example/checks'), true);
   assert.equal(isCurrentItem(p, 'project', 'example'), true);

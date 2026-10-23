@@ -1,10 +1,11 @@
-// Images: upload into the hub inbox, a project's shared folder or one agent's folder, and the
-// gallery of the chosen folder. The chosen target is remembered in localStorage.
-// Exports setTarget (the projects view picks a target, then opens this view) and uploadFiles
-// (the flow editor uploads into a flow's folder with it).
+// Inbox images (#images): upload into the hub inbox, a project's shared folder or one agent's
+// folder, and the gallery of the chosen folder. The chosen target is remembered in localStorage.
+// It is not in the nav: the Assets view opens it (its crumb leads back there, and the nav marks
+// Assets while it shows). Exports setTarget (the projects view picks a target, then opens this
+// view) and uploadFiles (the flow editor uploads into a flow's folder with it).
 import { $, api, copy, fmtSize, h, icon, openPlace, plural, qs, toast } from '../lib.js';
 import { openDialog, dialog } from '../dialog.js';
-import { refresh, state } from '../store.js';
+import { go, refresh, state } from '../store.js';
 
 const MAX_UPLOAD = 25 * 1024 * 1024;
 const ICON_UPLOAD = '<path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/>';
@@ -124,7 +125,9 @@ function render(el) {
   const gallery = h('div', {}, galleryCache.key === key ? galleryCache.nodes : h('div', { class: 'empty' }, 'Loading…'));
 
   el.replaceChildren(
-    h('div', { class: 'view-head' }, h('div', {}, h('h2', {}, 'Images'),
+    h('div', { class: 'view-head' }, h('div', {},
+      h('p', { class: 'crumb' }, h('button', { class: 'link', type: 'button', dataset: { key: 'crumb-assets' }, on: { click: () => go('assets') } }, 'Assets'), ' / Inbox images'),
+      h('h2', {}, 'Inbox images'),
       h('p', {}, 'Agent images stay with that agent: only its own sessions can read them. Hub images wait in the inbox for triage.'))),
     h('div', { class: 'target-bar' },
       h('label', {}, 'Save to ', select),
@@ -172,7 +175,7 @@ export async function uploadFiles(files, pasted, target = imageTarget) {
 
 export default {
   id: 'images',
-  label: 'Images',
+  label: 'Inbox images',
   icon: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>',
   render,
   // Pasted or dropped image files while this view is on screen.

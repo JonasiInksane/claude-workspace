@@ -56,10 +56,11 @@ export function footItems(state, { views = {} } = {}) {
   return [plainItem(views.tools, state || {}, 'Library')].filter(Boolean);
 }
 
-// Is this entry the screen on show? Runs also covers a single run; a project entry covers every
-// tab of its project; a review entry its own run only.
+// Is this entry the screen on show? Runs also covers a single run, and Assets the Inbox images it
+// opens; a project entry covers every tab of its project; a review entry its own run only.
 export function isCurrentItem(item, view, sub) {
   if (item.route === 'runs') return view === 'runs' || view === 'run';
+  if (item.route === 'assets') return view === 'assets' || view === 'images';
   if (item.route === 'project') return view === 'project' && projectRoute(sub).name === item.sub;
   if (item.route === 'review') return view === 'review' && sub === item.sub;
   return routeOf(view) === item.route;

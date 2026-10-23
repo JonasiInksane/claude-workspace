@@ -302,26 +302,62 @@ test('archived assets leave the list (unless asked for), take no new versions, a
   assert.equal((await addVersion(root, ref, JPG, { expectVersions: 1 })).version, 2);
 });
 
-test('updateMeta changes the fields it is given (never the id), needs the version count, and refuses bad values', async t => {
+test('setArchived with the revision the caller saw: a stale page gets a 409 and changes nothing', async t => {
   const root = hub(t);
-  const { ref } = await shared(root, 'Guide', Buffer.from('x'), { description: 'old', tags: 'a, b' });
-  const a = await updateMeta(root, ref, { title: 'House style', expect: 1 });
+  const { ref, asset } = await shared(root, 'Logo', PNG);
+  const renamed = await updateMeta(root, ref, { title: 'New logo', expect: asset.revision }); // another tab
+  await refused(setArchived(root, ref, true, { expect: asset.revision }), 409, /changed since you opened it/);
+  assert.equal((await getAsset(root, ref)).archived, false);
+  const archived = await setArchived(root, ref, true, { expect: renamed.revision });
+  assert.deepEqual([archived.archived, archived.title], [true, 'New logo']);
+  await refused(setArchived(root, ref, false, { expect: renamed.revision }), 409); // archiving made a new revision
+  assert.equal((await setArchived(root, ref, false, { expect: archived.revision })).archived, false);
+  for (const expect of [null, '', 3, 'x']) await refused(setArchived(root, ref, true, { expect }), 400, /expect \(the revision/);
+});
+
+test('updateMeta changes the fields it is given (never the id), needs the revision the caller saw, and refuses bad values', async t => {
+  const root = hub(t);
+  const { ref, asset } = await shared(root, 'Guide', Buffer.from('x'), { description: 'old', tags: 'a, b' });
+  assert.equal(asset.revision, (await getAsset(root, ref)).revision, 'a change answers with the revision a read gives');
+  const a = await updateMeta(root, ref, { title: 'House style', expect: asset.revision });
   assert.deepEqual([a.ref, a.id, a.title, a.description, a.tags], [ref, 'guide', 'House style', 'old', ['a', 'b']]);
-  const b = await updateMeta(root, ref, { description: '  new\r\ntext ', tags: ['C', 'c'], expect: '1' });
+  assert.notEqual(a.revision, asset.revision);
+  const b = await updateMeta(root, ref, { description: '  new\r\ntext ', tags: ['C', 'c'], expect: ` ${a.revision} ` });
   assert.deepEqual([b.title, b.description, b.tags], ['House style', 'new\ntext', ['c']]);
-  assert.deepEqual((await updateMeta(root, ref, { tags: null, expect: 1 })).tags, []);
-  await addVersion(root, ref, Buffer.from('y'), { expectVersions: 1 });
-  await refused(updateMeta(root, ref, { title: 'Stale', expect: 1 }), 409, /changed since you opened it/);
-  await refused(updateMeta(root, ref, { expect: 2 }), 400, /nothing to change/);
-  await refused(updateMeta(root, ref, { title: '', expect: 2 }), 400, /title is required/);
-  await refused(updateMeta(root, ref, { title: 'ok' }), 400, /expect/);
-  await refused(updateMeta(root, ref, { tags: 5, expect: 2 }), 400, /list of words/);
-  await refused(updateMeta(root, ref, { tags: [1], expect: 2 }), 400, /list of words/);
-  await refused(updateMeta(root, ref, { tags: Array.from({ length: 21 }, (_, i) => `t${i}`), expect: 2 }), 400, /at most 20 tags/);
-  await refused(updateMeta(root, ref, { tags: ['x'.repeat(41)], expect: 2 }), 400, /not a tag/);
-  await refused(updateMeta(root, 'shared:nope', { title: 'x', expect: 1 }), 404);
+  const c = await updateMeta(root, ref, { tags: null, expect: b.revision });
+  assert.deepEqual([c.tags, c.revision], [[], (await getAsset(root, ref)).revision]);
+  // A stale page: the version count still matches, the revision doesn't (another tab renamed it).
+  await refused(updateMeta(root, ref, { title: 'Stale', expect: b.revision }), 409, /changed since you opened it/);
+  const added = (await addVersion(root, ref, Buffer.from('y'), { expectVersions: 1 })).asset;
+  await refused(updateMeta(root, ref, { title: 'Stale', expect: c.revision }), 409, /changed since you opened it/);
+  const r = added.revision;
+  await refused(updateMeta(root, ref, { expect: r }), 400, /nothing to change/);
+  await refused(updateMeta(root, ref, { title: '', expect: r }), 400, /title is required/);
+  for (const expect of [undefined, 2, '2', 'zz'.repeat(8)]) await refused(updateMeta(root, ref, { title: 'ok', expect }), 400, /expect \(the revision/);
+  await refused(updateMeta(root, ref, { tags: 5, expect: r }), 400, /list of words/);
+  await refused(updateMeta(root, ref, { tags: [1], expect: r }), 400, /list of words/);
+  await refused(updateMeta(root, ref, { tags: Array.from({ length: 21 }, (_, i) => `t${i}`), expect: r }), 400, /at most 20 tags/);
+  await refused(updateMeta(root, ref, { tags: ['x'.repeat(41)], expect: r }), 400, /not a tag/);
+  await refused(updateMeta(root, 'shared:nope', { title: 'x', expect: r }), 404);
   const now = await getAsset(root, ref);
-  assert.deepEqual([now.title, now.tags, now.versionCount], ['House style', [], 2], 'refused changes wrote nothing');
+  assert.deepEqual([now.title, now.tags, now.versionCount, now.revision], ['House style', [], 2, r], 'refused changes wrote nothing');
+});
+
+test('the revision: a hand edit of asset.json changes it, and an asset.json from before revisions has one', async t => {
+  const root = hub(t);
+  const { ref, asset } = await shared(root, 'Guide', Buffer.from('x'));
+  const file = join(sharedAssetsDir(root), 'guide', 'asset.json');
+  // A record as an older app wrote it: no revision is stored anywhere, so it reads as it always did.
+  assert.ok(!('revision' in JSON.parse(readFileSync(file, 'utf8'))));
+  assert.match(asset.revision, /^[0-9a-f]{16}$/);
+  assert.deepEqual((await listLibrary(root)).map(a => a.revision), [asset.revision]);
+  const rec = JSON.parse(readFileSync(file, 'utf8'));
+  writeFileSync(file, JSON.stringify({ ...rec, description: 'edited by hand' }));
+  const edited = await getAsset(root, ref);
+  assert.notEqual(edited.revision, asset.revision);
+  await refused(setArchived(root, ref, true, { expect: asset.revision }), 409, /changed since you opened it/);
+  await refused(updateMeta(root, ref, { title: 'x', expect: asset.revision }), 409);
+  assert.equal((await updateMeta(root, ref, { title: 'Guide 2', expect: edited.revision })).description, 'edited by hand');
 });
 
 test('listLibrary: shared assets plus one project\'s or every project\'s, sorted; broken records are listed with their error', async t => {
@@ -333,7 +369,7 @@ test('listLibrary: shared assets plus one project\'s or every project\'s, sorted
   assert.deepEqual((await listLibrary(root, { project: 'Example' })).map(a => a.ref), ['shared:apple', 'shared:zebra', 'example:board']);
   assert.deepEqual((await listLibrary(root)).map(a => a.ref), ['shared:apple', 'shared:zebra', 'example:board', 'other:map']);
   const zebra = (await listLibrary(root)).find(a => a.id === 'zebra');
-  assert.deepEqual(Object.keys(zebra), ['ref', 'id', 'scope', 'project', 'title', 'kind', 'tags', 'description', 'archived', 'latest', 'versionCount']);
+  assert.deepEqual(Object.keys(zebra), ['ref', 'id', 'scope', 'project', 'title', 'kind', 'tags', 'description', 'archived', 'latest', 'versionCount', 'revision']);
   assert.deepEqual(Object.keys(zebra.latest), ['n', 'sha256', 'bytes', 'type', 'addedAt']);
   assert.deepEqual([zebra.kind, zebra.tags, zebra.versionCount, zebra.latest.type, zebra.latest.sha256], ['image', ['z'], 1, 'image/png', sha(PNG)]);
   await refused(listLibrary(root, { project: 'ghost' }), 404);
@@ -489,8 +525,9 @@ test('changes to one asset run one at a time: two uploads with one count give on
     addVersion(root, ref, Buffer.from('b'), { expectVersions: 1 }),
   ]);
   assert.deepEqual([a.status, b.status, b.reason && b.reason.status], ['fulfilled', 'rejected', 409]);
+  const seen = (await getAsset(root, ref)).revision;
   const [meta, upload] = await Promise.allSettled([
-    updateMeta(root, ref, { title: 'Busy bee', expect: 2 }),
+    updateMeta(root, ref, { title: 'Busy bee', expect: seen }),
     addVersion(root, ref, Buffer.from('c'), { expectVersions: 2 }),
   ]);
   assert.deepEqual([meta.status, upload.status], ['fulfilled', 'fulfilled']);
@@ -498,7 +535,7 @@ test('changes to one asset run one at a time: two uploads with one count give on
   assert.deepEqual([now.title, now.versionCount], ['Busy bee', 3]);
   const [late, stalePage] = await Promise.allSettled([
     addVersion(root, ref, Buffer.from('d'), { expectVersions: 3 }),
-    updateMeta(root, ref, { title: 'Stale page', expect: 3 }),
+    updateMeta(root, ref, { title: 'Stale page', expect: now.revision }),
   ]);
   assert.deepEqual([late.status, stalePage.status, stalePage.reason && stalePage.reason.status], ['fulfilled', 'rejected', 409]);
   assert.deepEqual((await getAsset(root, ref)).versions.map(v => v.n), [1, 2, 3, 4]);

@@ -142,7 +142,7 @@ function detailDialog(first, { onChange, attach }) {
     saveDetails.disabled = true;
     showError(metaError, '');
     try {
-      const r = await saveMeta(ref, { title: title.value, description: description.value, tags: tags.value }, asset.versions.length);
+      const r = await saveMeta(ref, { title: title.value, description: description.value, tags: tags.value }, asset.revision);
       asset = r.asset;
       setMeta(asset);
       toast(`Saved the details of ${asset.title}`);
@@ -183,11 +183,14 @@ function detailDialog(first, { onChange, attach }) {
       if (!ok) return;
     }
     try {
-      asset = (await setArchived(ref, !asset.archived)).asset;
+      asset = (await setArchived(ref, !asset.archived, asset.revision)).asset;
       toast(asset.archived ? `Archived ${asset.title}` : `Restored ${asset.title}`);
       paint();
       onChange(asset);
-    } catch (e) { toast(e.message, true); }
+    } catch (e) {
+      toast(e.message, true);
+      if (e.status === 409) await reload();
+    }
   }
 
   async function toggleAttach() {

@@ -224,8 +224,10 @@ new, immutable version with its SHA-256. The API is in place; the screens come l
   `kind` (`image`, `text` or `pdf`), `description`, `tags`, `createdAt`, `archived`, and
   `versions` (`n`, `file`, `sha256`, `bytes`, `type`, `addedAt`, `note`, `originalName`). Only
   `asset-library.mjs` writes it, through a temporary file and a rename, one change at a time.
-- A new version and a meta change carry `expect`, the number of versions the page saw; another
-  count is a 409. The same bytes as the latest version add nothing (`added: false`).
+- A new version carries `expect`, the number of versions the page saw; a meta change, an archive
+  and a restore carry `expect`, the asset's `revision` the page saw (every listing and asset has
+  it: a hash of its `asset.json` as read, so any change, a hand edit included, gives a new one).
+  Another value is a 409. The same bytes as the latest version add nothing (`added: false`).
 
 | Route | Does |
 |---|---|
@@ -233,7 +235,7 @@ new, immutable version with its SHA-256. The API is in place; the screens come l
 | `GET /api/library/asset?ref=<ref>` | One asset with every version |
 | `POST /api/library/upload?scope=&project=&title=&kind=&description=&tags=&note=&name=` | The raw file as the body: a new asset. With `ref=` and `expect=` (plus `name`, `note`, `kind`): a new version of that asset |
 | `POST /api/library/meta` | `{ ref, title, description, tags, expect }`: the fields given change, the id doesn't |
-| `POST /api/library/archive` | `{ ref, archived }`: archive or restore |
+| `POST /api/library/archive` | `{ ref, archived, expect }`: archive or restore |
 | `POST /api/library/resolve` | `{ project, attachments: [{ ref, pin }] }`: the version, hash and file each attachment points to (`pin: null` is the latest); `missing` and `archived` are marked; another project's ref is refused |
 | `GET /library-file?ref=<ref>&v=<n>` | One version's file (`&download=1` to save it) |
 

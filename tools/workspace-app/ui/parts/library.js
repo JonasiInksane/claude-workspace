@@ -160,10 +160,12 @@ export function uploadVersion(ref, file, { expect, note = '', pasted = false } =
   return api(`/api/library/upload?${qs(q)}`, { method: 'POST', raw: file, contentType: file.type || 'application/octet-stream' });
 }
 
+// The details, and archive or restore: `expect` is the asset's `revision` the page saw, so a page
+// opened before another change gets a 409 instead of undoing it.
 export const saveMeta = (ref, { title, description, tags }, expect) =>
   api('/api/library/meta', { method: 'POST', body: { ref, title, description, tags, expect } });
 
-export const setArchived = (ref, archived) => api('/api/library/archive', { method: 'POST', body: { ref, archived } });
+export const setArchived = (ref, archived, expect) => api('/api/library/archive', { method: 'POST', body: { ref, archived, expect } });
 
 export const resolveAttachments = (project, attachments) =>
   api('/api/library/resolve', { method: 'POST', body: { project, attachments } });

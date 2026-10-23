@@ -120,32 +120,37 @@ test('uploads are refused for a wrong kind, SVG, too large, empty, bad refs and 
   assert.deepEqual((await call(api, 'GET /api/library')).body.assets, []);
 });
 
-test('meta and archive: changes with the version count, a 409 when stale, archived assets only with archived=1', async t => {
+test('meta and archive: changes with the revision the page saw, a 409 when stale, archived assets only with archived=1', async t => {
   const { api } = await setup(t);
-  const { ref } = (await upload(api, { scope: 'shared', title: 'Guide' }, Buffer.from('one'))).body;
-  const m = await call(api, 'POST /api/library/meta', { body: { ref, title: 'House style', description: 'All of it', tags: ['brand'], expect: 1 } });
+  const { ref, asset: first } = (await upload(api, { scope: 'shared', title: 'Guide' }, Buffer.from('one'))).body;
+  const m = await call(api, 'POST /api/library/meta', { body: { ref, title: 'House style', description: 'All of it', tags: ['brand'], expect: first.revision } });
   assert.equal(m.status, 200, m.body.error);
   assert.deepEqual([m.body.ok, m.body.asset.title, m.body.asset.id, m.body.asset.description, m.body.asset.tags], [true, 'House style', 'guide', 'All of it', ['brand']]);
-  await upload(api, { ref, expect: 1 }, Buffer.from('two'));
-  const stale = await call(api, 'POST /api/library/meta', { body: { ref, title: 'Old page', expect: 1 } });
-  assert.equal(stale.status, 409);
+  // A page opened before that rename: its save and its archive are refused, so neither undoes it.
+  const stale = await call(api, 'POST /api/library/meta', { body: { ref, title: 'Old page', expect: first.revision } });
+  assert.deepEqual([stale.status, stale.body.error], [409, `${ref} changed since you opened it. Reload it and try again.`]);
+  assert.equal((await call(api, 'POST /api/library/archive', { body: { ref, archived: true, expect: first.revision } })).status, 409);
+  const r = (await upload(api, { ref, expect: 1 }, Buffer.from('two'))).body.asset.revision;
+  assert.equal((await call(api, 'POST /api/library/meta', { body: { ref, title: 'Old page', expect: m.body.asset.revision } })).status, 409, 'a new version is a change too');
   for (const [body, status] of [
-    [{ ref, title: '', expect: 2 }, 400], [{ ref, expect: 2 }, 400], [{ ref, title: 'x' }, 400], [{ ref, tags: 'a,b!', expect: 2 }, 400],
-    [{ ref: 'shared:../guide', title: 'x', expect: 2 }, 400], [{ ref: 'ghost:guide', title: 'x', expect: 2 }, 404],
+    [{ ref, title: '', expect: r }, 400], [{ ref, expect: r }, 400], [{ ref, title: 'x' }, 400], [{ ref, title: 'x', expect: 2 }, 400],
+    [{ ref, tags: 'a,b!', expect: r }, 400], [{ ref: 'shared:../guide', title: 'x', expect: r }, 400], [{ ref: 'ghost:guide', title: 'x', expect: r }, 404],
     [[ref], 400], ['null', 400], ['{not json', 400],
   ]) {
-    const r = await call(api, 'POST /api/library/meta', { body });
-    assert.equal(r.status, status, `${JSON.stringify(body)}: ${r.body.error}`);
+    const res = await call(api, 'POST /api/library/meta', { body });
+    assert.equal(res.status, status, `${JSON.stringify(body)}: ${res.body.error}`);
   }
   assert.equal((await call(api, 'GET /api/library/asset', { query: { ref } })).body.asset.title, 'House style');
-  const a = await call(api, 'POST /api/library/archive', { body: { ref, archived: true } });
+  const a = await call(api, 'POST /api/library/archive', { body: { ref, archived: true, expect: r } });
   assert.deepEqual([a.status, a.body.ok, a.body.asset.archived], [200, true, true]);
   assert.deepEqual((await call(api, 'GET /api/library')).body.assets, []);
-  assert.deepEqual((await call(api, 'GET /api/library', { query: { archived: '1' } })).body.assets.map(x => [x.ref, x.archived]), [[ref, true]]);
+  assert.deepEqual((await call(api, 'GET /api/library', { query: { archived: '1' } })).body.assets.map(x => [x.ref, x.archived, x.revision]), [[ref, true, a.body.asset.revision]]);
   assert.equal((await upload(api, { ref, expect: 2 }, Buffer.from('three'))).status, 409, 'no new versions while archived');
-  assert.equal((await call(api, 'POST /api/library/archive', { body: { ref, archived: 'no' } })).status, 400);
-  assert.equal((await call(api, 'POST /api/library/archive', { body: { ref: 'shared:nope', archived: false } })).status, 404);
-  assert.equal((await call(api, 'POST /api/library/archive', { body: { ref, archived: false } })).body.asset.archived, false);
+  const now = a.body.asset.revision;
+  assert.equal((await call(api, 'POST /api/library/archive', { body: { ref, archived: 'no', expect: now } })).status, 400);
+  assert.equal((await call(api, 'POST /api/library/archive', { body: { ref, archived: false } })).status, 400, 'expect is required');
+  assert.equal((await call(api, 'POST /api/library/archive', { body: { ref: 'shared:nope', archived: false, expect: now } })).status, 404);
+  assert.equal((await call(api, 'POST /api/library/archive', { body: { ref, archived: false, expect: now } })).body.asset.archived, false);
   assert.equal((await call(api, 'GET /api/library')).body.assets.length, 1);
 });
 

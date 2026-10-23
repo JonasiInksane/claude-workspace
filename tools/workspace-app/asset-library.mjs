@@ -30,9 +30,12 @@
 //
 // Writes: a version file is created exclusively (flag 'wx'), and asset.json goes to a temporary
 // file that is then renamed over the old one (core/datadir.mjs). Changes to one asset run one at
-// a time (an in-process queue; one app serves a workspace), and every update says how many
-// versions its caller saw (expect): another count is a 409, so a stale page can't undo a newer
-// change. A new version with the same SHA-256 as the latest adds nothing and returns the latest.
+// a time (an in-process queue; one app serves a workspace), and every update says what its caller
+// saw (expect), so a stale page can't undo a newer change: a new version names the number of
+// versions, a meta change, an archive or a restore the asset's `revision` (a hash of its record
+// as read, so every change, a hand edit included, gives a new one, and an asset.json from before
+// revisions has one too). Another value is a 409. A new version with the same SHA-256 as the
+// latest adds nothing and returns the latest.
 //
 // Every export that reads or writes the library is async (parseRef only checks a ref, and the
 // project folder it names). Refusals are HttpErrors that the routes pass on:
@@ -42,7 +45,7 @@ import { lstat, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
 import { ASSET_LIBRARY_DIR, projectNameMap } from '../lib/inbox.mjs';
 import { bmpToPng } from './bmp.mjs';
-import { readJson, sha256Text, writeJsonAtomic } from './core/datadir.mjs';
+import { canonicalJson, readJson, sha256Text, writeJsonAtomic } from './core/datadir.mjs';
 import { HttpError } from './http.mjs';
 import { findProject } from './lookup.mjs';
 import { attachmentsRoot, detectImageType, isInside } from './uploads.mjs';
@@ -56,6 +59,7 @@ export const LIMITS = {
 };
 
 const ID_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const REVISION_RE = /^[0-9a-f]{16}$/;
 // Windows device names can't be folder names; an id like that gets "-asset".
 const DEVICE_NAME = /^(con|prn|aux|nul|com\d|lpt\d)$/;
 // What a stored version file may be called, and the kind and type its extension stands for.
@@ -227,6 +231,13 @@ function expectedCount(v) {
   return Number(s);
 }
 
+// The revision of the asset a caller saw (expect; revisionOf).
+function expectedRevision(v) {
+  const s = typeof v === 'string' ? v.trim() : '';
+  if (!REVISION_RE.test(s)) throw bad('expect (the revision of the asset you saw) is required. Reload it and try again.');
+  return s;
+}
+
 // A version number from a request: a whole number of at least 1, also as text.
 function versionNumber(v) {
   if (v === undefined || v === null || v === '') throw bad('a version number is required');
@@ -379,6 +390,11 @@ async function readRecord(loc) {
   return cleanRecord(rec, loc);
 }
 
+// The revision of a record in format 1 (as cleanRecord gives it, or as a change writes it, which
+// is the same): 16 hex digits of the SHA-256 of its canonical JSON. A meta change and an archive
+// name the revision their caller saw.
+const revisionOf = rec => sha256Text(canonicalJson(rec)).slice(0, 16);
+
 // What listings show of an asset.
 function summaryOf(rec) {
   const last = rec.versions[rec.versions.length - 1];
@@ -386,7 +402,7 @@ function summaryOf(rec) {
     ref: assetRef(rec.scope, rec.project, rec.id), id: rec.id, scope: rec.scope, project: rec.project,
     title: rec.title, kind: rec.kind, tags: [...rec.tags], description: rec.description, archived: rec.archived,
     latest: { n: last.n, sha256: last.sha256, bytes: last.bytes, type: last.type, addedAt: last.addedAt },
-    versionCount: rec.versions.length,
+    versionCount: rec.versions.length, revision: revisionOf(rec),
   };
 }
 
@@ -552,11 +568,15 @@ function stale(loc, rec, expect) {
   return new HttpError(409, `${loc.ref} has ${n} version${n === 1 ? '' : 's'} now, not ${expect}: it changed since you opened it. Reload it and try again.`);
 }
 
+function staleRevision(loc) {
+  return new HttpError(409, `${loc.ref} changed since you opened it. Reload it and try again.`);
+}
+
 // Changes the title, description or tags (the fields given; the id stays). `expect` is the
-// number of versions the caller saw. Returns the asset.
+// revision of the asset the caller saw. Returns the asset.
 export async function updateMeta(root, ref, { title, description, tags, expect } = {}) {
   const loc = parseRef(root, ref);
-  const count = expectedCount(expect);
+  const revision = expectedRevision(expect);
   const patch = {};
   if (title !== undefined) patch.title = cleanTitle(title);
   if (description !== undefined) patch.description = cleanDescription(description);
@@ -564,7 +584,7 @@ export async function updateMeta(root, ref, { title, description, tags, expect }
   if (!Object.keys(patch).length) throw bad('there is nothing to change: send a title, description or tags');
   return oneAtATime(loc.dir, async () => {
     const rec = await readRecord(loc);
-    if (rec.versions.length !== count) throw stale(loc, rec, count);
+    if (revisionOf(rec) !== revision) throw staleRevision(loc);
     const next = { ...rec, ...patch };
     if (JSON.stringify(next) !== JSON.stringify(rec)) await writeJsonAtomic(recordFile(loc.dir), next);
     return detailOf(next);
@@ -572,12 +592,16 @@ export async function updateMeta(root, ref, { title, description, tags, expect }
 }
 
 // Archives (true) or restores (false) an asset. An archived asset leaves the default listing and
-// takes no new versions; its files stay and are still served and resolved. Returns the asset.
-export async function setArchived(root, ref, archived) {
+// takes no new versions; its files stay and are still served and resolved. `expect` is the
+// revision of the asset the caller saw; only the app's own scripts (test/seed-library.mjs) leave
+// it out, and the route turns a missing one into null, which is refused. Returns the asset.
+export async function setArchived(root, ref, archived, { expect } = {}) {
   const loc = parseRef(root, ref);
   if (typeof archived !== 'boolean') throw bad('archived must be true or false');
+  const revision = expect === undefined ? null : expectedRevision(expect);
   return oneAtATime(loc.dir, async () => {
     const rec = await readRecord(loc);
+    if (revision !== null && revisionOf(rec) !== revision) throw staleRevision(loc);
     if (rec.archived === archived) return detailOf(rec);
     const next = { ...rec, archived };
     await writeJsonAtomic(recordFile(loc.dir), next);

@@ -6,8 +6,8 @@
 // keeps what was typed and offers Reload, and a newer version noticed while typing; attaching
 // through the picker and removing; the versions list with View and Compare; the unsaved-changes
 // guard; the projects that can't have settings; and refreshes that land late: one that left
-// before a save, Reload while one is out, and a conflict that clears when the version is back.
-// Run: node tools/run-tests.mjs workspace-app
+// before a save, Reload while one is out, and a conflict that clears when the version is back;
+// and a library that can't be read, with Try again. Run: node tools/run-tests.mjs workspace-app
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeEvent, fakeFetch, installDom, reply, settle, textOf } from '../../../test/dom.mjs';
@@ -21,6 +21,7 @@ const SHA = n => String(n).repeat(64).slice(0, 64);
 const versions = {}; // project -> saved settings, oldest first
 let postReply = null; // the next POST's answer, when a test sets one
 let resolveFails = false;
+let libraryFails = false;
 // While set, GET /api/project-settings answers what was current when it was asked, once this
 // promise resolves (a refresh that left before a save and lands after it).
 let settingsGate = null;
@@ -81,6 +82,7 @@ const calls = fakeFetch((path, { method, body }) => {
     return { ok: true, project: body.project, version: s.version, sha256: s.sha256, unchanged: false, message: `Saved the settings of ${body.project} as v${s.version}` };
   }
   if (method === 'GET' && url.pathname === '/api/library') {
+    if (libraryFails) return reply(500, { ok: false, error: 'The inbox could not be read.' });
     const project = url.searchParams.get('project');
     return { ok: true, assets: library.filter(a => a.scope === 'shared' || a.project === project) };
   }
@@ -468,5 +470,22 @@ test('a conflict a refresh raised goes again once the current version is the edi
   assert.equal(q(el, '#st-rules-example').value, '- Typed while they were gone.');
   globalThis.confirm = () => true;
   dom.click(byKey(el, 'st:discard:example'));
+  settings.onHide();
+});
+
+test('a library that can not be read says so at Attach…, with Try again', async () => {
+  const shelf = { name: 'shelf', type: { id: 'generic', label: 'Plain project' }, tabs: ['overview', 'settings'], realPath: 'C:\\z' };
+  libraryFails = true;
+  const el = await open(shelf);
+  assert.equal(byKey(el, 'st:attach:shelf').disabled, true);
+  assert.equal(q(el, '#st-attach-why-shelf').textContent, 'The library could not be read.', 'not "Loading the library…"');
+  assert.match(textOf(el), /The library could not be read: The inbox could not be read\. Try again/);
+  libraryFails = false;
+  dom.click(byKey(el, 'retry:library:shelf'));
+  await settle(5);
+  paint(el, shelf);
+  assert.equal(byKey(el, 'st:attach:shelf').disabled, false);
+  assert.equal(q(el, '#st-attach-why-shelf').textContent, '');
+  assert.doesNotMatch(textOf(el), /could not be read/);
   settings.onHide();
 });

@@ -170,6 +170,7 @@ function makeEditor(name, d) {
   ed.assetList = h('ul', { class: 'st-assets', 'aria-label': 'Attached assets' });
   ed.assetEmpty = h('p', { class: 'muted small st-assets-empty' }, 'No assets attached.');
   ed.assetNote = h('p', { class: 'muted small', hidden: true });
+  ed.libraryBox = h('div', { hidden: true }); // the library could not be read: why, with Try again
   ed.attachBtn = btn(`st:attach:${name}`, 'Attach…', () => openPicker(ed), { describedBy: id('attach-why') });
   ed.attachWhy = h('span', { class: 'reason', id: id('attach-why') });
   ed.assetCount = h('span', { class: 'muted small' });
@@ -216,7 +217,7 @@ function makeEditor(name, d) {
         h('div', { class: 'st-assets-head' }, h('span', { class: 'st-label' }, 'Attached assets'), ed.assetCount,
           h('span', { class: 'row-actions' }, ed.attachWhy, ed.attachBtn)),
         h('p', { class: 'muted small' }, 'Saved with each version: each follows its latest version or stays pinned to one. Runs, sessions and flows started here get them in those versions (a run copies them into its inputs). A missing one stops the start; an archived one is still used.'),
-        ed.assetList, ed.assetEmpty, ed.assetNote, ed.problems.assets),
+        ed.assetList, ed.assetEmpty, ed.assetNote, ed.libraryBox, ed.problems.assets),
       h('div', { class: 'st-alerts' }, ed.conflictBox, ed.errorBox)),
     h('div', { class: 'card-foot st-foot' }, ed.status, h('span', { class: 'push row-actions' }, ed.why, ed.discardBtn, ed.saveBtn)));
   return ed;
@@ -378,11 +379,17 @@ function renderAssets(ed) {
   ed.assetList.hidden = !nodes.length;
   ed.assetEmpty.hidden = nodes.length > 0;
   setText(ed.assetCount, nodes.length ? `${nodes.length} of at most ${ed.limits.assets}` : '');
-  const note = ed.resolved.error ? `Their state could not be checked: ${ed.resolved.error}` : ed.libraryError ? `The library could not be read: ${ed.libraryError}` : '';
+  const note = ed.resolved.error ? `Their state could not be checked: ${ed.resolved.error}` : '';
   setText(ed.assetNote, note);
   ed.assetNote.hidden = !note;
+  // Built again only when the error changes, so Try again keeps the focus while it still fails.
+  if (ed.libraryBox.dataset.sig !== ed.libraryError) {
+    ed.libraryBox.dataset.sig = ed.libraryError;
+    ed.libraryBox.replaceChildren(...(ed.libraryError ? [errorNote(`The library could not be read: ${ed.libraryError}`, `library:${ed.name}`)] : []));
+  }
+  ed.libraryBox.hidden = !ed.libraryError;
   const full = ed.assets.length >= ed.limits.assets;
-  const why = full ? `At most ${ed.limits.assets} can be attached.` : !ed.library ? 'Loading the library…' : '';
+  const why = full ? `At most ${ed.limits.assets} can be attached.` : ed.libraryError ? 'The library could not be read.' : !ed.library ? 'Loading the library…' : '';
   setText(ed.attachWhy, why);
   ed.attachBtn.disabled = !!why;
 }

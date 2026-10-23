@@ -14,6 +14,13 @@
 // stays off until a project is chosen, and the server refuses a run without one too. Every
 // launch is recorded with the flow's version (flow-versions.mjs); the editor lists the newest
 // as "Recent runs", marked "edited since" when the flow is no longer the version that ran.
+//
+// Attached assets (the flow's `assets` field): the editor's asset picker lists the asset library
+// (GET /api/library: shared assets, plus the target project's own), shows each attached asset's
+// status (its version, pinned or the latest, archived, gone, or not allowed for the target: a hub
+// flow and a flow for any project take shared assets only) and saves them as "ref@version, ...".
+// The run dialog's preview shows the effective launch (the project's defaults, tools and rules
+// added), the assets in the prompt, and what a run would refuse.
 import { act, api, fmtAgo, fmtTime, h, keepFocus, keyed, openPlace, plural, qs, toast } from '../lib.js';
 import { clearGuard, closeDialog, dialog, openDialog } from '../dialog.js';
 import { currentProject, refresh, state } from '../store.js';
@@ -65,6 +72,143 @@ function launchSummary(launch = {}) {
     launch.model && `model ${launch.model}`,
     launch.allowedTools && launch.allowedTools.length && `pre-approved: ${launch.allowedTools.join(', ')}`,
   ].filter(Boolean).join(' · ');
+}
+
+// The run dialog's line about how the session starts, from a preview (POST /api/flows/run with
+// preview): the effective launch, with the project's defaults and tools already added, and
+// whether its rules go into the system prompt.
+export function sessionLine(r = {}) {
+  const base = `Session: ${launchSummary(r.launch || {}) || 'your default mode, model and effort'}.`;
+  const ps = r.projectSettings;
+  if (ps && r.launch && r.launch.appendSystemPrompt) return `${base} The rules of ${r.project} (settings v${ps.version}) go into the system prompt.`;
+  if (ps) return `${base} ${r.project}'s settings v${ps.version} apply.`;
+  return base;
+}
+
+// ---------------------------------------------------------------- attached assets (tested)
+
+// The project whose own assets a flow may attach: a fixed project's or an agent's; '' for the hub
+// and for any project (shared assets only). `v` is a target select value.
+export function assetProject(v) {
+  const t = parseTargetValue(String(v || 'hub'));
+  return t.target === 'hub' || t.project === ANY_PROJECT ? '' : t.project;
+}
+
+// '' when a flow with target `v` may attach `ref`, else why not.
+export function assetRefusal(ref, v) {
+  const left = String(ref).slice(0, String(ref).indexOf(':'));
+  if (left.toLowerCase() === 'shared') return '';
+  const own = assetProject(v);
+  if (own && own.toLowerCase() === left.toLowerCase()) return '';
+  return own ? `belongs to ${left}; this flow can attach shared assets and ${own}'s own` : `belongs to ${left}; this flow can attach shared assets only`;
+}
+
+// The `assets` text a list saves as: "shared:style-guide, example:palette@2".
+export const formatAssets = list => (Array.isArray(list) ? list : []).map(a => (a.pin ? `${a.ref}@${a.pin}` : a.ref)).join(', ');
+
+// The library entry of a ref (GET /api/library spells refs as they are stored), or null.
+const entryOf = (library, ref) => (Array.isArray(library) ? library : []).find(e => e && String(e.ref).toLowerCase() === String(ref).toLowerCase()) || null;
+
+// An attached asset's status in words: { text, cls } (cls '' | 'amber' | 'red'). `library` is the
+// listing (with archived assets), `v` the target select value.
+export function assetStatus(a, library, v) {
+  const refusal = assetRefusal(a.ref, v);
+  if (refusal) return { text: `Not allowed here: ${refusal}`, cls: 'red' };
+  const e = entryOf(library, a.ref);
+  if (!e) return { text: 'Not in the library: a run would refuse it', cls: 'red' };
+  if (e.error || !e.latest) return { text: `Can't be read: ${e.error || 'no versions'}`, cls: 'red' };
+  if (a.pin && a.pin > e.latest.n) return { text: `Has no version ${a.pin}: a run would refuse it`, cls: 'red' };
+  const which = a.pin ? `Pinned to v${a.pin}${a.pin < e.latest.n ? ` (the latest is v${e.latest.n})` : ''}` : `The latest, now v${e.latest.n}`;
+  return e.archived ? { text: `${which} · archived, still used (archiving only hides it)`, cls: 'amber' } : { text: which, cls: '' };
+}
+
+// The library entries the picker offers: allowed for the target, not archived, not attached yet.
+export function assetChoices(library, attached, v) {
+  const taken = new Set((attached || []).map(a => String(a.ref).toLowerCase()));
+  return (Array.isArray(library) ? library : [])
+    .filter(e => e && !e.error && !e.archived && e.latest && !taken.has(String(e.ref).toLowerCase()) && !assetRefusal(e.ref, v));
+}
+
+// The editor's "Attached assets" part. Returns { el, value() (the assets text), setTarget(v) }.
+// The library is read again for every target (another project, other own assets); the rows
+// keep the focus across repaints (keyed), and Remove moves it to the picker.
+function assetPicker(initial, targetValue) {
+  const attached = (Array.isArray(initial) ? initial : []).map(a => ({ ref: a.ref, pin: a.pin ?? null }));
+  let target = targetValue;
+  let library = null; // null: loading
+  let failed = '';
+  let seq = 0;
+  const box = h('div', { class: 'flow-assets' });
+  const pick = h('select', { id: 'flowAssetPick', 'aria-label': 'Asset to attach' });
+  const add = h('button', { class: 'btn small', type: 'button', on: { click: () => attach() } }, 'Attach');
+  const attach = () => {
+    if (!pick.value) return;
+    attached.push({ ref: pick.value, pin: null });
+    paint();
+    pick.focus();
+  };
+  const remove = i => {
+    attached.splice(i, 1);
+    paint();
+    pick.focus();
+  };
+  const versions = n => [['', `Latest${n ? ` (v${n})` : ''}`], ...Array.from({ length: n }, (_, k) => [String(n - k), `v${n - k}`])];
+  function row(a, i) {
+    const e = entryOf(library, a.ref);
+    const name = (e && e.title) || a.ref;
+    const st = assetStatus(a, library || [], target);
+    const latest = e && e.latest ? e.latest.n : 0;
+    const pin = h('select', {
+      'aria-label': `Version of ${name}`,
+      on: { change: ev => { a.pin = ev.target.value ? Number(ev.target.value) : null; paint(); } },
+    }, versions(Math.max(latest, a.pin || 0)).map(([value, label]) => h('option', { value }, label)));
+    pin.value = a.pin ? String(a.pin) : '';
+    return keyed(h('li', {},
+      h('div', { class: 'main' },
+        h('div', { class: 'title' }, name, ' ', h('span', { class: 'muted' }, `${a.ref}${e && e.kind ? ` · ${e.kind}` : ''}`)),
+        h('div', { class: `sub asset-status${st.cls ? ` is-${st.cls}` : ''}` }, st.text)),
+      h('div', { class: 'row-actions' }, pin,
+        h('button', { class: 'btn small', type: 'button', 'aria-label': `Remove ${name}`, on: { click: () => remove(i) } }, 'Remove'))), `asset:${a.ref}`);
+  }
+  function paint() {
+    keepFocus(box, () => {
+      const choices = library ? assetChoices(library, attached, target) : [];
+      pick.replaceChildren(h('option', { value: '' }, library === null ? 'Loading the library…' : choices.length ? 'Choose an asset…' : 'No other asset can be attached'),
+        ...choices.map(c => h('option', { value: c.ref }, `${c.title} (${c.ref}, ${c.kind})`)));
+      pick.disabled = !choices.length;
+      add.disabled = !choices.length;
+      box.replaceChildren(
+        failed ? h('p', { class: 'form-error' }, `The asset library could not be read: ${failed}`) : null,
+        attached.length ? h('ul', { class: 'list flow-asset-list' }, attached.map(row)) : h('p', { class: 'muted small-text' }, 'No assets attached.'),
+        h('div', { class: 'flow-asset-add' }, pick, add));
+    });
+  }
+  async function load() {
+    const mine = ++seq;
+    library = null;
+    failed = '';
+    paint();
+    const project = assetProject(target);
+    try {
+      const r = await api(`/api/library?${qs({ archived: 1, project: project || undefined })}`);
+      if (mine !== seq) return;
+      library = Array.isArray(r.assets) ? r.assets : [];
+    } catch (e) {
+      if (mine !== seq) return;
+      library = [];
+      failed = e.message;
+    }
+    paint();
+  }
+  load();
+  return {
+    el: h('div', {},
+      h('div', { class: 'section-label' }, h('span', {}, 'Attached assets')),
+      h('p', { class: 'muted small-text' }, 'From the asset library. A run lists them after the images, in these versions. A hub flow and a flow for any project take shared assets only.'),
+      box),
+    value: () => formatAssets(attached),
+    setTarget(v) { if (v !== target) { target = v; load(); } },
+  };
 }
 
 // One image in the flow editor: its run label, its file name and an editable caption.
@@ -165,15 +309,20 @@ export function runVersionParts(r) {
   return { before: 'Version ', hash: v.sha256.slice(0, 8), after: commit + since, edited: edited.length > 0 };
 }
 
-// One recorded launch: when and where, then its version line, and "edited since" when the flow
-// is no longer the version that ran.
+// The assets a recorded run got, in words: "with shared:style-guide v2, example:palette v1" ('' for none).
+export const runAssetsText = r => (Array.isArray(r.assets) && r.assets.length ? `with ${r.assets.map(a => `${a.ref} v${a.version}`).join(', ')}` : '');
+
+// One recorded launch: when and where, then its version line (and the asset versions it got), and
+// "edited since" when the flow is no longer the version that ran.
 function flowRunRow(r) {
   const p = runVersionParts(r);
   const when = r.at ? h('time', { datetime: r.at, title: fmtTime(r.at) }, fmtAgo(r.at)) : 'At an unknown time';
+  const assets = runAssetsText(r);
   return h('li', {},
     h('div', { class: 'main' },
       h('div', { class: 'title' }, when, ` · ${runWhere(r)}`),
-      h('div', { class: 'sub wrap' }, p.before, p.hash ? h('code', {}, p.hash) : null, p.after)),
+      h('div', { class: 'sub wrap' }, p.before, p.hash ? h('code', {}, p.hash) : null, p.after),
+      assets ? h('div', { class: 'sub wrap' }, assets) : null),
     p.edited ? h('span', { class: 'badge amber' }, 'edited since') : null);
 }
 
@@ -247,8 +396,10 @@ async function flowDialog(slug) {
       h('label', {}, 'Model', h('small', {}, 'An alias or a full model name.'), model,
         h('datalist', { id: 'flowModels' }, ['opus', 'sonnet', 'haiku', 'fable'].map(m => h('option', { value: m })))),
       h('label', {}, 'Pre-approved tools', h('small', {}, 'Allowed without asking, e.g. Read, Bash(npm test:*).'), tools)));
+  const assets = assetPicker(f.assetList || [], target.value);
+  target.addEventListener('change', () => assets.setTarget(target.value));
   const snapshot = () => JSON.stringify([title.value, description.value, target.value, prompt.value, mode.value, model.value, effort.value, tools.value,
-    ask.value, askRequired.checked]);
+    ask.value, askRequired.checked, assets.value()]);
   const initial = snapshot();
   const dirty = () => snapshot() !== initial;
   const error = h('div', { class: 'form-error', hidden: true });
@@ -296,7 +447,7 @@ async function flowDialog(slug) {
       const body = {
         slug, hash: f.hash, title: title.value, description: description.value, prompt: prompt.value, ...parseTargetValue(target.value),
         permissionMode: mode.value, model: model.value.trim(), effort: effort.value, allowedTools: tools.value,
-        ask: ask.value.trim(), askRequired: !!ask.value.trim() && askRequired.checked,
+        ask: ask.value.trim(), askRequired: !!ask.value.trim() && askRequired.checked, assets: assets.value(),
       };
       const r = await api('/api/flows', { method: 'POST', body });
       clearGuard();
@@ -323,6 +474,7 @@ async function flowDialog(slug) {
         'The images go above it and run notes below it when you run it. Ctrl+S saves.'), prompt),
     error,
     images,
+    assets.el,
     slug ? recentRuns(slug) : null);
   body.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); doSave(); }
@@ -375,6 +527,16 @@ export function startState({ needAnswer = false, project = null, place = '' } = 
   };
 }
 
+// The lines under the run dialog's session line, from a preview: what a run would refuse
+// ({ text, problem: true }), then the hint to choose a project and archived assets in use.
+export function previewNotes(r = {}) {
+  const out = (Array.isArray(r.problems) ? r.problems : []).map(text => ({ text: `A run would be refused: ${text}`, problem: true }));
+  if (r.note) out.push({ text: r.note, problem: false });
+  const archived = (Array.isArray(r.assets) ? r.assets : []).filter(a => a.archived && !a.missing).map(a => a.ref);
+  if (archived.length) out.push({ text: `Archived, still used: ${archived.join(', ')}.`, problem: false });
+  return out;
+}
+
 // The project picker of a flow for any project. Returns { pick, help, choices }.
 function projectPicker() {
   const { choices, value } = projectChoices(state && state.projects, currentProject);
@@ -415,6 +577,9 @@ export async function runFlowDialog(f) {
   const runError = h('div', { class: 'form-error', role: 'alert', hidden: true });
   const pre = h('pre', { class: 'output' }, 'Loading…');
   const settings = h('p', { class: 'muted small-text' });
+  // What a run would refuse (an attached asset that is gone, settings that can't be read), and
+  // for a flow for any project the hint to choose one; updated with every preview.
+  const problems = h('div', { class: 'flow-preview-problems' });
   const start = h('button', { class: 'btn primary', type: 'button' }, `Start in ${flowTargetLabel(f)}`);
   const reason = h('span', { class: 'reason push-left', id: 'flowStartReason' });
   let touched = false;
@@ -431,15 +596,18 @@ export async function runFlowDialog(f) {
     if (invalid) notes.setAttribute('aria-invalid', 'true');
     else notes.removeAttribute('aria-invalid');
   };
-  if (picker) picker.pick.addEventListener('change', () => { runError.hidden = true; sync(); });
   let timer = 0;
+  // The preview follows the chosen project, so its settings and attached assets show too.
   const preview = async () => {
     try {
-      const r = await api('/api/flows/run', { method: 'POST', body: { slug: f.slug, notes: notes.value, preview: true } });
+      const body = { slug: f.slug, notes: notes.value, preview: true, ...(picker && picker.pick.value ? { project: picker.pick.value } : {}) };
+      const r = await api('/api/flows/run', { method: 'POST', body });
       pre.textContent = r.prompt;
-      settings.textContent = `Session: ${launchSummary(r.launch) || 'your default mode, model and effort'}.`;
-    } catch (e) { pre.textContent = e.message; }
+      settings.textContent = sessionLine(r);
+      problems.replaceChildren(...previewNotes(r).map(n => h('p', { class: n.problem ? 'form-error' : 'muted small-text' }, n.text)));
+    } catch (e) { pre.textContent = e.message; problems.replaceChildren(); }
   };
+  if (picker) picker.pick.addEventListener('change', () => { runError.hidden = true; sync(); preview(); });
   notes.addEventListener('input', () => {
     touched = true;
     runError.hidden = true;
@@ -476,7 +644,7 @@ export async function runFlowDialog(f) {
     where,
     label,
     runError,
-    h('div', {}, h('div', { class: 'section-label' }, h('span', {}, 'Claude starts with')), settings, pre)), {
+    h('div', {}, h('div', { class: 'section-label' }, h('span', {}, 'Claude starts with')), settings, problems, pre)), {
     wide: true,
     actions: [reason, h('button', { class: 'btn', type: 'button', on: { click: closeDialog } }, 'Cancel'), start],
   });

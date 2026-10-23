@@ -25,14 +25,18 @@
 //   runs/executor.mjs  every Claude stage of that run gets that version's rules as a
 //                      <project_instructions source="workspace-rules@v<N>"> block (rulesBlock)
 //   launch.mjs         every session the app starts in a project gets the current settings
-//                      (launchWithSettings): the rules as --append-system-prompt, the defaults
-//                      where its launch leaves a value empty, the pre-approved tools added to its own
+//                      (launchWithSettings): the rules as --append-system-prompt, followed by the
+//                      list of its attached assets when it has no prompt of its own to list them
+//                      in, the defaults where its launch leaves a value empty, the pre-approved
+//                      tools added to its own
 //   routes/project-settings.mjs   the API behind the Settings tab
-// Attached assets are checked for their shape only; the asset library is a module of its own.
+// Attached assets are checked for their shape only here; attached-assets.mjs resolves them
+// through the asset library (a module of its own) for runs and sessions.
 import * as fsp from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
-import { EFFORTS, MAX_TOOL_RULES, MODEL_RE, PERMISSION_MODES, splitToolRules, TOOL_RULE_RE } from '../lib/prompt-file.mjs';
+import { EFFORTS, MAX_APPEND_SYSTEM_PROMPT, MAX_TOOL_RULES, MODEL_RE, PERMISSION_MODES, splitToolRules, TOOL_RULE_RE } from '../lib/prompt-file.mjs';
+import { assetsSystemText } from './attached-assets.mjs';
 import { canonicalJson, PROJECT_RE, sha256Text } from './core/datadir.mjs';
 import { HttpError } from './http.mjs';
 import { escapeInstructionTags } from './runs/prompts.mjs';
@@ -368,22 +372,35 @@ export function rulesBlock(settings) {
 // A session's launch (tools/lib/prompt-file.mjs) with the project's settings applied: a default
 // fills in only a model, effort or permission mode the launch leaves empty (a flow's own settings
 // win), the project's pre-approved tools come after the launch's own (each once), and the rules
-// become appendSystemPrompt. Without settings it is an unchanged copy. Throws when the tools come
-// to more than MAX_TOOL_RULES together. The result still goes through checkLaunch.
-export function launchWithSettings(launch = {}, settings = null) {
+// become appendSystemPrompt. `assets` are the project's attached assets, resolved
+// (attached-assets.mjs), for a session without a prompt of its own to list them in: their list
+// follows the rules (assetsSystemText). Without settings or assets it is an unchanged copy. Throws
+// when the tools come to more than MAX_TOOL_RULES together, or the rules and the asset list to
+// more than the system prompt takes. The result still goes through checkLaunch.
+export function launchWithSettings(launch = {}, settings = null, assets = []) {
   const out = { ...(launch || {}) };
-  if (!settings) return out;
-  const d = settings.defaults || {};
-  for (const k of DEFAULT_KEYS) if (!out[k] && d[k]) out[k] = d[k];
-  const own = [...new Set(Array.isArray(out.allowedTools) ? out.allowedTools.map(String) : splitToolRules(out.allowedTools))];
-  const theirs = [...new Set(splitToolRules(settings.allowedTools))];
-  const tools = [...new Set([...own, ...theirs])];
-  if (tools.length > MAX_TOOL_RULES) {
-    throw new Error(`this session's own pre-approved tools (${own.length}) and those of ${settings.project || 'the project'} (${theirs.length}) ` +
-      `make ${tools.length} without duplicates, more than ${MAX_TOOL_RULES}. Remove some from the flow or from the project settings.`);
+  const list = Array.isArray(assets) ? assets : [];
+  if (!settings && !list.length) return out;
+  const project = (settings && settings.project) || 'the project';
+  if (settings) {
+    const d = settings.defaults || {};
+    for (const k of DEFAULT_KEYS) if (!out[k] && d[k]) out[k] = d[k];
+    const own = [...new Set(Array.isArray(out.allowedTools) ? out.allowedTools.map(String) : splitToolRules(out.allowedTools))];
+    const theirs = [...new Set(splitToolRules(settings.allowedTools))];
+    const tools = [...new Set([...own, ...theirs])];
+    if (tools.length > MAX_TOOL_RULES) {
+      throw new Error(`this session's own pre-approved tools (${own.length}) and those of ${project} (${theirs.length}) ` +
+        `make ${tools.length} without duplicates, more than ${MAX_TOOL_RULES}. Remove some from the flow or from the project settings.`);
+    }
+    if (tools.length) out.allowedTools = tools;
   }
-  if (tools.length) out.allowedTools = tools;
-  const rules = typeof settings.rules === 'string' ? settings.rules : '';
-  if (rules.trim()) out.appendSystemPrompt = out.appendSystemPrompt ? `${out.appendSystemPrompt}\n\n${rules}` : rules;
+  const rules = settings && typeof settings.rules === 'string' && settings.rules.trim() ? settings.rules : '';
+  const listed = assetsSystemText(list);
+  const text = [out.appendSystemPrompt, rules, listed].filter(s => typeof s === 'string' && s.trim()).join('\n\n');
+  if (listed && text.length > MAX_APPEND_SYSTEM_PROMPT) {
+    throw new Error(`the rules of ${project} and the list of its ${list.length} attached assets come to ${text.length} characters for the system prompt, ` +
+      `more than ${MAX_APPEND_SYSTEM_PROMPT}. Shorten the rules or attach fewer assets.`);
+  }
+  if (text) out.appendSystemPrompt = text;
   return out;
 }

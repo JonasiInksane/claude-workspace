@@ -30,8 +30,25 @@ details.launch[open] summary { margin-bottom: 8px; }
 .flow-runs .list .title { font-size: var(--t-md); }
 .flow-runs .list .sub code { font-size: var(--t-sm); }
 .flow-runs .badge { margin-top: 2px; }
+/* The editor's "Attached assets": one row per asset (name, ref and status; its version and
+   Remove), then the picker. A status that stops a run reads red, an archived asset amber. */
+.flow-asset-list li { padding: 7px 0; align-items: flex-start; }
+.flow-asset-list .title { font-size: var(--t-md); white-space: normal; overflow-wrap: anywhere; }
+.flow-asset-list .title .muted { font-weight: 400; font-size: var(--t-sm); }
+.flow-asset-list .asset-status { white-space: normal; }
+.flow-asset-list .asset-status.is-red { color: var(--red); }
+.flow-asset-list .asset-status.is-amber { color: var(--amber); }
+.flow-asset-list select { max-width: 160px; }
+.flow-asset-add { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+.flow-asset-add select { flex: 1; min-width: 200px; max-width: 480px; }
+/* The run dialog: what a run would refuse, and hints, between the session line and the prompt */
+.flow-preview-problems:empty { display: none; }
+.flow-preview-problems .form-error { margin: 0 0 6px; }
+.flow-preview-problems p.muted { margin: 0 0 6px; }
 
 @media (max-width: 760px) {
   .flow-form .two-col { grid-template-columns: 1fr; }
   .flow-project select { max-width: none; }
+  .flow-asset-list li { flex-wrap: wrap; }
+  .flow-asset-add select { min-width: 0; max-width: none; }
 }

@@ -15,8 +15,11 @@
 // It is null for a flow name that isn't one, or a flow file that can't be read.
 //
 // <dataDir>/flow-runs.jsonl gets one line per launch that started (a failed launch writes none):
-//   {"at":"…","flow":"<slug>","version":{…},"target":"hub|project|agent","project":"…","agent":"…","sessionId":"<uuid>"}
+//   {"at":"…","flow":"<slug>","version":{…},"target":"hub|project|agent","project":"…","agent":"…","sessionId":"<uuid>",
+//    "assets":[{"ref":"shared:style-guide","version":2,"sha256":"…"}]}
 // For a flow that runs in any project (project "*"), `project` is the one the run chose.
+// `assets` are the exact versions the session was given: the flow's own attachments and its
+// project's (attached-assets.mjs). Lines from before assets were recorded read as [].
 // readFlowRuns gives the newest records of one flow, and versionChanges says what changed since.
 import { readFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
@@ -95,9 +98,11 @@ export async function flowVersion(root, slug, { timeoutMs = VERSION_GIT_TIMEOUT_
 
 // Appends one launch to flow-runs.jsonl (the folder is made on first use). Throws when the line
 // can't be written; the caller decides whether that matters (a started session stays started).
-export async function recordFlowRun(dataDir, { flow, version = null, target, project = '', agent = '', sessionId = '' }, now = new Date()) {
+// `assets`: [{ ref, version, sha256 }] (attached-assets.mjs assetRecords).
+export async function recordFlowRun(dataDir, { flow, version = null, target, project = '', agent = '', sessionId = '', assets = [] }, now = new Date()) {
   await appendJsonl(flowRunsFile(dataDir), {
     at: now.toISOString(), flow, version: version || null, target, project: project || '', agent: agent || '', sessionId: sessionId || '',
+    assets: cleanAssets(assets),
   });
 }
 
@@ -120,6 +125,14 @@ function cleanVersion(v) {
   };
 }
 
+// The assets of a record with only { ref, version, sha256 } each, and only entries that have all
+// three, so a hand-edited or torn line can't break the page.
+function cleanAssets(list) {
+  return (Array.isArray(list) ? list : [])
+    .filter(a => a && typeof a === 'object' && str(a.ref) && Number.isSafeInteger(a.version) && a.version >= 1 && HEX64_RE.test(str(a.sha256)))
+    .map(a => ({ ref: a.ref, version: a.version, sha256: a.sha256 }));
+}
+
 // The newest `limit` launches of one flow, newest first (the file's own order: lines are only
 // ever appended). Lines of other flows, broken lines and lines that aren't records are skipped.
 export async function readFlowRuns(dataDir, slug, { limit = RECENT_RUNS } = {}) {
@@ -127,7 +140,7 @@ export async function readFlowRuns(dataDir, slug, { limit = RECENT_RUNS } = {}) 
   const mine = rows.filter(r => r && typeof r === 'object' && !Array.isArray(r) && r.flow === slug);
   return (limit > 0 ? mine.slice(-limit) : []).reverse().map(r => ({
     at: isoTime(r.at), flow: slug, version: cleanVersion(r.version), target: str(r.target), project: str(r.project),
-    agent: str(r.agent), sessionId: str(r.sessionId),
+    agent: str(r.agent), sessionId: str(r.sessionId), assets: cleanAssets(r.assets),
   }));
 }
 

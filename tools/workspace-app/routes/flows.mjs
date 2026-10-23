@@ -6,18 +6,30 @@
 //
 // Where a run starts: a flow for any project (project "*") needs the request's `project`, a
 // known project the app can start in; a flow with a fixed project (or the hub) refuses another
-// one. Every launch that started appends its record, with the flow's version, to
-// <dataDir>/flow-runs.jsonl (flow-versions.mjs); a refused or failed launch writes nothing.
+// one. Every launch that started appends its record, with the flow's version and the exact asset
+// versions it got, to <dataDir>/flow-runs.jsonl (flow-versions.mjs); a refused or failed launch
+// writes nothing.
+//
+// Assets: a run gets the flow's own attached assets (its `assets` field) and, in a project, the
+// ones the project's settings attach, resolved to exact versions (attached-assets.mjs). They are
+// listed in the prompt after the images ("Asset 1: <title> (<ref> v<n>, <kind>) at <path>"), and
+// the session may read their folders, as it reads the image folder. An asset, version or file
+// that is gone refuses the run (400), and so does a file that no longer matches its recorded
+// SHA-256 (409). The preview shows the effective launch: the project's defaults, tools and rules
+// added (launch.mjs withProjectSettings), and the assets with what a run would refuse.
 import { basename, sep } from 'node:path';
 import {
   archiveFlow, checkFlow, checkRunNotes, flowImages, flowImagesDir, flowLaunch, getFlow, isAnyProject, LIMITS as FLOW_LIMITS,
-  readCaptions, restoreFlow, runPrompt, saveFlow, setCaption, skippedFlowImages, SLUG_RE,
+  parseFlowAssets, readCaptions, restoreFlow, runPrompt, saveFlow, setCaption, skippedFlowImages, SLUG_RE,
 } from '../../lib/flows.mjs';
 import { realProjectDir } from '../../lib/projects.mjs';
+import { assetDirs, assetLine, assetProblems, assetRecords, resolveAssets, verifyFiles } from '../attached-assets.mjs';
 import { allDone } from '../core/git.mjs';
 import { flowVersion, readFlowRuns, recordFlowRun, versionChanges } from '../flow-versions.mjs';
 import { HttpError, readJson } from '../http.mjs';
+import { sessionSettings, withProjectSettings } from '../launch.mjs';
 import { findProject, flowOrThrow, launchableOrThrow } from '../lookup.mjs';
+import { settingsRef } from '../project-settings.mjs';
 
 // The project a run of the checked flow `f` starts in ('' for the hub). `requested` is the
 // request's project: required for a flow for any project (a known project, its real spelling),
@@ -39,8 +51,56 @@ export function runProject(root, f, requested) {
 }
 
 export function routes({ root, actions, dataDir }) {
+  // The assets a run of the checked flow `f` in `project` ('' for the hub) gets: the flow's own,
+  // then those its project's settings attach, each ref once (the flow's pin wins), resolved.
+  const resolveRunAssets = (f, project, settings) => resolveAssets(root, f.target === 'hub' ? '' : project,
+    [...parseFlowAssets(f.assets).list, ...((settings && Array.isArray(settings.assets)) ? settings.assets : [])]);
+
+  // What a run of `f` gets of its project: the settings (undefined for the hub, null for none)
+  // and the resolved assets, every file checked against its recorded SHA-256. Throws 400 for
+  // settings that can't be read or an asset that is gone, 409 for a file that changed.
+  async function runInputs(f, project) {
+    const name = f.title || f.slug;
+    let settings;
+    try { settings = await sessionSettings(dataDir, 'flow', f.target === 'hub' ? '' : project); } catch (e) {
+      throw new HttpError(400, `${name} can't start: ${e.message}`);
+    }
+    const assets = await resolveRunAssets(f, project, settings);
+    const gone = assetProblems(assets);
+    if (gone.length) throw new HttpError(400, `${name} can't start: ${gone.join('; ')}`);
+    const changed = await verifyFiles(assets);
+    if (changed.length) throw new HttpError(409, `${name} can't start: ${changed.join('; ')}`);
+    return { settings, assets };
+  }
+
+  // The preview of a run (POST /api/flows/run with preview): the prompt with the assets a run
+  // would list, the effective launch (the project's defaults, tools and rules added), and in
+  // `problems` what a run would refuse. A flow for any project shows its project's part once
+  // `requested` names one. Nothing is started or written.
+  async function previewRun(f, { images, captions, notes, notesError, launch, requested }) {
+    const out = { ok: true, notesError, launch, prompt: '', project: '', projectSettings: null, assets: [], problems: [], note: '' };
+    let project = '';
+    if (f.target !== 'hub') {
+      if (isAnyProject(f) && !String(requested ?? '').trim()) out.note = 'Choose a project to see its settings and attached assets.';
+      else project = runProject(root, f, requested);
+    }
+    let settings;
+    try { settings = await sessionSettings(dataDir, 'flow', project); } catch (e) { out.problems.push(e.message); }
+    let items = [];
+    try { items = await resolveRunAssets(f, project, settings); } catch (e) { out.problems.push(e.message); }
+    out.problems.push(...assetProblems(items));
+    const usable = items.filter(i => !i.missing);
+    out.prompt = runPrompt(f, images, notes, captions, usable.map((a, i) => assetLine(a, i)));
+    try { out.launch = withProjectSettings(launch, settings); } catch (e) { out.problems.push(e.message); }
+    out.project = project;
+    out.projectSettings = settings ? settingsRef(settings) : null;
+    out.assets = items.map(i => ({ ref: i.ref, pin: i.pin, version: i.version, kind: i.kind, title: i.title, archived: !!i.archived, missing: !!i.missing }));
+    return out;
+  }
+
   return {
-    // The flow, plus its images in run order (Image 1 first) with their captions.
+    // The flow, plus its images in run order (Image 1 first) with their captions, and its attached
+    // assets as a list (assetList: [{ ref, pin }]).
     'GET /api/flow': async (req, res, url) => {
       const f = flowOrThrow(root, Object.fromEntries(url.searchParams).slug);
       const { file, ...flow } = f;
@@ -50,6 +110,7 @@ export function routes({ root, actions, dataDir }) {
       }));
       return {
         ok: true, ...flow, path: `flows/${f.slug}.md`, imageDir: flowImagesDir(root, f.slug), images, skipped: skippedFlowImages(root, f.slug),
+        assetList: parseFlowAssets(f.assets).list,
       };
     },
 
@@ -62,26 +123,29 @@ export function routes({ root, actions, dataDir }) {
     },
 
     // Creates a flow (no slug) or saves one (slug + the hash it was opened with). Saving without
-    // `ask` or `askRequired` keeps the stored value: an editor that doesn't know the question
-    // (older than it) must not quietly remove it. A stale hash is still refused by saveFlow.
+    // `ask`, `askRequired` or `assets` keeps the stored value: an editor that doesn't know the
+    // field (older than it) must not quietly remove it. A stale hash is still refused by saveFlow.
     'POST /api/flows': async req => {
       const b = await readJson(req);
       const fields = {
         title: b.title, description: b.description, target: b.target, project: b.project, agent: b.agent, prompt: b.prompt,
         permissionMode: b.permissionMode, model: b.model, effort: b.effort, allowedTools: b.allowedTools,
-        ask: b.ask, askRequired: b.askRequired,
+        ask: b.ask, askRequired: b.askRequired, assets: b.assets,
       };
+      if (fields.assets !== undefined && fields.assets !== null && typeof fields.assets !== 'string') throw new HttpError(400, 'assets must be text such as "shared:style-guide, example:palette@2"');
       const stored = b.slug ? getFlow(root, String(b.slug)) : null; // none: saveFlow says so (400)
       if (stored && !('ask' in b)) fields.ask = stored.ask;
       if (stored && !('askRequired' in b)) fields.askRequired = stored.askRequired;
+      if (stored && !('assets' in b)) fields.assets = stored.assets;
       const r = saveFlow(root, fields, { slug: b.slug ? String(b.slug) : '', baseHash: String(b.hash || '') });
       if (r.error) throw new HttpError(r.conflict ? 409 : 400, r.error);
       return { ok: true, slug: r.slug, hash: r.hash, message: b.slug ? 'Flow saved' : 'Flow created' };
     },
 
-    // preview: true only returns the prompt the run would start with (also before the question is
-    // answered; notesError then says what a real run would refuse). The prompt doesn't depend on
-    // the project, so a preview doesn't need one. A run takes `project` (see runProject).
+    // preview: true only returns what the run would start with (previewRun), also before the
+    // question is answered (notesError then says what a real run would refuse). A flow for any
+    // project previews without a project until the request names one. A run takes `project`
+    // (see runProject).
     'POST /api/flows/run': async req => {
       const b = await readJson(req);
       const stored = flowOrThrow(root, b.slug);
@@ -94,27 +158,31 @@ export function routes({ root, actions, dataDir }) {
       if (notes.length > FLOW_LIMITS.notes) throw new HttpError(400, `the notes are longer than ${FLOW_LIMITS.notes} characters`);
       const images = flowImages(root, f.slug);
       if (images.length > FLOW_LIMITS.images) throw new HttpError(400, `a flow can pass at most ${FLOW_LIMITS.images} images; it has ${images.length}`);
-      const prompt = runPrompt(f, images, notes, readCaptions(root, f.slug));
+      const captions = readCaptions(root, f.slug);
       const launch = flowLaunch(f);
       const notesError = checkRunNotes(f, notes);
-      if (b.preview === true) return { ok: true, prompt, launch, notesError };
+      if (b.preview === true) return previewRun(f, { images, captions, notes, notesError, launch, requested: b.project });
       if (notesError) throw new HttpError(400, notesError);
       const project = runProject(root, f, b.project);
       if (f.target !== 'hub') launchableOrThrow(project);
       // A linked project starts in its checkout's real folder (404 when the link is broken).
       const dir = f.target === 'project' ? realProjectDir(root, project) : root;
-      const readDirs = images.length ? [flowImagesDir(root, f.slug)] : [];
+      const { settings, assets } = await runInputs(f, project);
+      const prompt = runPrompt(f, images, notes, captions, assets.map((a, i) => assetLine(a, i)));
+      const readDirs = [...(images.length ? [flowImagesDir(root, f.slug)] : []), ...assetDirs(assets)];
       const title = `Flow: ${f.title || f.slug}`;
       // The version of the files this prompt was built from, taken before the terminal opens.
       const version = await flowVersion(root, f.slug);
+      // The session lists no assets a second time; it records them, with the settings they came from.
+      const session = { title, prompt, readDirs, launch, kind: 'flow', assets, settings };
       let started;
-      if (f.target === 'hub') started = await actions.startClaude({ dir, title, prompt, readDirs, launch, kind: 'flow' });
-      else if (f.target === 'project') started = await actions.startClaude({ dir, title, prompt, readDirs, launch, kind: 'flow', project });
-      else started = await actions.startAgent({ project, agent: f.agent, title, prompt, readDirs, launch, kind: 'flow' });
+      if (f.target === 'hub') started = await actions.startClaude({ dir, ...session });
+      else if (f.target === 'project') started = await actions.startClaude({ dir, ...session, project });
+      else started = await actions.startAgent({ project, agent: f.agent, ...session });
       const sessionId = started && typeof started.sessionId === 'string' ? started.sessionId : '';
       let recorded = true;
       try {
-        await recordFlowRun(dataDir, { flow: f.slug, version, target: f.target, project, agent: f.agent, sessionId });
+        await recordFlowRun(dataDir, { flow: f.slug, version, target: f.target, project, agent: f.agent, sessionId, assets: assetRecords(assets) });
       } catch (e) {
         // Best effort, like sessions.jsonl: the session started, so the run still counts as started;
         // the message says that its version wasn't recorded.

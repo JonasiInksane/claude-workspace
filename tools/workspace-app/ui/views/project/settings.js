@@ -215,7 +215,7 @@ function makeEditor(name, d) {
       h('div', { class: 'st-block' },
         h('div', { class: 'st-assets-head' }, h('span', { class: 'st-label' }, 'Attached assets'), ed.assetCount,
           h('span', { class: 'row-actions' }, ed.attachWhy, ed.attachBtn)),
-        h('p', { class: 'muted small' }, 'Saved with each version: each follows its latest version or stays pinned to one. Runs and sessions don\'t read attached assets yet; that comes with the run manifest.'),
+        h('p', { class: 'muted small' }, 'Saved with each version: each follows its latest version or stays pinned to one. Runs, sessions and flows started here get them in those versions (a run copies them into its inputs). A missing one stops the start; an archived one is still used.'),
         ed.assetList, ed.assetEmpty, ed.assetNote, ed.problems.assets),
       h('div', { class: 'st-alerts' }, ed.conflictBox, ed.errorBox)),
     h('div', { class: 'card-foot st-foot' }, ed.status, h('span', { class: 'push row-actions' }, ed.why, ed.discardBtn, ed.saveBtn)));

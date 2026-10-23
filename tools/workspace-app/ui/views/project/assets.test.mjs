@@ -199,6 +199,7 @@ test('a pipeline project shows its game assets below; a folder name without sett
   assert.match(textOf(el), /sample-art 1 asset/);
   assert.match(textOf(el), /Crate/);
   assert.match(textOf(el), /No assets of its own yet/);
+  assert.match(textOf(el), /Nothing attached yet\. Attach a shared asset, or one of the project's own below: runs, sessions and flows started here get what is attached\./);
   assets.onHide();
   const upper = { name: 'BigApp', type: { id: 'generic', label: 'Plain project' }, tabs: ['overview', 'assets'], realPath: 'C:\\z' };
   const n = calls.length;

@@ -140,6 +140,7 @@ test('nothing saved yet: where the settings apply, an empty editor, no versions,
   assert.match(text, /Nothing saved yet: the first save makes v1/);
   assert.match(text, /0 \/ 20,000 characters/);
   assert.match(text, /No assets attached\./);
+  assert.match(text, /Runs, sessions and flows started here get them in those versions \(a run copies them into its inputs\)\. A missing one stops the start; an archived one is still used\./);
   assert.match(text, /No versions yet\. The first save makes v1\./);
   assert.match(text, /Has problems The profile has 1 problem\./);
   assert.match(text, /node tools\/workspace-app\/profile\/profile\.mjs --check example/);

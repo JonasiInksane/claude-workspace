@@ -168,7 +168,7 @@ function libraryCard(name) {
       named ? h('div', {},
         h('div', { class: 'section-label' }, h('span', {}, `Attached in its settings (${attached.length})`)),
         attached.length ? h('div', { class: 'lib-grid' }, attached.map(e => attachedCard(name, e, canAttach)))
-          : h('p', { class: 'muted small' }, 'Nothing attached yet. Attach a shared asset, or one of the project\'s own below. Runs and sessions don\'t read attached assets yet; that comes with the run manifest.')) : null,
+          : h('p', { class: 'muted small' }, 'Nothing attached yet. Attach a shared asset, or one of the project\'s own below: runs, sessions and flows started here get what is attached.')) : null,
       h('div', {},
         h('div', { class: 'section-label' }, h('span', {}, named ? `Its own, not attached (${ownShown.length})` : `Its own (${ownShown.length})`)),
         ownShown.length ? h('div', { class: 'lib-grid' }, ownShown.map(a => ownCard(name, a, canAttach)))

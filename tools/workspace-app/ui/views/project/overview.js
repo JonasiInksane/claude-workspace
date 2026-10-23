@@ -14,7 +14,8 @@
 // the rest comes from the state. Cards are memoised by what they show and patched in place, so a
 // refresh keeps the focus, an open <details> and the text typed into the intent box.
 //
-// The pure helpers (factsBadges, quickRow, aboutFacts) are exported for overview.test.mjs.
+// The pure helpers (factsBadges, quickRow, aboutFacts, recentRuns) are exported for
+// overview.test.mjs.
 import { act, fmtAgo, fmtDuration, h, launch, plural } from '../../lib.js';
 import { atReviewGate, go, goProject, openLauncher, pipelines, state } from '../../store.js';
 import { intentBox } from '../../parts/intent.js';
@@ -197,20 +198,30 @@ function intent(name, d) {
   return el;
 }
 
-// The newest runs plus the project's waiting and running ones from the store, so those show even
-// when they are older: waiting first, then running, then the rest by recency; at most RECENT.
-function recentRuns(name, recent) {
-  if (!recent) return null;
-  const out = [...recent];
-  for (const r of liveRunsOf(name)) if (!out.some(x => x.id === r.id)) out.push(r);
-  return out.map((r, i) => [r, i]).sort((a, b) => (RUN_ORDER[a[0].status] ?? 2) - (RUN_ORDER[b[0].status] ?? 2) || a[1] - b[1])
-    .map(([r]) => r).slice(0, RECENT);
+// The route's newest runs and the store's waiting and running ones of this project (which may be
+// newer than that answer), each once (the route's row wins); null while the route's answer is out.
+export function mergeRuns(recent, live = []) {
+  if (!Array.isArray(recent)) return null;
+  const out = recent.filter(r => r && typeof r.id === 'string');
+  for (const r of Array.isArray(live) ? live : []) if (r && typeof r.id === 'string' && !out.some(x => x.id === r.id)) out.push(r);
+  return out;
+}
+
+// The RECENT newest of `runs` (run ids sort by time), the waiting ones first, then the running
+// ones, then the rest by recency. So a run you just started always shows, however many older runs
+// wait; the card counts those under its list (Today and Tasks show them).
+export function recentRuns(runs) {
+  if (!Array.isArray(runs)) return null;
+  const newest = [...runs].sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)).slice(0, RECENT);
+  return newest.map((r, i) => [r, i]).sort((a, b) => (RUN_ORDER[a[0].status] ?? 2) - (RUN_ORDER[b[0].status] ?? 2) || a[1] - b[1]).map(([r]) => r);
 }
 
 function runsCard(name, s) {
   const R = s.runs;
-  const list = recentRuns(name, (dataOf(R) || {}).runs);
-  return memo(`runs:${name}`, [list, R && R.error, minute(), pipelines.list.length], () => {
+  const all = mergeRuns((dataOf(R) || {}).runs, liveRunsOf(name));
+  const list = recentRuns(all);
+  const older = list ? all.filter(r => r.status === 'waiting' && !list.includes(r)).length : 0;
+  return memo(`runs:${name}`, [list, older, R && R.error, minute(), pipelines.list.length], () => {
     const head = cardHead('Recent runs', btn('runs:tasks', 'All tasks', () => goProject(name, 'tasks'), { cls: 'link' }));
     if (!list) return h('div', { class: 'card' }, head, R && R.error ? h('div', { class: 'card-body' }, errorNote(R.error, 'runs')) : loadingBody());
     if (!list.length) {
@@ -229,7 +240,9 @@ function runsCard(name, s) {
             h('div', { class: 'title' }, btn(`run:${r.id}`, r.title || r.id, () => go(review ? 'review' : 'run', r.id), { cls: 'link run-link' })),
             h('div', { class: 'sub' }, [pipeLabel(r.pipeline), where, time].filter(Boolean).join(' · '))),
           badge(r.status, review ? 'Review gate' : ''));
-      }))));
+      })),
+      older ? h('p', { class: 'muted small mt-2' }, `${plural(older, 'older run')} also ${older === 1 ? 'waits' : 'wait'} for you. `,
+        btn('runs:older', 'See them in Tasks', () => goProject(name, 'tasks'), { cls: 'link' })) : null));
   });
 }
 

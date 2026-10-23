@@ -16,7 +16,7 @@ const calls = fakeFetch(path => {
 });
 const store = await import('../../store.js');
 const { slot } = await import('../../parts/project-data.js');
-const { aboutFacts, factsBadges, quickRow, default: overview } = await import('./overview.js');
+const { aboutFacts, factsBadges, mergeRuns, quickRow, recentRuns, default: overview } = await import('./overview.js');
 
 const project = over => ({
   project: { label: 'Example', present: true },
@@ -63,6 +63,24 @@ test('the quick row disables editing pipelines until the run worktree is ready',
   const noProfile = quickRow(list.map(p => ({ ...p, disabledReason: 'No profile yet.' })), null);
   assert.ok(noProfile.every(q => q.disabledReason === 'No profile yet.'));
   assert.deepEqual(quickRow([], project()), []);
+});
+
+const run = (id, status, extra = {}) => ({ id, project: 'example', status, title: `Run ${id}`, pipeline: 'explain', ...extra });
+
+test('recentRuns: the five newest runs, the waiting ones first; older waiting runs never push a new run out', () => {
+  // Five older runs wait (the store has them) and a run has just finished (the route's newest).
+  const live = ['261022-100001', '261022-100002', '261022-100003', '261022-100004', '261022-100005'].map(id => run(id, 'waiting', { waiting: 'plan' }));
+  const recent = [run('261023-090000', 'passed'), run('261022-100006', 'failed'), run('261022-100005', 'waiting', { waiting: 'review' })];
+  const all = mergeRuns(recent, live);
+  assert.equal(all.length, 7, 'a run in both lists counts once');
+  assert.deepEqual(recentRuns(all).map(r => r.id), ['261022-100005', '261022-100004', '261022-100003', '261023-090000', '261022-100006'],
+    'the five newest, waiting first, the rest newest first');
+  assert.equal(recentRuns(all)[0].waiting, 'review', 'the route\'s row wins');
+  assert.deepEqual(recentRuns(mergeRuns([run('261022-100001', 'passed'), run('261022-100002', 'running')])).map(r => r.status), ['running', 'passed']);
+  assert.equal(mergeRuns(undefined, live), null, 'still loading');
+  assert.equal(recentRuns(null), null);
+  assert.deepEqual(mergeRuns([null, { id: 7 }, {}], [null, { status: 'waiting' }]), [], 'rows without an id are left out');
+  assert.equal(recent.length, 3, 'the route\'s list is not changed');
 });
 
 const notes = { name: 'notes', label: 'Other', type: { id: 'generic', label: 'Plain project' }, tabs: ['overview', 'agents', 'assets', 'settings'],
@@ -147,4 +165,19 @@ test('a code project: facts, notes, the five newest runs with the waiting ones f
   const after = el.querySelectorAll('.card');
   assert.equal(after.length, cards.length);
   assert.ok(after.every((c, i) => c === cards[i]), 'the same card elements, not rebuilt');
+});
+
+test('a code project with older runs waiting: the newest runs show, and a line under them counts the others', () => {
+  const busy = { name: 'busy', type: { id: 'code', label: 'Code project' }, tabs: ['overview', 'tasks'], hasProfile: true, realPath: 'C:\\ws\\projects\\busy' };
+  store.setState({ root: 'C:\\ws', tools: { claude: true }, projects: [busy], repos: { list: [] }, assets: [], catalog: { skills: [] } });
+  const ids = ['261022-100001', '261022-100002', '261022-100003', '261022-100004', '261022-100005', '261022-100006', '261022-100007'];
+  slot('busy').runs = { data: { runs: ids.map((id, i) => run(id, i < 2 ? 'waiting' : 'passed', { project: 'busy', waiting: i < 2 ? 'plan' : null })).reverse() } };
+  const el = dom.document.createElement('div');
+  overview.render(el, { state: store.state, project: busy, rest: '', go: store.go, refresh: () => {} });
+  const card = el.querySelectorAll('.cgrid .card')[0];
+  assert.deepEqual(card.querySelectorAll('li').map(li => li.querySelector('.run-link').textContent),
+    ['Run 261022-100007', 'Run 261022-100006', 'Run 261022-100005', 'Run 261022-100004', 'Run 261022-100003']);
+  assert.match(textOf(card), /2 older runs also wait for you\. See them in Tasks$/);
+  dom.click(card.querySelector('[data-key="runs:older"]'));
+  assert.equal(dom.location.hash, '#project/busy/tasks');
 });

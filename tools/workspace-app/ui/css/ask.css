@@ -1,0 +1,108 @@
+/* The Ask panel (ui/parts/ask-panel.js; hub spec plan A7) and the Ask buttons that open it.
+   Linked after the view styles in index.html. The panel is an <aside> inside .app next to <main>:
+   while it is open (.app.ask-open) the grid gets a third column for it, so the page reflows
+   instead of being covered; below 1080 px it lies over the right edge instead. Only theme tokens
+   are used, so both themes follow app.css. Toasts move left of the panel while it is open. */
+
+/* ---------- The third column */
+.app.ask-open { grid-template-columns: 248px minmax(0, 1fr) 380px; }
+.ask-panel {
+  display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden;
+  background: var(--panel); border-left: 1px solid var(--border);
+}
+.app.ask-open ~ #toasts { right: 400px; }
+
+/* ---------- Head and the chip */
+.ask-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); padding: 16px var(--s4) 6px; }
+.ask-title { margin: 0; font-size: var(--t-lg); line-height: 1.3; min-width: 0; overflow-wrap: anywhere; }
+.ask-title:focus { outline: none; }
+.ask-close { flex: none; }
+.ask-about { display: flex; align-items: center; gap: 6px; padding: 0 var(--s4) var(--s3); border-bottom: 1px solid var(--border); min-width: 0; }
+.ask-chip {
+  min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  background: var(--card); color: var(--text); font-size: var(--t-sm); padding: 2px 10px;
+}
+
+/* ---------- The thread */
+.ask-thread { flex: 1; min-height: 0; overflow: auto; padding: var(--s3) var(--s4); }
+.ask-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s4); align-content: start; }
+.ask-empty { font-size: var(--t-md); line-height: 1.5; padding: var(--s2) 0; }
+.ask-item { display: grid; gap: var(--s2); min-width: 0; }
+.ask-q { display: grid; gap: 2px; background: var(--hover); border-radius: 10px; padding: 8px 12px; font-size: var(--t-md); overflow-wrap: anywhere; white-space: pre-wrap; }
+.ask-who { font-size: var(--t-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; white-space: normal; }
+.ask-a {
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+  font-size: var(--t-md); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+/* Paths wrap after a "/" (ask-panel.js puts a <wbr> there), and only mid-name when one name alone is too long */
+.ask-a code, .ask-sources code { white-space: normal; overflow-wrap: anywhere; padding: 0 3px; }
+.ask-sources-box { display: grid; gap: 3px; padding: 0 2px; }
+.ask-sources-h { font-size: var(--t-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+.ask-sources { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; font-size: var(--t-sm); }
+.ask-sources li { min-width: 0; }
+.ask-meta { font-size: var(--t-sm); color: var(--muted); padding: 0 2px; }
+.ask-meta .link, .ask-state .link { font-size: var(--t-sm); }
+
+/* ---------- A question's state (queued, running, failed, capped …) */
+.ask-state { font-size: var(--t-md); overflow-wrap: anywhere; }
+p.ask-state { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; color: var(--muted); padding: 0 2px; }
+.ask-state .ask-state-actions { margin-top: var(--s2); }
+.ask-clock { font-variant-numeric: tabular-nums; }
+.ask-spin {
+  width: 11px; height: 11px; flex: none; border-radius: 50%;
+  border: 2px solid var(--border); border-top-color: var(--blue); animation: ask-spin .9s linear infinite;
+}
+@keyframes ask-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .ask-spin { animation: none; border-top-color: var(--blue); border-right-color: var(--blue); }
+}
+
+/* ---------- The question box */
+.ask-form { display: grid; gap: 6px; padding: var(--s3) var(--s4) var(--s4); border-top: 1px solid var(--border); background: var(--panel); }
+.ask-label { font-weight: 600; font-size: var(--t-md); }
+.ask-form textarea {
+  width: 100%; min-height: 76px; max-height: 40vh; resize: vertical; padding: 8px 10px; line-height: 1.45;
+  border-radius: 8px; border: 1px solid var(--border); background: var(--bg);
+}
+.ask-actions { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s2); }
+.ask-actions .small { line-height: 1.35; }
+.ask-send { flex: none; }
+.ask-send[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+.ask-send[aria-disabled="true"]:hover { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+
+/* ---------- Where the Ask buttons sit */
+/* The review gate's header: the text takes the row, Ask stays at its right */
+#view-review .view-head > div:first-child { flex: 1 1 0; min-width: 0; }
+#view-review .view-head > .ask-open-btn { align-self: center; }
+/* A finding card (parts/kanban.js cardExtra): Ask in the bottom-right corner, next to the meta line */
+.fcard-item { position: relative; margin-top: 6px; min-width: 0; }
+.fcard-item > .fcard { margin-top: 0; }
+.fcard-item > .fcard .sev { padding-right: 50px; }
+.fcard-item > .ask-card {
+  position: absolute; right: 5px; bottom: 5px; min-height: 20px; padding: 0 6px; gap: 3px; border-radius: 6px;
+  font-size: var(--t-xs); color: var(--muted); background: var(--card);
+}
+.fcard-item > .ask-card:hover, .fcard-item > .ask-card[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+.fcard-item > .ask-card svg { width: 12px; height: 12px; }
+
+/* ---------- Narrow screens (app.css breakpoints: 1180, 1080, 760) */
+/* While the panel takes its column, the run page's meters use run.css's narrower layout. */
+@media (max-width: 1560px) {
+  .app.ask-open .run-view .meters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 1180px) {
+  .app.ask-open { grid-template-columns: 228px minmax(0, 1fr) 340px; }
+  .app.ask-open ~ #toasts { right: 360px; }
+}
+@media (max-width: 1080px) {
+  .app.ask-open { grid-template-columns: 228px minmax(0, 1fr); }
+  .ask-panel {
+    position: fixed; top: 0; right: 0; bottom: 0; z-index: 30; width: min(400px, calc(100vw - 32px));
+    box-shadow: var(--shadow-lg); border-left: 1px solid var(--border);
+  }
+  .app.ask-open ~ #toasts { right: auto; left: 20px; }
+}
+@media (max-width: 760px) {
+  .app.ask-open { grid-template-columns: 1fr; }
+  .ask-panel { width: 100vw; border-left: 0; }
+}

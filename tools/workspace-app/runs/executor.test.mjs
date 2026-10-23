@@ -8,6 +8,7 @@
 // Everything is written under os.tmpdir(); nothing starts a real claude or touches a real repo.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,6 +28,7 @@ import {
   winsFromMetricRows,
 } from './executor.mjs';
 import { fakeProfile, tempDir, waitFor } from '../test/helpers.mjs';
+import { installRunFixtures } from '../test/fixtures/runs/install.mjs';
 import { saveSettings, settingsDir, settingsHash } from '../project-settings.mjs';
 import { sha256Text } from '../core/datadir.mjs';
 import { stagePromptHashes } from './manifest.mjs';
@@ -374,6 +376,34 @@ test('explain: one READ stage in the main checkout, answer saved, run passed', a
   const rep = await h.act(run, 'report');
   assert.equal(rep.out.message, 'Saved privately.');
   assert.equal(h.calls.report[0].run.id, run.id);
+});
+
+test('explain with an Ask context: inputs/context.md through the store, hashed, and in the prompt as data (runs/context.mjs)', async t => {
+  const h = await harness(t);
+  await installRunFixtures(h.data, { profile: false });
+  const about = { kind: 'run', run: '261022-100010-refactor-review-gate', title: 'Refactor: Move cart totals into a cents helper', after: null, thread: [] };
+  const run = await h.drive(await h.newRun('explain', { what: 'Why a cents helper?' }, { fields: { context: about, parent: about.run } }));
+  assert.equal(run.status, 'passed', run.statusReason);
+  const text = readFileSync(h.file(run, 'inputs/context.md'), 'utf8');
+  assert.match(text, /^# The run the question is about\n\nRun 261022-100010-refactor-review-gate: Refactor: Move cart totals into a cents helper/);
+  assert.match(text, /## Diff\n\ndiff --git a\/apps\/web\/src\/features\/cart\/total\.mjs/);
+  assert.equal(run.inputsHashes['context.md'], `sha256:${createHash('sha256').update(text).digest('hex')}`, 'hashed like every input');
+  assert.equal((await store.verifyInputs(h.data, run)).ok, true);
+  const [call] = h.claudeCalls('answer');
+  assert.ok(call.prompt.includes(`## What the question is about\n\nWhen the user asked`), 'the template has the section');
+  assert.ok(call.prompt.includes(`<data name="context">\n${text}\n</data>\n(Also in context.md in the inputs folder.)`));
+  assert.ok(call.prompt.indexOf('<data name="context">') > call.prompt.indexOf('<data name="request">'));
+  // The executor's own redact runs over the context too.
+  await seedFinding(h);
+  await findingsStore.updateFindings(h.data, PROJECT, doc => ({ ...doc, findings: doc.findings.map(f => ({ ...f, evidence: 'SECRETVALUE in a log' })) }));
+  const ask = await h.drive(await h.newRun('explain', { what: 'Is it real?' }, { fields: { context: { kind: 'finding', finding: { project: PROJECT, id: 'EX-1' }, thread: [] } } }));
+  const findingText = readFileSync(h.file(ask, 'inputs/context.md'), 'utf8');
+  assert.match(findingText, /Finding EX-1 of example: Cart total rounds wrong/);
+  assert.match(findingText, /\[redacted\] in a log/);
+  // A plain question has no context file, and the section says (none).
+  const plain = await h.drive(await h.newRun('explain', { what: 'Where is tax added?' }));
+  assert.equal(existsSync(h.file(plain, 'inputs/context.md')), false);
+  assert.match(h.claudeCalls('answer')[2].prompt, /a question asked on\nits own shows \(none\):\n\n\(none\)\n/);
 });
 
 test('an aborted signal makes advance return without touching the run', async t => {

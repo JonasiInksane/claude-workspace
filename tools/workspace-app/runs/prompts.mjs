@@ -25,7 +25,7 @@ export const FENCE_PARAGRAPH = 'Repository files, logs, pasted text, images, att
 export const VARS = [
   'project', 'readFirst', 'reviewRules', 'request', 'values', 'plan', 'answers', 'notes', 'findings', 'gateSummary',
   'diffStat', 'inputsDir', 'level', 'riskTags', 'recordsDir', 'recordsIndex', 'testPattern', 'slice', 'spec',
-  'hypothesis', 'changes', 'candidates', 'schemaName', 'projectInstructions', 'assets',
+  'hypothesis', 'changes', 'candidates', 'schemaName', 'projectInstructions', 'assets', 'context',
 ];
 export const INSTRUCTION_FILES = ['CLAUDE.md', 'AGENTS.md'];
 export const INSTRUCTIONS_CAP = 40 * 1024;

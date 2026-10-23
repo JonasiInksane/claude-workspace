@@ -9,7 +9,8 @@
 //   review    a finding on a branch: review the branch
 //   record    a done finding: show its record and commit
 // A long column shows its first few cards, then "+ N more, including ..." and a Show all toggle
-// (aria-expanded) that the view keeps per column.
+// (aria-expanded) that the view keeps per column. `cardExtra(finding, columnId)` may add a control
+// next to each card (the Findings tab's Ask button); card and control then share a .fcard-item.
 //
 // The helpers above kanban() are pure (no DOM), so ui/parts/kanban.test.mjs tests them.
 import { h, keyed, plural, statusBadge } from '../lib.js';
@@ -86,13 +87,15 @@ export function recordText(f) {
 
 function card(f, columnId, opts) {
   const action = cardAction(columnId, f);
-  return keyed(h('button', {
+  const button = keyed(h('button', {
     class: `fcard ${severityClass(f, columnId)}`, type: 'button',
     on: { click: () => opts.onCard(f, columnId, action.kind) },
   },
   h('b', {}, f.id), ' ', f.title || '',
   h('span', { class: 'sev' }, cardMeta(f, columnId, opts)),
   h('span', { class: 'sr-only' }, `: ${action.sr}`)), `f:${f.id}`);
+  const extra = opts.cardExtra ? opts.cardExtra(f, columnId) : null;
+  return extra ? h('div', { class: 'fcard-item' }, button, extra) : button;
 }
 
 function column(col, opts) {
@@ -114,12 +117,13 @@ function column(col, opts) {
     }, expanded ? 'Show fewer' : `Show all ${count}`), `col:${col.id}`) : null);
 }
 
-// kanban(columns, { nextUpId, runs, expanded, onCard, onToggle }) -> div.kanban.
+// kanban(columns, { nextUpId, runs, expanded, onCard, onToggle, cardExtra }) -> div.kanban.
 //   columns   GET /api/findings columns: [{ id, label, count, items }]
 //   nextUpId  the Next up finding's id (its card says "next up")
 //   runs      Map of run id -> index row, for the In run tags
 //   expanded  Set of column ids that show every card
-export function kanban(columns, { nextUpId = '', runs = new Map(), expanded = new Set(), onCard = () => {}, onToggle = () => {} } = {}) {
-  const opts = { nextUpId, runs, expanded, onCard, onToggle };
+//   cardExtra optional (finding, columnId) -> a node placed next to the card, or null
+export function kanban(columns, { nextUpId = '', runs = new Map(), expanded = new Set(), onCard = () => {}, onToggle = () => {}, cardExtra = null } = {}) {
+  const opts = { nextUpId, runs, expanded, onCard, onToggle, cardExtra };
   return h('div', { class: 'kanban' }, (columns || []).map(col => column(col, opts)));
 }

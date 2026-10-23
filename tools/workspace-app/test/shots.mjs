@@ -13,7 +13,8 @@
 // - --example runs the app in-process on a temporary workspace (like test/e2e.test.mjs): a copy
 //   of pipelines/app and flows/, the synthetic "example" project (a git repo matching
 //   pipelines/app/profiles/example.json) at projects/example, its profile and the sample runs in
-//   a temporary data folder. Use it to see a code project's screens; nothing real is touched.
+//   a temporary data folder, plus "sample-art" (an asset pipeline with one asset) and "notes"
+//   (a plain project). Use it to see every kind of project screen; nothing real is touched.
 // - --fixtures loads the sample runs (test/fixtures/runs/install.mjs) into the data folder.
 // - --data-dir reuses a data folder you prepared (profiles, runs); default is a new temp folder.
 // - --full captures the whole page height instead of the viewport.
@@ -104,6 +105,15 @@ async function startExample(dataDir) {
   cpSync(join(hub, 'pipelines', 'app'), join(root, 'pipelines', 'app'), { recursive: true });
   if (existsSync(join(hub, 'flows'))) cpSync(join(hub, 'flows'), join(root, 'flows'), { recursive: true });
   await makeRepo(join(root, 'projects', 'example'), { files: exampleRepoFiles() });
+  // An asset-pipeline project (tools/asset.mjs plus assets/, like game-dev) with one asset, and a
+  // plain project with only a CLAUDE.md, so every project type has something to show.
+  writeFiles(join(root, 'projects', 'sample-art'), {
+    'CLAUDE.md': '# Sample art\n\nA synthetic asset pipeline for screenshots.\n',
+    'tools/asset.mjs': '// stub\n',
+    'assets/lowpoly/props/Crate/asset.json': { name: 'Crate', category: 'props', style: 'lowpoly', status: 'review', source: 'procedural' },
+    'assets/lowpoly/props/Crate/brief.md': '# Crate\n\nA wooden crate.\n',
+  });
+  writeFiles(join(root, 'projects', 'notes'), { 'CLAUDE.md': '# Notes\n\nA plain project.\n' });
   // A short worktree path (the profile allows at most 50 characters); it is never created here.
   writeFiles(dataDir, { 'profiles/example.json': fakeProfile({ isolation: { worktreePath: join(tmpdir(), 'ws-shots-run') } }) });
   await installRunFixtures(dataDir);

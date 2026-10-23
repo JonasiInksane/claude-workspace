@@ -207,10 +207,12 @@ function checkFlowFields(root, input) {
   return { error: '', flow };
 }
 
+// `text` is the file as read, so a run can record the version of exactly the text its prompt came
+// from (workspace-app/flow-versions.mjs flowVersion), not of a later read.
 function readFlow(file, slug) {
   let text = '';
   try { text = readFileSync(file, 'utf8'); } catch { return null; }
-  return { slug, file, hash: textHash(text), ...parseFlow(text) };
+  return { slug, file, hash: textHash(text), text, ...parseFlow(text) };
 }
 
 // Every flow in flows/ (README.md and folders left out), with `error` when it can't run now
@@ -313,7 +315,7 @@ export function setCaption(root, slug, image, caption) {
 // The prompt a run starts with. Images come first, labeled, because Anthropic's vision guidance
 // puts images before the question and labels several as "Image 1:", "Image 2:"; the flow's
 // prompt can refer to them by those labels. Then the attached assets, one line each as the
-// workspace app describes them ("Asset 1: <title> (<ref> v<n>, <kind>) at <path>",
+// workspace app describes them ('Asset 1: <ref> v<n> (<kind>) at <path>, titled "<title>"',
 // attached-assets.mjs assetLine), then the prompt, then the run's notes: under the flow's
 // question when it has one ("What do you want to refactor?\n<notes>"), otherwise under
 // "Notes for this run:".

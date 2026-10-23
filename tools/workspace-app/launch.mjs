@@ -7,9 +7,11 @@
 // Sessions: every interactive Claude session the app starts gets its own id (--session-id, a new
 // UUID) unless it resumes one (--resume <id>), and a line in <dataDir>\sessions.jsonl:
 //   {"at":"…","sessionId":"<uuid>","kind":"hub|project|agent|flow|skill|takeover","project":"…","title":"…",
-//    "projectSettings":{"version":3,"sha256":"…"},"assets":[{"ref":"shared:style-guide","version":2,"sha256":"…"}]}
+//    "projectSettings":{"version":3,"sha256":"…"},"assets":[{"ref":"shared:style-guide","version":2,"sha256":"…"}],
+//    "flow":{"slug":"…","sha256":"…","hubCommit":"…","committed":true}}
 // so the app can find a session again (Take over, Continue). -c (continue the last session) has
-// no id of its own and adds no line.
+// no id of its own and adds no line. `flow` is on a flow launch's line only: the version of the
+// flow that ran (routes/flows.mjs, flow-versions.mjs).
 //
 // Project settings (project-settings.mjs): a session started in a project (Start Claude here, a
 // skill or a flow there, an agent) gets the project's current settings, applied here once for
@@ -26,8 +28,10 @@
 // Attached assets (attached-assets.mjs): a session in a project also gets the assets its settings
 // attach, resolved to exact versions and checked (an asset, version or file that is gone, or a
 // file that no longer matches its recorded SHA-256, stops the start). Their list follows the
-// rules in --append-system-prompt, and the session may read their folders without asking
-// (readDirs). A flow builds its own prompt and lists its assets there (routes/flows.mjs): it
+// rules in --append-system-prompt, and the session may read their folders without asking but
+// not edit them (readOnlyDirs: an Edit deny rule each, tools/lib/prompt-file.mjs editDenyRule),
+// so a session in acceptEdits or auto mode can't change a version file or asset.json in place.
+// A flow builds its own prompt and lists its assets there (routes/flows.mjs): it
 // passes the resolved `assets`, and the `settings` it resolved them with, and gets their folders
 // but no second list. Its line records `assets` ([{ ref, version, sha256 }]) like every session
 // in a project; hub sessions and takeovers record none.
@@ -38,7 +42,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { resolveClaude } from '../lib/agents.mjs';
-import { checkLaunch, launchArgs, writePromptFile } from '../lib/prompt-file.mjs';
+import { checkLaunch, commandTextProblem, launchArgs, writePromptFile } from '../lib/prompt-file.mjs';
 import { assetDirs, assetProblems, assetRecords, resolveAssets, verifyFiles } from './attached-assets.mjs';
 import { appendJsonl, defaultDataDir, PROJECT_RE } from './core/datadir.mjs';
 import { currentSettings, launchWithSettings, settingsRef } from './project-settings.mjs';
@@ -89,11 +93,13 @@ export const sessionsFile = dataDir => join(dataDir, 'sessions.jsonl');
 // use, and a torn last line can't swallow this one). Best effort: a session that started stays
 // started even when the line can't be written. `projectSettings` ({ version, sha256 } or null)
 // and `assets` ([{ ref, version, sha256 }]) go in only when given: sessions in a project have
-// them (a flow its assets also in the hub), other hub sessions and takeovers don't.
-export async function recordSession(dataDir, { sessionId, kind, project = '', title = '', projectSettings, assets }, now = new Date()) {
+// them (a flow its assets also in the hub), other hub sessions and takeovers don't. `flow`
+// ({ slug, sha256, hubCommit, committed }, flow-versions.mjs sessionFlowRef) only for a flow.
+export async function recordSession(dataDir, { sessionId, kind, project = '', title = '', projectSettings, assets, flow }, now = new Date()) {
   const line = {
     at: now.toISOString(), sessionId, kind, project, title,
     ...(projectSettings !== undefined ? { projectSettings } : {}), ...(assets !== undefined ? { assets } : {}),
+    ...(flow !== undefined ? { flow } : {}),
   };
   try {
     await appendJsonl(sessionsFile(dataDir), line);
@@ -155,24 +161,52 @@ export async function sessionAssets(root, project, settings) {
   return items;
 }
 
-// Folder lists joined, each folder once (Windows paths ignore case).
-function joinDirs(...lists) {
-  const seen = new Set();
-  return lists.flat().filter(d => {
-    const k = process.platform === 'win32' ? String(d).toLowerCase() : String(d);
-    if (seen.has(k)) return false;
-    seen.add(k);
+// Why every session in `project` would refuse these settings ({ project, rules, defaults,
+// allowedTools, assets }), as sentences ([] when none would): what a start checks (sessionAssets,
+// withProjectSettings, the Windows command line budget) for a session without a prompt of its
+// own, which carries the most in its system prompt (the rules and the list of the assets). A
+// save runs this first (routes/project-settings.mjs), so it can't write settings that block every
+// session in the project: an attached asset that is gone or changed, or rules that don't fit
+// together with the asset list.
+export async function settingsLaunchProblems(root, project, settings) {
+  const attachments = Array.isArray(settings.assets) ? settings.assets : [];
+  let items = [];
+  if (attachments.length) {
+    try { items = await resolveAssets(root, project, attachments); } catch (e) { return [`the attached assets can't be resolved: ${e.message}`]; }
+    const problems = assetProblems(items);
+    if (!problems.length) problems.push(...await verifyFiles(items));
+    if (problems.length) return problems;
+  }
+  let launch;
+  try { launch = withProjectSettings({}, settings, items); } catch (e) { return [e.message.replace(/^launch: /, '')]; }
+  const tooLong = commandTextProblem('', launch);
+  return tooLong ? [tooLong] : [];
+}
+
+// Windows paths ignore case.
+const dirKey =d => (process.platform === 'win32' ? String(d).toLowerCase() : String(d));
+
+// The folders a session may read without asking: the caller's `readDirs` (a flow's images) and
+// the folders of its assets (`items`), which go to readOnlyDirs only, so they get their Edit deny
+// rule even when the caller listed them too. Each folder once.
+export function sessionDirs(readDirs = [], items = []) {
+  const readOnlyDirs = assetDirs(items);
+  const seen = new Set(readOnlyDirs.map(dirKey));
+  const dirs = readDirs.filter(d => {
+    if (seen.has(dirKey(d))) return false;
+    seen.add(dirKey(d));
     return true;
   });
+  return { readDirs: dirs, readOnlyDirs };
 }
 
 // True when a Claude session can't start with its flags straight on claude's command line, so
 // it starts through a prompt file (claude-prompt.mjs) instead: launchArgs has no flag for a first
 // prompt, the rules (appendSystemPrompt), pre-approved tools (they go into a settings file) or
 // readable folders, and the rules must never go into a PowerShell command anyway.
-export function needsPromptFile({ prompt = '', readDirs = [], launch = {} } = {}) {
+export function needsPromptFile({ prompt = '', readDirs = [], readOnlyDirs = [], launch = {} } = {}) {
   const has = v => (Array.isArray(v) ? v.length > 0 : !!v);
-  return has(prompt) || has(readDirs) || has(launch.appendSystemPrompt) || has(launch.allowedTools);
+  return has(prompt) || has(readDirs) || has(readOnlyDirs) || has(launch.appendSystemPrompt) || has(launch.allowedTools);
 }
 
 // Programs a terminal tab may not start directly: .cmd and .bat need cmd.exe (a shell).
@@ -305,13 +339,14 @@ export function realActions({ root, tools = findTools(), windowStyle, dataDir = 
     // Starts claude in a terminal tab at `dir` and resolves with { sessionId } ('' for -c).
     // With only flags, they go straight on claude's command line (--resume <id> or
     // --session-id <id>, --settings <file>, --permission-mode <m>, ...). With `prompt`, project
-    // rules, pre-approved tools or `readDirs` (folders the session may read without asking),
-    // everything goes through a prompt file (needsPromptFile; tools/lib/prompt-file.mjs explains
-    // why). `kind` and `project` are for sessions.jsonl and the project's settings and assets (see
+    // rules, pre-approved tools, `readDirs` (folders the session may read without asking) or
+    // assets (their folders: read-only, sessionDirs), everything goes through a prompt file
+    // (needsPromptFile; tools/lib/prompt-file.mjs explains why). `kind` and `project` are for sessions.jsonl and the project's settings and assets (see
     // the top of this file); without a kind, a resume counts as a takeover (the only resume the
     // app starts), so it gets the takeover mode check too. `assets` and `settings`: a flow's
-    // resolved assets, already listed in its prompt, and the settings it resolved them with.
-    async startClaude({ dir, title, continueLast = false, prompt, readDirs = [], launch = {}, resume, sessionId, kind, project = '', assets, settings: given }) {
+    // resolved assets, already listed in its prompt, and the settings it resolved them with;
+    // `flow`: the flow's version for its sessions.jsonl line.
+    async startClaude({ dir, title, continueLast = false, prompt, readDirs = [], launch = {}, resume, sessionId, kind, project = '', assets, settings: given, flow }) {
       if (!tools.claude) throw new Error('Claude Code was not found (PATH or %USERPROFILE%\\.local\\bin).');
       const s = sessionLaunch({ launch, resume, sessionId, continueLast });
       const k = kindOf(kind, s.launch.resume ? 'takeover' : project ? 'project' : 'hub');
@@ -326,12 +361,12 @@ export function realActions({ root, tools = findTools(), windowStyle, dataDir = 
       const settings = await settingsFor(k, project, given);
       const a = await assetsFor(project, settings, assets);
       const l = withProjectSettings(s.launch, settings, a.inSystemPrompt);
-      const dirs = joinDirs(readDirs, assetDirs(a.items));
-      const command = needsPromptFile({ prompt, readDirs: dirs, launch: l })
-        ? psCommand(dir, node, [join(appDir, 'claude-prompt.mjs'), writePromptFile({ prompt, readDirs: dirs, launch: l })])
+      const dirs = sessionDirs(readDirs, a.items);
+      const command = needsPromptFile({ prompt, ...dirs, launch: l })
+        ? psCommand(dir, node, [join(appDir, 'claude-prompt.mjs'), writePromptFile({ prompt, ...dirs, launch: l })])
         : psCommand(dir, tools.claude, launchArgs(l));
       await terminal(dir, title, command);
-      if (s.id) await recordSession(dataDir, { sessionId: s.id, kind: k, project, title, projectSettings: refOf(settings), assets: a.record });
+      if (s.id) await recordSession(dataDir, { sessionId: s.id, kind: k, project, title, projectSettings: refOf(settings), assets: a.record, flow });
       return { sessionId: s.id };
     },
     // Any program in a terminal tab at `dir`, with `env` set for it first (the cockpit's dev
@@ -377,7 +412,7 @@ export function realActions({ root, tools = findTools(), windowStyle, dataDir = 
     // The project's settings and assets are applied as in startClaude; agent-session.mjs gets them,
     // and any other launch setting, through a prompt file (one without a first prompt when there
     // is none). Resolves with { sessionId }.
-    async startAgent({ project, agent, title, prompt, readDirs = [], launch = {}, sessionId, kind, assets, settings: given }) {
+    async startAgent({ project, agent, title, prompt, readDirs = [], launch = {}, sessionId, kind, assets, settings: given, flow }) {
       const k = kindOf(kind, 'agent');
       if (!AGENT_KINDS.includes(k)) throw new Error(`an agent session starts as ${AGENT_KINDS.join(' or ')}, not as ${k}; a takeover goes through startClaude`);
       const s = sessionLaunch({ launch, sessionId });
@@ -386,12 +421,12 @@ export function realActions({ root, tools = findTools(), windowStyle, dataDir = 
       const settings = await settingsFor(k, project, given);
       const a = await assetsFor(project, settings, assets);
       const { sessionId: newId, ...rest } = withProjectSettings(s.launch, settings, a.inSystemPrompt);
-      const dirs = joinDirs(readDirs, assetDirs(a.items));
+      const dirs = sessionDirs(readDirs, a.items);
       const args = [join(toolsDir, 'agent-session.mjs'), project, agent, '--root', root];
       if (newId) args.push('--session-id', newId);
-      if (prompt || Object.keys(rest).length) args.push('--prompt-file', writePromptFile({ prompt, readDirs: dirs, launch: rest }));
+      if (prompt || Object.keys(rest).length) args.push('--prompt-file', writePromptFile({ prompt, ...dirs, launch: rest }));
       await terminal(root, title, psCommand(root, node, args));
-      await recordSession(dataDir, { sessionId: s.id, kind: k, project, title, projectSettings: refOf(settings), assets: a.record });
+      await recordSession(dataDir, { sessionId: s.id, kind: k, project, title, projectSettings: refOf(settings), assets: a.record, flow });
       return { sessionId: s.id };
     },
     openFolder({ dir }) {

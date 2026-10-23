@@ -1,7 +1,8 @@
 // Tests for parts/library-dialogs.js in a stand-in DOM with a fake server (test/dom.mjs): the
-// details dialog (facts, every version with Open and Download, Save details with the version count
-// and a 409 that keeps what was typed, the guard on typed details, a new version through the
-// dialog's upload with its checks, Archive after a question, Attach or Detach for a project), the
+// details dialog (facts, every version with Open and Download, Save details with the revision it
+// saw and a 409 that keeps what was typed, the guard on typed details, a new version through the
+// dialog's upload with its checks, Archive after a question and a 409 that loads the asset again,
+// Attach or Detach for a project), the
 // New asset dialog (titles from file names or a pasted image, several files, a file it can't
 // take, a partial failure, the place, an upload that is still running), and the picker (shared and the project's own, attached
 // ones fixed, search and kind, the limit, a refusal shown in it), and late answers in both that
@@ -26,18 +27,26 @@ function guide(count = 2, over = {}) {
   const versions = Array.from({ length: count }, (_, i) => version(i + 1));
   return {
     ref: 'shared:guide', id: 'guide', scope: 'shared', project: null, title: 'Guide', kind: 'text', tags: ['docs'], description: 'How we write',
-    archived: false, latest: versions[count - 1], versionCount: count, createdAt: versions[0].addedAt, versions, ...over,
+    archived: false, latest: versions[count - 1], versionCount: count, createdAt: versions[0].addedAt, versions, revision: `rev-${count}`, ...over,
   };
 }
+// Every change gives the asset a new revision, as the server does.
+let revisions = 0;
+const nextRevision = () => `rev-changed-${++revisions}`;
+let fakeArchiveConflict = false; // the next archive call answers 409
 const calls = fakeFetch((path, { method, body }) => {
   const url = new URL(path, 'http://x');
   if (method === 'GET' && url.pathname === '/api/library/asset') return asset ? { ok: true, asset } : reply(404, { ok: false, error: 'there is no asset' });
   if (method === 'POST' && url.pathname === '/api/library/meta') {
     if (metaReply) { const r = metaReply; metaReply = null; return r; }
-    asset = { ...asset, title: body.title.trim(), description: body.description, tags: body.tags.split(',').map(t => t.trim()).filter(Boolean) };
+    asset = { ...asset, title: body.title.trim(), description: body.description, tags: body.tags.split(',').map(t => t.trim()).filter(Boolean), revision: nextRevision() };
     return { ok: true, asset };
   }
-  if (method === 'POST' && url.pathname === '/api/library/archive') { asset = { ...asset, archived: body.archived }; return { ok: true, asset }; }
+  if (method === 'POST' && url.pathname === '/api/library/archive') {
+    if (fakeArchiveConflict) { fakeArchiveConflict = false; return reply(409, { ok: false, error: 'shared:guide changed since you opened it. Reload it and try again.' }); }
+    asset = { ...asset, archived: body.archived, revision: nextRevision() };
+    return { ok: true, asset };
+  }
   if (method === 'POST' && url.pathname === '/api/library/upload') {
     // A function answers some uploads (null: the usual answer) until a test clears it.
     if (uploadReply) {
@@ -120,7 +129,7 @@ test('details: the facts, the preview and every version newest first, with Open 
   assert.match(toasts(), /there is no asset/);
 });
 
-test('details: Save details sends what changed with the version count; a 409 keeps what you typed', async () => {
+test('details: Save details sends what changed with the revision it saw; a 409 keeps what you typed', async () => {
   asset = guide(2);
   let changed = 0;
   await openAssetDialog('shared:guide', { onChange: () => { changed++; } });
@@ -131,22 +140,22 @@ test('details: Save details sends what changed with the version count; a 409 kee
   assert.equal(save.disabled, false);
   dom.click(save);
   await settle(5);
-  assert.deepEqual(calls.filter(c => c.path === '/api/library/meta').pop().body, { ref: 'shared:guide', title: 'House style', description: 'How we write', tags: 'docs, brand', expect: 2 });
+  assert.deepEqual(calls.filter(c => c.path === '/api/library/meta').pop().body, { ref: 'shared:guide', title: 'House style', description: 'How we write', tags: 'docs, brand', expect: 'rev-2' });
   assert.equal(dialog.querySelector('#dialogTitle').textContent, 'House style');
   assert.equal(changed, 1);
   assert.equal(save.disabled, true, 'saved: nothing pending');
-  // Someone added a version meanwhile: 409, the asset loads again, the typed title stays.
+  // Someone changed it meanwhile: 409, the asset loads again, the typed title stays.
   type(dialog.querySelector('#libTitle'), 'House style guide');
-  metaReply = reply(409, { ok: false, error: 'shared:guide has 3 versions now, not 2: it changed since you opened it.' });
+  metaReply = reply(409, { ok: false, error: 'shared:guide changed since you opened it. Reload it and try again.' });
   asset = guide(3, { title: 'House style' });
   dom.click(save);
   await settle(5);
-  assert.match(textOf(dialog.querySelector('.lib-meta-form .form-error')), /has 3 versions now, not 2.*what you typed is still here/);
+  assert.match(textOf(dialog.querySelector('.lib-meta-form .form-error')), /changed since you opened it.*what you typed is still here/);
   assert.equal(dialog.querySelector('#libTitle').value, 'House style guide');
   assert.match(textOf(dialog), /Versions \(3\)/);
   dom.click(save);
   await settle(5);
-  assert.equal(calls.filter(c => c.path === '/api/library/meta').pop().body.expect, 3, 'the next save uses the new count');
+  assert.equal(calls.filter(c => c.path === '/api/library/meta').pop().body.expect, 'rev-3', 'the next save uses the new revision');
   dialog.close();
 });
 
@@ -210,13 +219,31 @@ test('details: Archive asks first; Restore does not; Attach and Detach for a pro
   assert.match(textOf(confirmBox), /Archive Guide\? It leaves the lists and takes no new versions/);
   dom.click(confirmBox.querySelector('.btn.primary'));
   await settle(5);
-  assert.deepEqual(calls.filter(c => c.path === '/api/library/archive').pop().body, { ref: 'shared:guide', archived: true });
+  assert.deepEqual(calls.filter(c => c.path === '/api/library/archive').pop().body, { ref: 'shared:guide', archived: true, expect: 'rev-2' });
   assert.equal(archive.textContent, 'Restore');
   assert.equal(dialog.querySelector('.lib-add-version .lib-drop-wrap').hidden, true, 'an archived asset takes no new versions');
   assert.match(textOf(dialog), /Archived: it takes no new versions until you restore it/);
+  const afterArchive = asset.revision;
   dom.click(archive);
   await settle(5);
-  assert.deepEqual(calls.filter(c => c.path === '/api/library/archive').pop().body, { ref: 'shared:guide', archived: false });
+  assert.deepEqual(calls.filter(c => c.path === '/api/library/archive').pop().body, { ref: 'shared:guide', archived: false, expect: afterArchive });
+  // A stale dialog (renamed in another tab): the 409 says so and the asset loads again, with the
+  // revision the next archive sends.
+  asset = guide(2, { title: 'Renamed elsewhere', revision: 'rev-elsewhere' });
+  fakeArchiveConflict = true;
+  const confirmArchive = async () => {
+    dom.click(archive);
+    await settle();
+    dom.click(dom.document.body.querySelectorAll('dialog.confirm').pop().querySelector('.btn.primary'));
+    await settle(5);
+  };
+  await confirmArchive();
+  assert.match(toasts(), /changed since you opened it/);
+  assert.equal(dialog.querySelector('#dialogTitle').textContent, 'Renamed elsewhere', 'loaded again');
+  await confirmArchive();
+  assert.deepEqual(calls.filter(c => c.path === '/api/library/archive').pop().body, { ref: 'shared:guide', archived: true, expect: 'rev-elsewhere' });
+  dom.click(archive); // restore again for the attach part below
+  await settle(5);
   const attach = byKey('ad:attach');
   assert.equal(attach.textContent, 'Attach to example');
   dom.click(attach);

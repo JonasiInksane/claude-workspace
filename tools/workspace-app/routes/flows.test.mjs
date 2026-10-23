@@ -156,6 +156,9 @@ test('a flow for any project runs in the project the run names, and both launche
   assert.match(a.at, /^\d{4}-\d\d-\d\dT/);
   assert.equal(a.version.sha256, b.version.sha256);
   assert.deepEqual(a.version, await flowVersion(root, slug));
+  // The session gets the same version for its sessions.jsonl line (A5).
+  const { sha256, hubCommit, committed } = a.version;
+  assert.deepEqual(calls.map(c => c.flow), [{ slug, sha256, hubCommit, committed }, { slug, sha256, hubCommit, committed }]);
   // The preview needs no project: the prompt is the same everywhere.
   const preview = await call('POST /api/flows/run', { slug, preview: true });
   assert.deepEqual([preview.status, preview.body.prompt], [200, 'Review what changed.']);
@@ -347,12 +350,13 @@ test('a run lists the flow\'s and the project\'s assets after the images, may re
   assert.equal(c.prompt, [
     `Reference images for this task. Read each one before you start:\n- Image 1: ${shot}`,
     "Assets for this task, from the workspace app's asset library. Read each one before you start:",
-  ].join('\n\n') + `\n- Asset 1: Logo (shared:logo v1, image) at ${logoFile}` +
-    `\n- Asset 2: Style guide (shared:style-guide v1, text) at ${styleFile}` +
-    `\n- Asset 3: Palette (example:palette v1, image) at ${paletteFile}\n\nRefactor what I describe.`);
+  ].join('\n\n') + `\n- Asset 1: shared:logo v1 (image) at ${logoFile}, titled "Logo"` +
+    `\n- Asset 2: shared:style-guide v1 (text) at ${styleFile}, titled "Style guide"` +
+    `\n- Asset 3: example:palette v1 (image) at ${paletteFile}, titled "Palette"\n\nRefactor what I describe.`);
   // The flow's own pin (style guide v1) wins over the project's attachment of the same asset.
   assert.deepEqual(c.assets.map(a => [a.ref, a.version]), [['shared:logo', 1], ['shared:style-guide', 1], ['example:palette', 1]]);
-  assert.deepEqual(c.readDirs, [join(ws.root, 'inbox', 'attachments', '_flows', slug), dirname(logoFile), dirname(styleFile), dirname(paletteFile)]);
+  // The image folder only: launch.mjs adds the assets' folders from `assets`, read-only.
+  assert.deepEqual(c.readDirs, [join(ws.root, 'inbox', 'attachments', '_flows', slug)]);
   assert.equal(c.settings.version, 1, 'the settings the assets came from go along');
   const [line] = ws.records();
   assert.deepEqual(line.assets, [
@@ -409,7 +413,7 @@ test('the preview shows the effective launch, the assets with what a run would r
   assert.deepEqual([p.project, p.projectSettings], ['example', { version: 1, sha256: v1.sha256 }]);
   assert.deepEqual(p.assets.map(a => [a.ref, a.version, a.archived, a.missing]), [['shared:logo', 1, true, false], ['shared:style-guide', 4, false, true], ['example:palette', 1, false, false]]);
   assert.deepEqual(p.problems, ['shared:style-guide has no version 4']);
-  assert.match(p.prompt, /- Asset 1: Logo \(shared:logo v1, image\) at .*\n- Asset 2: Palette \(example:palette v1, image\) at /, 'a missing one is left out of the prompt');
+  assert.match(p.prompt, /- Asset 1: shared:logo v1 \(image\) at .*, titled "Logo"\n- Asset 2: example:palette v1 \(image\) at /, 'a missing one is left out of the prompt');
   assert.equal(ws.calls.length, 0, 'a preview starts nothing');
   // A flow for any project: nothing of a project until one is chosen.
   const any = (await ws.call('POST /api/flows', { ...anyReview, title: 'Any', assets: 'shared:logo' })).body.slug;
@@ -418,4 +422,23 @@ test('the preview shows the effective launch, the assets with what a run would r
   assert.deepEqual(none.assets.map(a => a.ref), ['shared:logo']);
   const chosen = (await ws.call('POST /api/flows/run', { slug: any, preview: true, project: 'example' })).body;
   assert.deepEqual([chosen.project, chosen.launch.appendSystemPrompt, chosen.assets.map(a => a.ref), chosen.note], ['example', 'Cents only.', ['shared:logo', 'example:palette'], '']);
+});
+
+test('the preview lists what Run would refuse: a file changed by hand (409) and a prompt and rules too long for one command line', async t => {
+  const ws = setup(t);
+  const { style } = await withLibrary(ws);
+  const { body: { slug } } = await ws.call('POST /api/flows', { ...refactor, askRequired: false, assets: 'shared:style-guide' });
+  assert.deepEqual((await ws.call('POST /api/flows/run', { slug, preview: true })).body.problems, []);
+  writeFileSync(fileOf(ws.root, `inbox/attachments/_assets/style-guide/${style.versions[0].file}`), 'edited by hand');
+  const changed = (await ws.call('POST /api/flows/run', { slug, preview: true })).body;
+  assert.deepEqual(changed.problems, ['the file of shared:style-guide v1 no longer matches the SHA-256 the library recorded for it (it was changed after it was saved)']);
+  const run = await ws.call('POST /api/flows/run', { slug });
+  assert.deepEqual([run.status, run.body.error.endsWith(changed.problems[0])], [409, true], 'the run refuses what the preview showed');
+  // 15,000 characters of rules and a 16,000-character prompt, both with spaces, so quoted: more than 30,000.
+  await saveSettings(ws.dataDir, 'example', { rules: 'x '.repeat(7500) }, { basedOn: 0 });
+  const long = (await ws.call('POST /api/flows', { ...refactor, title: 'Long', askRequired: false, prompt: 'y '.repeat(8000) })).body.slug;
+  const p = (await ws.call('POST /api/flows/run', { slug: long, preview: true })).body;
+  assert.equal(p.problems.length, 1);
+  assert.match(p.problems[0], /^the prompt and the project rules are too long for one Windows command line: \d+ characters once quoted, at most 30000/);
+  assert.equal(ws.calls.length, 0, 'a preview starts nothing');
 });

@@ -11,7 +11,9 @@
 //                                                description, tags, note, name);
 //                                                with ref and expect, a new version (name, note, kind)
 //   POST /api/library/meta                       { ref, title, description, tags, expect }
-//   POST /api/library/archive                    { ref, archived }
+//   POST /api/library/archive                    { ref, archived, expect }
+//                                                (both: expect is the asset's `revision` the page
+//                                                saw; another one is a 409)
 //   POST /api/library/resolve                    { project, attachments: [{ ref, pin }] }: the
 //                                                versions and files they point to (changes nothing)
 import { addVersion, createAsset, getAsset, listLibrary, resolveAttachments, setArchived, updateMeta } from '../asset-library.mjs';
@@ -59,9 +61,10 @@ export function routes({ root }) {
       return { ok: true, asset: await updateMeta(root, b.ref, { title: b.title, description: b.description, tags: b.tags, expect: b.expect }) };
     },
 
+    // `?? null`: a request without expect is refused (400), never written unchecked.
     'POST /api/library/archive': async req => {
       const b = await readObject(req);
-      return { ok: true, asset: await setArchived(root, b.ref, b.archived) };
+      return { ok: true, asset: await setArchived(root, b.ref, b.archived, { expect: b.expect ?? null }) };
     },
 
     'POST /api/library/resolve': async req => {

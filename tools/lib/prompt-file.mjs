@@ -8,10 +8,13 @@
 // even one without a first prompt.
 //
 // File content (JSON):
-//   { "prompt": "...", "readDirs": ["C:\\abs\\folder"], "launch": { ... } }
+//   { "prompt": "...", "readDirs": ["C:\\abs\\folder"], "readOnlyDirs": ["C:\\abs\\folder"], "launch": { ... } }
 // The prompt may be empty only when the launch sets something: the session then starts without a
 // first prompt. readDirs are folders outside the session's working folder that it may read
-// without asking (for example a flow's reference images); they go into the session's --settings.
+// without asking (for example a flow's reference images); they go into the session's --settings
+// as permissions.additionalDirectories. readOnlyDirs (attached assets' folders, whose files must
+// keep their recorded hashes) go there too, plus an Edit deny rule each (editDenyRule): an
+// additional directory is a working directory, where acceptEdits and auto mode edit freely.
 // launch (optional): { permissionMode, model, effort, allowedTools: [rule, ...], sessionId,
 // resume, continueLast, settingsFile, appendSystemPrompt }. permissionMode, model and effort
 // become --permission-mode, --model and --effort; allowedTools goes into the settings'
@@ -28,7 +31,7 @@
 // writePromptFile refuses a prompt and system prompt text that would not fit together once quoted
 // (COMMAND_TEXT_BUDGET).
 import { mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { isAbsolute, join, posix, relative, resolve, win32 } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 
@@ -176,19 +179,47 @@ export function mergeSettings(...layers) {
   return layers.filter(isObj).reduce((acc, l) => merge(acc, l), {});
 }
 
+// The permission rule that keeps a session from changing anything inside the absolute folder
+// `dir`: "Edit(//c/ws/inbox/attachments/_assets/logo/**)". Claude Code 2.1.309, checked against
+// https://code.claude.com/docs/en/permissions ("Read and Edit"): Read and Edit rules are
+// gitignore patterns, "//path" is absolute from the filesystem root, and on Windows a path is
+// normalized to POSIX form before matching ("C:\Users\alice becomes /c/Users/alice"). An Edit
+// rule covers every built-in tool that edits files (a Write(path) rule never matches anything),
+// and a deny rule holds in every permission mode. It does not stop a script that writes files
+// itself; verifyFiles still catches a changed file at the next start. The pattern characters
+// * ? [ ] and \ in a folder name are escaped so the rule names that folder only; parentheses need
+// no escaping. Throws for a Windows path without a drive letter (a network share): the docs give
+// no form for it, and such a folder can't be a working directory anyway.
+export function editDenyRule(dir, platform = process.platform) {
+  const d = String(dir ?? '');
+  let path;
+  if (platform === 'win32') {
+    const m = /^([A-Za-z]):[\\/]/.exec(d);
+    if (!m) throw new Error(`${d} is not a folder on a drive letter, so a session can't be kept from editing it`);
+    path = `${m[1].toLowerCase()}/${win32.normalize(d).slice(3).replace(/\\/g, '/')}`;
+  } else {
+    if (!d.startsWith('/')) throw new Error(`${d} is not an absolute folder path`);
+    path = posix.normalize(d).slice(1);
+  }
+  return `Edit(//${path.replace(/\/+$/, '').replace(/[\\*?[\]]/g, '\\$&')}/**)`;
+}
+
 // The claude arguments for a session started from a prompt file (takePromptFile's result):
-// { args, settings, settingsPath }. When readDirs (permissions.additionalDirectories) or
+// { args, settings, settingsPath }. When readDirs and readOnlyDirs
+// (permissions.additionalDirectories, plus permissions.deny for the read-only ones) or
 // allowedTools (permissions.allow) need a settings file, `settings` is its JSON text and
 // `settingsPath` where the caller writes it (in args after --settings); the launch's
 // settingsFile, when there is one, is merged in: its own values win and its arrays add up.
 // Otherwise settings is null and a settingsFile is passed as it is. --append-system-prompt and
 // its text follow; the prompt, when there is one, comes last.
-export function promptSessionArgs({ prompt = '', readDirs = [], launch = {} }) {
+export function promptSessionArgs({ prompt = '', readDirs = [], readOnlyDirs = [], launch = {} }) {
   const { settingsFile, appendSystemPrompt, ...flags } = launch;
   const args = launchArgs(flags);
   const permissions = {};
-  if (readDirs.length) permissions.additionalDirectories = readDirs;
+  const dirs = [...new Set([...readDirs, ...readOnlyDirs])];
+  if (dirs.length) permissions.additionalDirectories = dirs;
   if (flags.allowedTools && flags.allowedTools.length) permissions.allow = flags.allowedTools;
+  if (readOnlyDirs.length) permissions.deny = readOnlyDirs.map(d => editDenyRule(d));
   let settings = null;
   let settingsPath = '';
   if (Object.keys(permissions).length) {
@@ -223,13 +254,15 @@ export function commandTextProblem(prompt, launch = {}) {
 }
 
 // Writes the file and returns its path. Throws, before writing, when the prompt and the rules
-// would not fit on one Windows command line (commandTextProblem).
-export function writePromptFile({ prompt = '', readDirs = [], launch = {} }) {
+// would not fit on one Windows command line (commandTextProblem), or a read-only folder can't
+// get its deny rule (editDenyRule).
+export function writePromptFile({ prompt = '', readDirs = [], readOnlyDirs = [], launch = {} }) {
   const problem = commandTextProblem(prompt, launch);
   if (problem) throw new Error(problem);
+  for (const d of readOnlyDirs) editDenyRule(d);
   mkdirSync(promptDir(), { recursive: true });
   const file = join(promptDir(), `${randomUUID()}.json`);
-  writeFileSync(file, JSON.stringify({ prompt, readDirs, launch }), 'utf8');
+  writeFileSync(file, JSON.stringify({ prompt, readDirs, readOnlyDirs, launch }), 'utf8');
   return file;
 }
 
@@ -242,8 +275,13 @@ export function takePromptFile(file) {
   try { data = JSON.parse(readFileSync(file, 'utf8')); } catch (e) { throw new Error(`could not read the prompt file: ${e.message}`); }
   const given = data && typeof data.prompt === 'string' ? data.prompt : '';
   const prompt = given.trim() ? given : '';
-  const readDirs = data && Array.isArray(data.readDirs) ? data.readDirs : [];
-  if (!readDirs.every(d => typeof d === 'string' && isAbsolute(d))) throw new Error('readDirs must be absolute folder paths');
+  const dirList = k => (data && Array.isArray(data[k]) ? data[k] : []);
+  const readDirs = dirList('readDirs');
+  const readOnlyDirs = dirList('readOnlyDirs');
+  for (const [k, list] of [['readDirs', readDirs], ['readOnlyDirs', readOnlyDirs]]) {
+    if (!list.every(d => typeof d === 'string' && isAbsolute(d))) throw new Error(`${k} must be absolute folder paths`);
+  }
+  for (const d of readOnlyDirs) editDenyRule(d);
   const { error, launch } = checkLaunch((data && data.launch) || {});
   if (error) throw new Error(`launch: ${error}`);
   if (!prompt && !setsSomething(launch)) throw new Error('the prompt is empty');
@@ -251,7 +289,7 @@ export function takePromptFile(file) {
   if (rel && !rel.startsWith('..') && !isAbsolute(rel)) {
     try { unlinkSync(file); } catch { /* already gone */ }
   }
-  return { prompt, readDirs, launch };
+  return { prompt, readDirs, readOnlyDirs, launch };
 }
 
 // The prompt as claude's last argument. "--" ends the options, so a prompt that starts with

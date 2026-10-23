@@ -7,13 +7,14 @@
 // Where a run starts: a flow for any project (project "*") needs the request's `project`, a
 // known project the app can start in; a flow with a fixed project (or the hub) refuses another
 // one. Every launch that started appends its record, with the flow's version and the exact asset
-// versions it got, to <dataDir>/flow-runs.jsonl (flow-versions.mjs); a refused or failed launch
-// writes nothing.
+// versions it got, to <dataDir>/flow-runs.jsonl (flow-versions.mjs), and its session's line in
+// sessions.jsonl has the flow's hash and hub commit too; a refused or failed launch writes nothing.
 //
 // Assets: a run gets the flow's own attached assets (its `assets` field) and, in a project, the
 // ones the project's settings attach, resolved to exact versions (attached-assets.mjs). They are
-// listed in the prompt after the images ("Asset 1: <title> (<ref> v<n>, <kind>) at <path>"), and
-// the session may read their folders, as it reads the image folder. An asset, version or file
+// listed in the prompt after the images ('Asset 1: <ref> v<n> (<kind>) at <path>, titled "<title>"'), and
+// the session may read their folders, as it reads the image folder, but not edit them (launch.mjs
+// sessionDirs). An asset, version or file
 // that is gone refuses the run (400), and so does a file that no longer matches its recorded
 // SHA-256 (409). The preview shows the effective launch: the project's defaults, tools and rules
 // added (launch.mjs withProjectSettings), and the assets with what a run would refuse.
@@ -22,10 +23,11 @@ import {
   archiveFlow, checkFlow, checkRunNotes, flowImages, flowImagesDir, flowLaunch, getFlow, isAnyProject, LIMITS as FLOW_LIMITS,
   parseFlowAssets, readCaptions, restoreFlow, runPrompt, saveFlow, setCaption, skippedFlowImages, SLUG_RE,
 } from '../../lib/flows.mjs';
+import { commandTextProblem } from '../../lib/prompt-file.mjs';
 import { realProjectDir } from '../../lib/projects.mjs';
-import { assetDirs, assetLine, assetProblems, assetRecords, resolveAssets, verifyFiles } from '../attached-assets.mjs';
+import { assetLine, assetProblems, assetRecords, resolveAssets, verifyFiles } from '../attached-assets.mjs';
 import { allDone } from '../core/git.mjs';
-import { flowVersion, readFlowRuns, recordFlowRun, versionChanges } from '../flow-versions.mjs';
+import { flowVersion, readFlowRuns, recordFlowRun, sessionFlowRef, versionChanges } from '../flow-versions.mjs';
 import { HttpError, readJson } from '../http.mjs';
 import { sessionSettings, withProjectSettings } from '../launch.mjs';
 import { findProject, flowOrThrow, launchableOrThrow } from '../lookup.mjs';
@@ -75,8 +77,9 @@ export function routes({ root, actions, dataDir }) {
 
   // The preview of a run (POST /api/flows/run with preview): the prompt with the assets a run
   // would list, the effective launch (the project's defaults, tools and rules added), and in
-  // `problems` what a run would refuse. A flow for any project shows its project's part once
-  // `requested` names one. Nothing is started or written.
+  // `problems` what a run would refuse: an asset that is gone or whose file changed (runInputs),
+  // and a prompt and rules too long for one Windows command line (writePromptFile). A flow for
+  // any project shows its project's part once `requested` names one. Nothing is started or written.
   async function previewRun(f, { images, captions, notes, notesError, launch, requested }) {
     const out = { ok: true, notesError, launch, prompt: '', project: '', projectSettings: null, assets: [], problems: [], note: '' };
     let project = '';
@@ -90,8 +93,11 @@ export function routes({ root, actions, dataDir }) {
     try { items = await resolveRunAssets(f, project, settings); } catch (e) { out.problems.push(e.message); }
     out.problems.push(...assetProblems(items));
     const usable = items.filter(i => !i.missing);
+    out.problems.push(...await verifyFiles(usable));
     out.prompt = runPrompt(f, images, notes, captions, usable.map((a, i) => assetLine(a, i)));
     try { out.launch = withProjectSettings(launch, settings); } catch (e) { out.problems.push(e.message); }
+    const tooLong = commandTextProblem(out.prompt, out.launch);
+    if (tooLong) out.problems.push(tooLong);
     out.project = project;
     out.projectSettings = settings ? settingsRef(settings) : null;
     out.assets = items.map(i => ({ ref: i.ref, pin: i.pin, version: i.version, kind: i.kind, title: i.title, archived: !!i.archived, missing: !!i.missing }));
@@ -103,7 +109,7 @@ export function routes({ root, actions, dataDir }) {
     // assets as a list (assetList: [{ ref, pin }]).
     'GET /api/flow': async (req, res, url) => {
       const f = flowOrThrow(root, Object.fromEntries(url.searchParams).slug);
-      const { file, ...flow } = f;
+      const { file, text, ...flow } = f;
       const captions = readCaptions(root, f.slug);
       const images = flowImages(root, f.slug).map(abs => ({
         name: basename(abs), path: abs.slice(root.length + 1).split(sep).join('/'), caption: captions[basename(abs)] || '',
@@ -169,12 +175,15 @@ export function routes({ root, actions, dataDir }) {
       const dir = f.target === 'project' ? realProjectDir(root, project) : root;
       const { settings, assets } = await runInputs(f, project);
       const prompt = runPrompt(f, images, notes, captions, assets.map((a, i) => assetLine(a, i)));
-      const readDirs = [...(images.length ? [flowImagesDir(root, f.slug)] : []), ...assetDirs(assets)];
+      // The assets' folders are added by launch.mjs from `assets`, read-only (sessionDirs).
+      const readDirs = images.length ? [flowImagesDir(root, f.slug)] : [];
       const title = `Flow: ${f.title || f.slug}`;
-      // The version of the files this prompt was built from, taken before the terminal opens.
-      const version = await flowVersion(root, f.slug);
-      // The session lists no assets a second time; it records them, with the settings they came from.
-      const session = { title, prompt, readDirs, launch, kind: 'flow', assets, settings };
+      // The version of what this prompt was built from (the flow's text, image list and captions
+      // as read above, not read again), taken before the terminal opens.
+      const version = await flowVersion(root, f.slug, { text: stored.text, images, captions });
+      // The session lists no assets a second time; it records them, with the settings they came
+      // from, and the flow's version (A5: sessions.jsonl has it even when flow-runs.jsonl can't).
+      const session = { title, prompt, readDirs, launch, kind: 'flow', assets, settings, flow: sessionFlowRef(f.slug, version) };
       let started;
       if (f.target === 'hub') started = await actions.startClaude({ dir, ...session });
       else if (f.target === 'project') started = await actions.startClaude({ dir, ...session, project });

@@ -226,8 +226,10 @@ new, immutable version with its SHA-256. The API is in place; the screens come l
   `kind` (`image`, `text` or `pdf`), `description`, `tags`, `createdAt`, `archived`, and
   `versions` (`n`, `file`, `sha256`, `bytes`, `type`, `addedAt`, `note`, `originalName`). Only
   `asset-library.mjs` writes it, through a temporary file and a rename, one change at a time.
-- A new version and a meta change carry `expect`, the number of versions the page saw; another
-  count is a 409. The same bytes as the latest version add nothing (`added: false`).
+- A new version carries `expect`, the number of versions the page saw; a meta change, an archive
+  and a restore carry `expect`, the asset's `revision` the page saw (every listing and asset has
+  it: a hash of its `asset.json` as read, so any change, a hand edit included, gives a new one).
+  Another value is a 409. The same bytes as the latest version add nothing (`added: false`).
 
 | Route | Does |
 |---|---|
@@ -235,7 +237,7 @@ new, immutable version with its SHA-256. The API is in place; the screens come l
 | `GET /api/library/asset?ref=<ref>` | One asset with every version |
 | `POST /api/library/upload?scope=&project=&title=&kind=&description=&tags=&note=&name=` | The raw file as the body: a new asset. With `ref=` and `expect=` (plus `name`, `note`, `kind`): a new version of that asset |
 | `POST /api/library/meta` | `{ ref, title, description, tags, expect }`: the fields given change, the id doesn't |
-| `POST /api/library/archive` | `{ ref, archived }`: archive or restore |
+| `POST /api/library/archive` | `{ ref, archived, expect }`: archive or restore |
 | `POST /api/library/resolve` | `{ project, attachments: [{ ref, pin }] }`: the version, hash and file each attachment points to (`pin: null` is the latest); `missing` and `archived` are marked; another project's ref is refused |
 | `GET /library-file?ref=<ref>&v=<n>` | One version's file (`&download=1` to save it) |
 
@@ -259,7 +261,9 @@ new, immutable version with its SHA-256. The API is in place; the screens come l
 - Asset library uploads are checked by content as well: the bytes decide the kind (PNG, JPEG,
   GIF or WebP, a BMP saved as PNG, at most 25 MB; `.md`, `.txt` or `.json` as valid UTF-8 without
   NUL bytes, at most 2 MB, JSON that parses; a PDF starts with `%PDF-`, at most 25 MB). A file
-  name or a declared kind that disagrees is refused, and SVG never gets in, not even as text.
+  name or a declared kind that disagrees is refused, and SVG never gets in, not even as text: a
+  text that starts with markup (as every SVG document does) is refused when it has an `<svg>`
+  element, with any prefix, or the SVG namespace anywhere in it.
 - `/library-file` serves only a version that the asset's `asset.json` lists, by its own
   `v<n>.<ext>` name inside the asset's folder (a tampered entry or a linked folder is refused),
   with the type that extension stands for (every text kind as `text/plain; charset=utf-8`),
@@ -274,9 +278,12 @@ new, immutable version with its SHA-256. The API is in place; the screens come l
 - Agent and flow files are found by name in their own folders, never by a path from the page.
   Saves check that the file hasn't changed since it was opened (409 otherwise), and an agent's
   name can't change in the editor (its memory folder is named after it).
-- A flow run may read only that flow's image folder (`--settings` with
+- A flow run may read only that flow's image folder and its assets' folders (`--settings` with
   `permissions.additionalDirectories`), and the prompt reaches Claude through a temp file that
-  is deleted as soon as it is read.
+  is deleted as soon as it is read. Every session with attached assets also gets an `Edit` deny
+  rule for each asset's folder, so not even `acceptEdits` or `auto` mode lets Claude's file tools
+  change a version file or `asset.json` (a script that writes files itself still could; the next
+  start then refuses the changed file).
 - A project's rules reach a session only as an argument of a Node spawn (`claude-prompt.mjs`,
   `agent-session.mjs`, which read them from that temp file), never inside a PowerShell command,
   whose quoting Windows PowerShell 5.1 would change. A prompt and rules too long together for one

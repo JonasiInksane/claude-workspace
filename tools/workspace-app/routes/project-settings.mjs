@@ -9,13 +9,17 @@
 // The project must be a folder in projects/ (lookup.mjs; 404 otherwise) whose name the data
 // folder can hold (PROJECT_RE; 400 otherwise). A save names the version it was opened at
 // (basedOn; 0 or null when there were none): 409 when that is not the current one any more, 400
-// listing every problem when a value is invalid. A field left out keeps its current value; a save
+// listing every problem when a value is invalid, and 400 with the reason when every session in
+// the project would refuse the settings (launch.mjs settingsLaunchProblems: an attached asset that
+// is gone or changed, rules too long together with the asset list or for one Windows command
+// line). A field left out keeps its current value; a save
 // that changes nothing writes nothing (unchanged: true). Settings that can't be read are a 500
 // whose message names the file. A save may be larger than the 64 KB of other requests (see
 // MAX_SAVE_BYTES).
 import { EFFORTS, MAX_TOOL_RULES, PERMISSION_MODES } from '../../lib/prompt-file.mjs';
 import { PROJECT_RE } from '../core/datadir.mjs';
 import { HttpError, readBody } from '../http.mjs';
+import { settingsLaunchProblems } from '../launch.mjs';
 import { findProject } from '../lookup.mjs';
 import {
   DEFAULT_KEYS, getSettingsVersion, readSettings, saveSettings, SETTINGS_FIELDS, SETTINGS_LIMITS,
@@ -75,7 +79,9 @@ export function routes({ root, dataDir }) {
       if (unknown.length) throw new HttpError(400, `"${unknown[0].slice(0, 60)}" is not a project setting (send ${BODY_KEYS.join(', ')})`);
       const project = settingsProject(root, b.project);
       const input = Object.fromEntries(SETTINGS_FIELDS.filter(k => k in b).map(k => [k, b[k]]));
-      const saved = await saveSettings(dataDir, project, input, { basedOn: b.basedOn });
+      // Settings every later session would refuse are a 400 now, not a blocked project later.
+      const check = settings => settingsLaunchProblems(root, project, settings);
+      const saved = await saveSettings(dataDir, project, input, { basedOn: b.basedOn, check });
       const unchanged = saved.version === (b.basedOn || 0);
       return {
         ok: true, project, version: saved.version, sha256: saved.sha256, unchanged,

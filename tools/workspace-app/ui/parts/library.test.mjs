@@ -11,7 +11,7 @@ import { fakeFetch, installDom, reply } from '../../test/dom.mjs';
 
 const dom = installDom();
 after(() => dom.uninstall());
-const calls = fakeFetch((path, { method }) => (method === 'POST' && path.startsWith('/api/library/meta') ? reply(409, { ok: false, error: 'shared:x has 3 versions now, not 2' }) : { ok: true, assets: [], items: [] }));
+const calls = fakeFetch((path, { method }) => (method === 'POST' && path.startsWith('/api/library/meta') ? reply(409, { ok: false, error: 'shared:x changed since you opened it.' }) : { ok: true, assets: [], items: [] }));
 const lib = await import('./library.js');
 
 const MB = 1024 * 1024;
@@ -106,8 +106,8 @@ test('the calls: listing, one asset, uploads (query and raw body), meta with exp
     await lib.uploadNew(file, { scope: 'project', project: 'example', title: 'Guide', tags: 'docs, ui', note: 'first' });
     await lib.uploadNew({ name: 'image.png', size: 5, type: 'image/png' }, { scope: 'shared', project: 'example', title: 'Pasted image', pasted: true });
     await lib.uploadVersion('shared:style', file, { expect: 3, note: 'tighter' });
-    await assert.rejects(lib.saveMeta('shared:x', { title: 'X', description: '', tags: 'a' }, 2), err => err.status === 409 && /3 versions now/.test(err.message));
-    await lib.setArchived('shared:x', true);
+    await assert.rejects(lib.saveMeta('shared:x', { title: 'X', description: '', tags: 'a' }, '0123456789abcdef'), err => err.status === 409 && /changed since/.test(err.message));
+    await lib.setArchived('shared:x', true, '0123456789abcdef');
     await lib.resolveAttachments('example', [{ ref: 'shared:x', pin: null }]);
   } finally { globalThis.fetch = base; }
   const paths = calls.map(c => `${c.method} ${c.path}`);
@@ -116,8 +116,8 @@ test('the calls: listing, one asset, uploads (query and raw body), meta with exp
   assert.equal(sent[0].type, 'text/markdown');
   assert.equal(sent[1].path, '/api/library/upload?scope=shared&title=Pasted+image', 'a shared asset takes no project; a pasted file sends no name');
   assert.equal(sent[2].path, '/api/library/upload?ref=shared%3Astyle&expect=3&note=tighter&name=guide.md');
-  assert.deepEqual(calls.find(c => c.path === '/api/library/meta').body, { ref: 'shared:x', title: 'X', description: '', tags: 'a', expect: 2 });
-  assert.deepEqual(calls.find(c => c.path === '/api/library/archive').body, { ref: 'shared:x', archived: true });
+  assert.deepEqual(calls.find(c => c.path === '/api/library/meta').body, { ref: 'shared:x', title: 'X', description: '', tags: 'a', expect: '0123456789abcdef' });
+  assert.deepEqual(calls.find(c => c.path === '/api/library/archive').body, { ref: 'shared:x', archived: true, expect: '0123456789abcdef' });
   assert.deepEqual(calls.find(c => c.path === '/api/library/resolve').body, { project: 'example', attachments: [{ ref: 'shared:x', pin: null }] });
 });
 

@@ -300,7 +300,8 @@ Tests: `node tools/run-tests.mjs workspace-app`. Next to each module is its `*.t
 `test/e2e.test.mjs` drives Explain, Review and a Refactor to its commit through the real app
 and engine with the fake claude, on a synthetic repo; `test/ask.e2e.test.mjs` asks about a run,
 follows up and asks about a finding the same way. A test of a page module (`ui/**/*.js`)
-renders it in `test/dom.mjs`, a stand-in DOM with a fake `fetch` (`installDom`, `fakeFetch`).
+renders it in `test/dom.mjs`, a stand-in DOM with a fake `fetch` (`installDom`, `fakeFetch`);
+`ui/main.test.mjs` loads all of `main.js` there, with a browser-like history, to test the routing.
 
 Screens: `node tools/workspace-app/test/shots.mjs --out <dir> --example --routes project/example/overview,runs --theme both`
 saves one PNG per route from headless Edge and lists every console error, CSP violation and

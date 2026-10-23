@@ -37,13 +37,13 @@ bottom is chronological.
 | Step | What | Status | Commit / branch |
 |---|---|---|---|
 | A0 | Line endings for test fixtures (`.gitattributes`) | done | see log |
-| A1+A2 | Project types, tabbed project page, new navigation | in progress (WF-A1) | `pm/w1a-project-page` |
-| A3 | Project settings and rules (versioned, private): backend + session/run injection | in progress (WF-A1) | `pm/w1b-project-settings` |
-| A4 | Asset library (shared and per project, versions): backend | in progress (WF-A1) | `pm/w1c-asset-library` |
-| A5 | Flows shared across projects, flow versions recorded | in progress (WF-A1) | `pm/w1d-shared-flows` |
-| A3/A4 UI | Settings tab, Assets tab and library screens | todo (wave 2) | |
-| A6 | Run input manifest, attached assets into runs | todo | |
-| A7 | Ask panel | todo | |
+| A1+A2 | Project types, tabbed project page, new navigation | done (merged `aecd2b0`) | `pm/w1a-project-page` |
+| A3 | Project settings and rules (versioned, private): backend + session/run injection | done (merged `9531143`) | `pm/w1b-project-settings` |
+| A4 | Asset library (shared and per project, versions): backend | done (merged `fe0f6d0`) | `pm/w1c-asset-library` |
+| A5 | Flows shared across projects, flow versions recorded | done (merged `75fab0f`) | `pm/w1d-shared-flows` |
+| A3/A4 UI | Settings tab, Assets tab and library screens | in progress (WF-A2) | `pm/w2a-settings-assets-ui` |
+| A6 | Run input manifest, attached assets into runs, flows and sessions; wave-1 follow-ups | in progress (WF-A2) | `pm/w2b-run-provenance` |
+| A7 | Ask panel | in progress (WF-A2) | `pm/w2c-ask-panel` |
 | A-review | Independent review of the whole Part A diff, fixes | todo | |
 | A-docs | README, flows README, decision note, report revision | todo | |
 
@@ -65,7 +65,8 @@ bottom is chronological.
 
 | # | Name | Script | Run id | Result |
 |---|---|---|---|---|
-| WF-A1 | `hub-app-wave-1`: 4 slices (A1+A2, A3 backend, A4 backend, A5), each implement → review-and-fix in its own worktree | `~/.claude/projects/C--dev-claude-workspace/5108b4b5-cc8f-4f47-adae-6ce3174930d6/workflows/scripts/hub-app-wave-1-wf_05cd4a1a-2f8.js` | `wf_05cd4a1a-2f8` | running |
+| WF-A1 | `hub-app-wave-1`: 4 slices (A1+A2, A3 backend, A4 backend, A5), each implement → review-and-fix in its own worktree | `~/.claude/projects/C--dev-claude-workspace/5108b4b5-cc8f-4f47-adae-6ce3174930d6/workflows/scripts/hub-app-wave-1-wf_05cd4a1a-2f8.js` | `wf_05cd4a1a-2f8` | done: 8 agents, all slices ready-with-notes |
+| WF-A2 | `hub-app-wave-2`: Settings/Assets UI, run provenance + follow-ups, Ask panel; implement → review-and-fix | `.../workflows/scripts/hub-app-wave-2-wf_d4458441-b73.js` | `wf_d4458441-b73` | running |
 | WF-B1 | `nws-foundation`: core+db ‖ apps skeleton (same checkout, disjoint folders, no agent commits), then integrate + review | `.../workflows/scripts/nws-foundation-wf_7d149b2a-dab.js` | `wf_7d149b2a-dab` | running |
 
 Resume a workflow in the same session with `Workflow({scriptPath, resumeFromRunId})`. In a new
@@ -95,3 +96,13 @@ the missing slices (the briefs are in the script file).
   eslint-config-next's rules. Decisions: ESLint 10 kept (9 is EOL; plugin peer ranges cosmetic),
   `@eslint/js` + `globals` added, new package `packages/repo` (read-only repo access).
 - 2026-10-23: WF-B1 launched (run `wf_7d149b2a-dab`), parallel to WF-A1.
+- 2026-10-23: WF-A1 done (2 h 40 min). Reviews: w1a 2 medium + 3 low fixed; w1b 1 medium + 1 low
+  fixed; w1c 3 low fixed; w1d 4 low fixed. Open lows went into WF-A2's follow-ups (stale
+  "cockpit" messages, fence wording, flow preview, route list test) or stay noted (PDF inline in
+  Edge unverified; flow-runs.jsonl not rotated). Note: workflow worktrees start at `main`, not
+  the checked-out branch; WF-A2 briefs branch from `project-model` explicitly.
+- 2026-10-23: Merged the four branches into `project-model` (README and `app.mjs` conflicts
+  resolved by hand, both sides kept). Full suite: 1,364 tests, 1,363 pass, 0 fail, 1 skipped.
+  check-workspace: only the two known private-marker errors in the old control-plan folder.
+  Merged-app screenshots checked. Workflow worktrees removed (all clean).
+- 2026-10-23: WF-A2 launched (run `wf_d4458441-b73`).

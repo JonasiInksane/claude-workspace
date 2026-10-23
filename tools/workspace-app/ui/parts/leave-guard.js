@@ -71,6 +71,9 @@ export function mayLeave(hash, ask = q => window.confirm(q)) {
     markSoon();
     return true;
   }
+  // Asked before the browser moved (views/project.js asks for a tab before it navigates): the
+  // address is still the guarded one, so there is nothing to put back.
+  if (typeof location !== 'undefined' && location && location.hash === guard.hash) return false;
   if (shownBefore) history.pushState({ [MARK]: true }, '', guard.hash);
   else history.replaceState({ [MARK]: true }, '', guard.hash);
   return false;

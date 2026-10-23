@@ -152,7 +152,8 @@ function show(route, subPath = '', { focus = true } = {}) {
   setView(id, subPath);
   for (const [vid, s] of sections) s.hidden = vid !== id;
   const hash = hashFor(id, subPath);
-  if (location.hash !== hash) history.replaceState(null, '', hash);
+  // The entry's state is kept: it holds the leave guard's mark (parts/leave-guard.js).
+  if (location.hash !== hash) history.replaceState(history.state, '', hash);
   shown = id;
   shownSub = subPath;
   render();

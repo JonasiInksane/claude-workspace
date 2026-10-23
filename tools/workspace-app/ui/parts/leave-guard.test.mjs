@@ -114,6 +114,11 @@ test('a refused Back keeps the entry it moved to; a refused link adds no entry',
   assert.equal(await arrive(false), false);
   assert.deepEqual(h.urls, ['#today', HASH, HASH]);
   assert.equal(h.index, 2);
+  // A tab asks before the browser moves (views/project.js): Cancel leaves the history alone.
+  assert.equal(mayLeave('#project/example/checks', ask(false)), false);
+  await settle();
+  assert.deepEqual(h.urls, ['#today', HASH, HASH], 'no second copy of the settings entry');
+  assert.equal(h.index, 2);
   h.go(-2);
   assert.equal(await arrive(true), true, 'OK lets Back through');
   assert.equal(dom.location.hash, '#today');

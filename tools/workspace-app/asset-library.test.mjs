@@ -192,6 +192,34 @@ test('content that is not what it claims is refused (415), bad fields are a 400,
   assert.ok(!existsSync(sharedAssetsDir(root)), 'a refused upload creates no folder');
 });
 
+test('an SVG document is refused whatever comes before its root element; text that only mentions <svg> is fine', async t => {
+  const root = hub(t);
+  const ns = 'xmlns="http://www.w3.org/2000/svg"';
+  const svgs = [
+    `<svg ${ns}/>`,
+    `${String.fromCharCode(0xfeff)}  <SVG ${ns}></SVG>`,
+    `<?xml version="1.0"?>\n<?xml-stylesheet href="a.css"?>\n<svg ${ns}><script>alert(1)</script></svg>`,
+    `<?xml version="1.0"?>\n<!DOCTYPE svg [\n  <!ENTITY x "y">\n]>\n<svg ${ns}/>`,
+    `<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n<!-- by hand -->\n<svg ${ns}/>`,
+    '<svg:svg xmlns:svg="http://www.w3.org/2000/svg"><svg:script>alert(1)</svg:script></svg:svg>',
+    `<!--${'x'.repeat(5000)}-->\n<svg ${ns}/>`,
+  ];
+  for (const [i, text] of svgs.entries()) {
+    await refused(shared(root, `Svg ${i}`, Buffer.from(text), { originalName: 'logo.txt' }), 415, /SVG is not accepted/);
+  }
+  const mentions = [
+    '# Icons\n\nInline them:\n\n```html\n<svg viewBox="0 0 1 1"></svg>\n```\n',
+    '<!doctype html>\n<html><body><svg></svg></body></html>',
+    '<svgicon/>',
+    'svg files are not accepted',
+  ];
+  for (const [i, text] of mentions.entries()) assert.equal((await shared(root, `Text ${i}`, Buffer.from(text))).asset.kind, 'text', text);
+  // A prolog that never ends costs no more than reading it once.
+  const started = Date.now();
+  assert.equal((await shared(root, 'Odd', Buffer.from(`<!doctype ${'[]'.repeat(30000)}`))).asset.kind, 'text');
+  assert.ok(Date.now() - started < 2000, 'the SVG check runs in linear time');
+});
+
 test('size limits: images and PDFs at most 25 MB, text at most 2 MB (413); a text of exactly 2 MB is fine', async t => {
   const root = hub(t);
   const big = (head, size) => Buffer.concat([head, Buffer.alloc(size - head.length, 0x20)]);

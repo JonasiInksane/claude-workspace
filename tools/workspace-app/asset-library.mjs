@@ -24,7 +24,8 @@
 // refused:
 //   image  PNG, JPEG, GIF or WebP by its first bytes (detectImageType in uploads.mjs), at most
 //          25 MB; a BMP is stored as PNG (bmp.mjs, as uploads do); never SVG (it can carry scripts)
-//   text   .md, .txt or .json: valid UTF-8 without NUL bytes, at most 2 MB; JSON must parse
+//   text   .md, .txt or .json: valid UTF-8 without NUL bytes, at most 2 MB; JSON must parse; an
+//          SVG document is refused here too, whatever its prolog (isSvgDocument)
 //   pdf    starts with %PDF-, at most 25 MB
 //
 // Writes: a version file is created exclusively (flag 'wx'), and asset.json goes to a temporary
@@ -73,8 +74,12 @@ const NAMED_KIND = {
   md: 'text', txt: 'text', json: 'text', pdf: 'pdf',
 };
 const KIND_WORDS = { image: 'an image', text: 'a text file', pdf: 'a PDF' };
-// An SVG document at the start of a text (after an XML declaration, comments or a doctype).
-const SVG_START = /^\s*(?:<\?xml[^>]*>\s*)?(?:<!--[\s\S]*?-->\s*)*(?:<!doctype\s+svg[^>]*>\s*)?<svg[\s/>]/i;
+// What may come before an XML document's first element: white space, then an XML declaration or
+// another processing instruction, a comment, or a doctype (with or without an internal subset).
+// Sticky, so isSvgDocument can step through them; no part can match in more than one way.
+const PROLOG_PART = /\s*(?:<\?[\s\S]*?\?>|<!--[\s\S]*?-->|<!doctype(?:[^>[]|\[[^\]]*\])*>)/iy;
+// An SVG root element, plain or with a namespace prefix (<svg:svg>).
+const SVG_ROOT = /\s*<(?:[\w.-]+:)?svg[\s/>]/iy;
 const utf8 = new TextDecoder('utf-8', { fatal: true });
 
 const bad = message => new HttpError(400, message);
@@ -271,9 +276,20 @@ function pdfContent(buf) {
   return { kind: 'pdf', ext: 'pdf', type: STORED.pdf.type, data: buf };
 }
 
+// True when a text is an SVG document: its first element, after the prolog (PROLOG_PART), is
+// <svg>. Only the first 64 KB are looked at; both regexes run in linear time.
+function isSvgDocument(text) {
+  const head = text.slice(0, 64 * 1024);
+  let at = 0;
+  PROLOG_PART.lastIndex = 0;
+  while (PROLOG_PART.exec(head)) at = PROLOG_PART.lastIndex;
+  SVG_ROOT.lastIndex = at;
+  return SVG_ROOT.test(head);
+}
+
 function textContent(buf, text, ext) {
   if (buf.length > LIMITS.textBytes) throw tooLarge('text files can be at most 2 MB');
-  if (SVG_START.test(text.slice(0, 4096))) throw unsupported('SVG is not accepted, not even as text: it can carry scripts');
+  if (isSvgDocument(text)) throw unsupported('SVG is not accepted, not even as text: it can carry scripts');
   if (ext === 'json') {
     try { JSON.parse(text); } catch (e) { throw unsupported(`this is not valid JSON (${e.message})`); }
   }

@@ -17,6 +17,7 @@ import { manifestHash, profileHash, templateHash } from './manifest.mjs';
 import { loadPrompt } from './prompts.mjs';
 import { matchRecord } from '../core/proc.mjs';
 import { addVersion, createAsset, setArchived } from '../asset-library.mjs';
+import * as realAttached from '../attached-assets.mjs';
 import { saveSettings, settingsDir } from '../project-settings.mjs';
 
 const HUB = fileURLToPath(new URL('../../../', import.meta.url));
@@ -1031,7 +1032,7 @@ const HUB_STATE = { commit: 'a'.repeat(40), pipelinesClean: true };
 
 // A workspace with pipelines/app and projects/example, a shared text asset with two versions and
 // a project image, and a manager on the real catalog (Explain: one Claude stage, answer).
-async function assetWorld(t, { settings = null } = {}) {
+async function assetWorld(t, { settings = null, deps = {} } = {}) {
   const root = temp(t);
   cpSync(join(HUB, 'pipelines', 'app'), join(root, 'pipelines', 'app'), { recursive: true });
   mkdirSync(join(root, 'projects', 'example'), { recursive: true });
@@ -1050,6 +1051,7 @@ async function assetWorld(t, { settings = null } = {}) {
       profileFor: async () => ({ exists: true, profile: PROFILE, errors: [], warnings: [] }), getSettings: async () => ({ isolation: {} }),
       riskTags: () => ({ tags: [], hits: [] }), trustFor: async () => true, hubState: async () => HUB_STATE,
       createExecutor: engine => makeExecutor({ ...engine, testLog: log }, {}),
+      ...deps,
     },
   });
   t.after(async () => { await mgr.shutdown({ settleMs: 50 }).catch(() => {}); await mgr.settled().catch(() => {}); });
@@ -1137,4 +1139,20 @@ test('a version file edited by hand after it was saved refuses the start with 40
   rmSync(join(root, 'inbox', 'attachments', 'example', '_assets', 'palette', 'v1.png'));
   const [, gone] = await status(mgr.start(EXPLAIN));
   assert.match(gone, /the file of example:palette v1 is missing/);
+});
+
+test('a file that changes between the check and its copy is not kept: the run fails and says which', async t => {
+  // The check passes (as if the file changed right after it), so only the copy's own hash can catch it.
+  const late = [];
+  const { root, dataDir, mgr } = await assetWorld(t, { deps: { attached: { ...realAttached, async verifyFiles(items) { late.push(items.length); return []; } } } });
+  writeFileSync(join(root, 'inbox', 'attachments', 'example', '_assets', 'palette', 'v1.png'), Buffer.concat([PNG, Buffer.from('x')]));
+  const [code, msg] = await status(mgr.start(EXPLAIN));
+  assert.deepEqual(late, [2], 'the start checked both files first');
+  assert.equal(code, 500);
+  assert.match(msg, /The attached assets could not be copied into the run, so it stopped: example:palette v1: the copy for inputs\/assets\/project-palette@v1\.png does not have the SHA-256 it was checked with/);
+  const [line] = await store.listRuns(dataDir);
+  const run = await store.findRun(dataDir, line.id);
+  assert.equal(run.status, 'failed');
+  assert.deepEqual(Object.keys(run.inputsHashes), ['assets/shared-style-guide@v1.md'], 'the first copy, unchanged, was kept; the changed one was not');
+  assert.ok(!existsSync(join(store.runDir(dataDir, run), 'inputs', 'assets', 'project-palette@v1.png')));
 });

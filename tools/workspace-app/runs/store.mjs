@@ -13,9 +13,10 @@
 //   latest line per id (temporary file, then rename).
 // - Timeline rows get `seq`, the 1-based line number, so a poller asks "rows after seq N". A torn
 //   last line (a crash mid-write) keeps its line number, and the next append starts a fresh line.
-// - inputs/ files are hashed when written; verifyInputs re-hashes them before a gate (R27). Plain
-//   names sit in inputs/ itself; the copies of the project's attached assets in inputs/assets/
-//   (assets/<scope>-<id>@v<n>.<ext>, attached-assets.mjs), the only subfolder.
+// - inputs/ files are hashed when written (writeInput, or copyInput for a file copied as a stream);
+//   verifyInputs re-hashes them before a gate (R27). Plain names sit in inputs/ itself; the copies
+//   of the project's attached assets in inputs/assets/ (assets/<scope>-<id>@v<n>.<ext>,
+//   attached-assets.mjs), the only subfolder.
 // - A new run records the project's current settings version, `projectSettings: { version,
 //   sha256 }` or null (project-settings.mjs), read once here: its Claude stages get the rules of
 //   that version, so a save during the run changes nothing in it.
@@ -26,8 +27,10 @@
 //   saved as running again. Runs from before manifests, and runs created without one, have
 //   manifest null.
 // Ids and names are checked by regex before any path is joined, so ".." can never reach out.
-import { appendFile, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { randomBytes } from 'node:crypto';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { pipeline } from 'node:stream/promises';
+import { createHash, randomBytes } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { appendJsonl, canonicalJson, PROJECT_RE, readJson, readJsonl, renameRetry, sha256Text, writeJsonAtomic } from '../core/datadir.mjs';
 import { currentSettings, isSettingsRef, settingsRef } from '../project-settings.mjs';
@@ -568,6 +571,33 @@ export async function writeInput(dataDir, run, name, data, opts = {}) {
   run.inputsHashes = { ...(run.inputsHashes || {}), [name]: hash };
   await saveRun(dataDir, run, opts);
   return hash;
+}
+
+// Copies the file `from` to inputs/<name> as a stream, hashing the bytes as they are written, so
+// a file is never held in memory whole (an attached asset may be 25 MB). `sha256` (hex), when
+// given, is the hash the copy must have: another one removes the copy and throws, so a file that
+// changed after it was checked never gets in. Records the hash and saves the run like writeInput.
+// Returns the hash.
+export async function copyInput(dataDir, run, name, from, { sha256, ...opts } = {}) {
+  const file = join(runDir(dataDir, run), 'inputs', ...checkInputName(name).split('/'));
+  await mkdir(dirname(file), { recursive: true });
+  const digest = createHash('sha256');
+  try {
+    await pipeline(createReadStream(from), async function* hashing(source) {
+      for await (const chunk of source) { digest.update(chunk); yield chunk; }
+    }, createWriteStream(file));
+  } catch (err) {
+    await rm(file, { force: true }).catch(() => {});
+    throw err;
+  }
+  const hex = digest.digest('hex');
+  if (sha256 !== undefined && hex !== sha256) {
+    await rm(file, { force: true }).catch(() => {});
+    throw new Error(`the copy for inputs/${name} does not have the SHA-256 it was checked with (the file changed after the check), so it was not kept`);
+  }
+  run.inputsHashes = { ...(run.inputsHashes || {}), [name]: `sha256:${hex}` };
+  await saveRun(dataDir, run, opts);
+  return `sha256:${hex}`;
 }
 
 async function listEntries(dir) {

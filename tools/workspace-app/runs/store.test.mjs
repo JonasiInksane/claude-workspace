@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import {
   RUN_ID_RE, MSG_MAX, newRunId, freeRunId, runDir, runPath, stageFolder, gateFolder, tmpFolder, createRun, loadRun, findRun,
-  scanRuns, saveRun, indexLine, listRuns, compactIndex, appendTimeline, readTimeline, writeInput, verifyInputs, isTerminal,
+  scanRuns, saveRun, indexLine, listRuns, compactIndex, appendTimeline, readTimeline, writeInput, copyInput, verifyInputs, isTerminal,
 } from './store.mjs';
 import { saveSettings, settingsDir } from '../project-settings.mjs';
 import { manifestHash } from './manifest.mjs';
@@ -606,6 +606,34 @@ test('an asset copy goes to inputs/assets/ and verifyInputs covers it, and only 
   assert.deepEqual([v.changed, v.missing, v.extra], [['assets/shared-style-guide@v2.md'], ['assets/project-palette@v1.png'], ['assets/planted.md']]);
   assert.match(v.problems.join(' '), /inputs\/assets\/shared-style-guide@v2\.md changed after the app wrote it/);
   assert.match(v.problems.join(' '), /inputs\/assets\/planted\.md was not written by the app/);
+});
+
+test('copyInput streams a file into inputs/, hashed as it is written, and keeps it only with the expected SHA-256', async t => {
+  const dataDir = temp(t);
+  const run = await createRun(dataDir, { project: 'example', pipeline: 'refactor', id: 'r-c' });
+  const src = join(temp(t), 'v1.png');
+  const big = Buffer.alloc(3 * 1024 * 1024 + 7, 0x5a); // more than one stream chunk
+  writeFileSync(src, big);
+  const hex = createHash('sha256').update(big).digest('hex');
+  const h = await copyInput(dataDir, run, 'assets/project-palette@v1.png', src, { sha256: hex });
+  assert.equal(h, `sha256:${hex}`);
+  const inputs = join(runDir(dataDir, run), 'inputs');
+  assert.ok(readFileSync(join(inputs, 'assets', 'project-palette@v1.png')).equals(big));
+  assert.deepEqual((await loadRun(dataDir, 'example', 'r-c')).inputsHashes, { 'assets/project-palette@v1.png': h }, 'recorded in run.json');
+  assert.equal((await verifyInputs(dataDir, run)).ok, true);
+
+  // A file whose bytes are not the ones checked is not kept, and nothing is recorded for it.
+  writeFileSync(src, 'changed after the check');
+  await assert.rejects(copyInput(dataDir, run, 'assets/shared-style-guide@v1.md', src, { sha256: hex }),
+    /the copy for inputs\/assets\/shared-style-guide@v1\.md does not have the SHA-256 it was checked with/);
+  assert.ok(!existsSync(join(inputs, 'assets', 'shared-style-guide@v1.md')));
+  assert.deepEqual(Object.keys((await loadRun(dataDir, 'example', 'r-c')).inputsHashes), ['assets/project-palette@v1.png']);
+  // A missing source and a bad name are refused too; without an expected hash any bytes are kept.
+  await assert.rejects(copyInput(dataDir, run, 'assets/shared-gone@v1.md', join(dataDir, 'nope.md')), { code: 'ENOENT' });
+  assert.ok(!existsSync(join(inputs, 'assets', 'shared-gone@v1.md')));
+  await assert.rejects(copyInput(dataDir, run, '../run.json', src), /not a valid input file name/);
+  assert.equal(await copyInput(dataDir, run, 'notes.md', src), sha(Buffer.from('changed after the check')));
+  assert.equal((await verifyInputs(dataDir, run)).ok, true);
 });
 
 test('verifyInputs: an assets folder in a run without asset copies, or a file named assets, is extra', async t => {

@@ -4,13 +4,13 @@
 // (the last test only reads the workspace's own Tattoogenda flows).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import {
-  archiveFlow, checkFlow, checkRunNotes, flowFile, flowImages, flowImagesDir, getFlow, listArchivedFlows, listFlows, parseFlow,
-  readCaptions, renderFlow, restoreFlow, runPrompt, saveFlow, setCaption, skippedFlowImages, slugify,
+  ANY_PROJECT, archiveFlow, checkFlow, checkRunNotes, flowFile, flowImages, flowImagesDir, getFlow, isAnyProject, listArchivedFlows,
+  listFlows, parseFlow, readCaptions, renderFlow, restoreFlow, runPrompt, saveFlow, setCaption, skippedFlowImages, slugify,
 } from './lib/flows.mjs';
 import { checkLaunch, launchArgs, promptArgs, splitToolRules, takePromptFile, writePromptFile } from './lib/prompt-file.mjs';
 
@@ -113,6 +113,75 @@ test('the four Tattoogenda flows: plan mode, high effort, a required question, n
     assert.doesNotMatch(text, /\b[A-Z]{1,2}-?[A-Z]{0,2}\d{1,3}\b/, `${slug} has a finding id`);
     assert.ok(f.prompt.length < 2000, slug);
   }
+});
+
+test('every flow in flows/ reads back to the same text and checks out where its project exists', t => {
+  const flowsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'flows');
+  const names = readdirSync(flowsDir).filter(n => n.endsWith('.md') && n.toLowerCase() !== 'readme.md');
+  assert.ok(names.length > 0);
+  // A workspace with each flow's project (and agent) as an empty folder, named from the files.
+  const root = mkdtempSync(join(tmpdir(), 'ws-flows-tracked-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const n of names) {
+    const f = parseFlow(readFileSync(join(flowsDir, n), 'utf8'));
+    if (f.target !== 'hub' && f.project !== ANY_PROJECT) mkdirSync(join(root, 'projects', f.project), { recursive: true });
+    if (f.target === 'agent') put(root, `projects/${f.project}/.claude/agents/${f.agent}.md`, `---\nname: ${f.agent}\ndescription: d\nmemory: project\n---\n`);
+  }
+  for (const n of names) {
+    const text = readFileSync(join(flowsDir, n), 'utf8').replace(/\r\n/g, '\n');
+    assert.equal(renderFlow(parseFlow(text)), text, `${n} would change when saved`);
+    assert.equal(checkFlow(root, parseFlow(text)).error, '', n);
+  }
+});
+
+test('a project flow for any project ("*") round-trips, saves and lists while a project exists', t => {
+  const root = fixture(t);
+  const any = { ...base, target: 'project', project: ANY_PROJECT };
+  const f = { ...any, agent: '', permissionMode: '', model: '', effort: '', allowedTools: '', ask: '', askRequired: false };
+  // Written as a JSON string: an unquoted * would be a YAML alias.
+  assert.match(renderFlow(f), /\ntarget: project\nproject: "\*"\n/);
+  assert.deepEqual(parseFlow(renderFlow(f)), f);
+  // Hand-written forms read the same.
+  for (const v of ['*', '"*"', "'*'", '  "*"  ']) {
+    assert.equal(parseFlow(`---\ntitle: "x"\ntarget: project\nproject: ${v}\n---\np`).project, ANY_PROJECT, v);
+  }
+
+  const ok = checkFlow(root, { ...any, project: ' * ', agent: 'artist' });
+  assert.deepEqual([ok.error, ok.flow.project, ok.flow.agent, isAnyProject(ok.flow)], ['', '*', '', true]);
+  assert.equal(isAnyProject({ target: 'project', project: 'Game' }), false);
+  assert.equal(isAnyProject({ target: 'agent', project: '*' }), false);
+  assert.equal(isAnyProject(null), false);
+  // Hub flows still drop a project they don't use.
+  assert.equal(checkFlow(root, { ...base, project: '*' }).flow.project, '');
+
+  const saved = saveFlow(root, { ...any, title: 'Any project review' });
+  assert.equal(saved.error, '');
+  assert.match(readFileSync(flowFile(root, saved.slug), 'utf8'), /\ntarget: project\nproject: "\*"\n/);
+  assert.equal(getFlow(root, saved.slug).project, ANY_PROJECT);
+  assert.equal(listFlows(root).find(x => x.slug === saved.slug).error, '');
+  // Saving it again keeps "*"; a fixed project can replace it and the other way round.
+  const back = getFlow(root, saved.slug);
+  const fixed = saveFlow(root, { ...any, title: 'Any project review', project: 'game' }, { slug: saved.slug, baseHash: back.hash });
+  assert.equal(fixed.error, '');
+  assert.equal(getFlow(root, saved.slug).project, 'Game');
+  assert.equal(saveFlow(root, { ...any, title: 'Any project review' }, { slug: saved.slug, baseHash: fixed.hash }).error, '');
+  assert.equal(getFlow(root, saved.slug).project, ANY_PROJECT);
+
+  // Only while a project exists: folders starting with "." or "_" don't count.
+  rmSync(join(root, 'projects'), { recursive: true, force: true });
+  mkdirSync(join(root, 'projects', '_template'), { recursive: true });
+  mkdirSync(join(root, 'projects', '.cache'), { recursive: true });
+  assert.match(listFlows(root).find(x => x.slug === saved.slug).error, /no project in projects/);
+  assert.match(saveFlow(root, { ...any, title: 'Another' }).error, /no project in projects/);
+  assert.match(checkFlow(join(root, 'missing'), any).error, /no project in projects/);
+});
+
+test('an agent flow can\'t be for any project: an agent belongs to one project', t => {
+  const root = fixture(t);
+  assert.match(checkFlow(root, { ...base, target: 'agent', project: '*', agent: 'artist' }).error, /agent's project/);
+  assert.match(saveFlow(root, { ...base, title: 'Agent anywhere', target: 'agent', project: '*', agent: 'artist' }).error, /agent's project/);
+  put(root, 'flows/hand-made.md', '---\ntitle: "Hand made"\ntarget: agent\nproject: "*"\nagent: "artist"\n---\n\nDraw.\n');
+  assert.match(listFlows(root).find(x => x.slug === 'hand-made').error, /agent's project/);
 });
 
 test('checkFlow needs a title, a prompt and a target that can run', t => {

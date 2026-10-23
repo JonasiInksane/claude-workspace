@@ -4,7 +4,8 @@
 // question that still runs 409, after a question about something else 400), the parent each
 // question gets, the thread of a follow-up (capped at THREAD_MAX), and the text Claude sees:
 // built from the run fixtures (request, plan, gate summary, review, files, diff) or the findings
-// store, redacted, each part capped and the diff last so the total cap cuts it first.
+// store, redacted, each part capped: the thread's room kept first, the subject capped on its own,
+// and the diff last with only the room that is left.
 // Secret-shaped strings are built at runtime. Run: node tools/run-tests.mjs workspace-app
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,7 +15,7 @@ import * as store from './store.mjs';
 import { saveFindings } from '../findings/store.mjs';
 import { installRunFixtures } from '../test/fixtures/runs/install.mjs';
 import { tempDir } from '../test/helpers.mjs';
-import { askContext, CAPS, capText, CONTEXT_FILE, contextBlock, contextText, parseContext, sameSubject, statusWords, THREAD_MAX } from './context.mjs';
+import { askContext, CAPS, capText, CONTEXT_FILE, contextBlock, contextText, diffSection, parseContext, sameSubject, statusWords, THREAD_MAX } from './context.mjs';
 
 const REVIEW_GATE = '261022-100010-refactor-review-gate';
 const PROJECT = 'example';
@@ -171,6 +172,62 @@ test('contextText caps the diff, the thread and the whole text, and redacts secr
   assert.ok(Buffer.byteLength(text, 'utf8') <= CAPS.total + 80, `${Buffer.byteLength(text, 'utf8')} bytes`);
   assert.equal(capText('abcdef', 3), 'abc…');
   assert.equal(capText('abc', 3), 'abc');
+});
+
+test('contextText on a large run: the subject is capped on its own, the newest questions and answers survive, the diff gets what is left', async t => {
+  const dataDir = await world(t);
+  const long = n => `src/${String(n).padStart(3, '0')}/${'p'.repeat(220)}.mjs`;
+  const run = await store.createRun(dataDir, { project: PROJECT, pipeline: 'refactor', title: 'Refactor: a large one', values: { what: 'Split everything' }, stages: [] });
+  run.plan = { files: Array.from({ length: 20 }, (_, i) => long(i)), output: { summary: 'Split the big module.' } };
+  run.outputs = { review: { verdict: 'fix', findings: Array.from({ length: 20 }, (_, i) => ({ id: `F${i}`, severity: 'low', path: long(i), line: 1, claim: 'c'.repeat(400) })) } };
+  await store.saveRun(dataDir, run);
+  const files = Array.from({ length: 70 }, (_, i) => `diff --git a/${long(i)} b/${long(i)}\n--- a/${long(i)}\n+++ b/${long(i)}\n@@ -1 +1 @@\n-a\n+b\n`).join('');
+  writeFileSync(join(store.runDir(dataDir, run), 'final', 'diff.patch'), files);
+  const about = { kind: 'run', run: run.id, after: null, thread: [] };
+  const ids = [];
+  for (let n = 1; n <= THREAD_MAX; n++) ids.push((await question(dataDir, `Question ${n}`, about, { answer: `${'z'.repeat(1300)} END${n}` })).id);
+
+  const text = await contextText(dataDir, { context: { ...about, thread: ids } });
+  const at = s => text.indexOf(s);
+  assert.ok(Buffer.byteLength(text, 'utf8') <= CAPS.total, `${Buffer.byteLength(text, 'utf8')} bytes`);
+  assert.ok(!text.includes('(The context is cut here'), 'the parts fit without the safety cut');
+  // The subject is cut on its own, before the thread starts.
+  assert.ok(at('(Cut here at 15 KB, to leave room for the rest of the context.)') > 0, text.slice(0, 400));
+  assert.ok(at('(Cut here at') < at('# Earlier questions'));
+  assert.ok(Buffer.byteLength(text.slice(0, at('# Earlier questions')), 'utf8') <= CAPS.main + 2);
+  // The newest questions and answers are all there, the newest last; the oldest leave first.
+  const kept = ids.map((id, i) => [i + 1, text.includes(`(run ${id}): Question ${i + 1}\nA${i + 1}: ${'z'.repeat(1300)} END${i + 1}`)]);
+  assert.deepEqual(kept.slice(-3).map(([, ok]) => ok), [true, true, true], JSON.stringify(kept));
+  assert.ok(kept.every(([, ok], i) => !ok || kept.slice(i).every(([, later]) => later)), 'only the oldest are left out');
+  assert.match(text, /\(\d older questions? left out\.\)/);
+  // The diff comes last, with what is left.
+  assert.match(text, /## Diff\n\ndiff --git [\s\S]*\n\(The diff is cut here; in all it is \d+ KB over 70 files\.\)$/);
+  assert.ok(at('## Diff') > at(`END${THREAD_MAX}`));
+
+  // A short thread leaves the diff more room, up to its own cap.
+  const roomy = await contextText(dataDir, { context: { ...about, thread: ids.slice(-1) } });
+  assert.ok(Buffer.byteLength(roomy, 'utf8') <= CAPS.total);
+  assert.match(roomy, /## Diff\n\ndiff --git [\s\S]*\n\(The diff is cut here; in all it is \d+ KB over 70 files\.\)$/);
+  const diffBytes = Buffer.byteLength(roomy.slice(roomy.indexOf('## Diff')), 'utf8');
+  assert.ok(diffBytes > Buffer.byteLength(text.slice(text.indexOf('## Diff')), 'utf8') && diffBytes <= CAPS.diff + 200, `${diffBytes} bytes of diff`);
+});
+
+test('diffSection: the whole diff, the part that fits its room with a note, only a note, or nothing', () => {
+  const diff = (text, more = {}) => ({ text, partial: false, kb: 3, truncated: false, count: 2, ...more });
+  const small = 'diff --git a/x b/x\n+one\n';
+  assert.equal(diffSection(null, 5000), '');
+  assert.equal(diffSection(diff(small), 5000), `## Diff\n\n${small}`);
+  const big = `diff --git a/x b/x\n${'+line\n'.repeat(1000)}`;
+  const cut = diffSection(diff(big), 3000);
+  assert.ok(Buffer.byteLength(cut) <= 3000 && cut.startsWith('## Diff\n\ndiff --git'), `${Buffer.byteLength(cut)} bytes`);
+  assert.match(cut, /\n\(The diff is cut here; in all it is 3 KB over 2 files\.\)$/);
+  // Never more than CAPS.diff, however much room there is; a partial text always gets the note.
+  const huge = diffSection(diff('+'.repeat(CAPS.diff + 1000)), 100 * 1024);
+  assert.ok(Buffer.byteLength(huge) <= CAPS.diff + 200 && /cut here/.test(huge));
+  assert.match(diffSection(diff(small, { partial: true, truncated: true }), 5000), /cut here; in all it is 3 KB or more over 2 files/);
+  // Too little room for a useful part: a note only, and nothing when not even that fits.
+  assert.equal(diffSection(diff(big), 600), '## Diff\n\n(The diff is left out, so the context stays within 24 KB; in all it is 3 KB over 2 files.)');
+  assert.equal(diffSection(diff(big), 60), '');
 });
 
 test('contextText for a finding: its record, redacted; a gone finding, a gone run and an unknown kind say so', async t => {

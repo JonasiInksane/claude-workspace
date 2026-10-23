@@ -105,7 +105,8 @@ Every project in `projects/` has a page, `#project/<name>/<tab>`; its type
 | `generic` | anything else | Overview, Agents, Assets, Settings |
 
 A link without a tab, or with a tab the type doesn't have, opens the first tab; the old
-`#cockpit/<name>` and `#health/<name>` open Overview and Architecture. Tasks groups the runs by
+`#cockpit/<name>` and `#health/<name>` open Overview and Architecture (without a name, the current
+project's). Tasks groups the runs by
 their root run (`run.parent`); Checks shows every count a check recorded on its own (tests
 passed, failed and skipped, new, pre-existing and flaky failures, checks not run; a line from
 before the test totals shows only its failures). Settings for a non-code project offers "Create from the example", which

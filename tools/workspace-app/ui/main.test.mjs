@@ -122,3 +122,11 @@ test('the nav entry of the project on show, and g p, add no history entry; Back 
   dom.click(navEntry('project/example'));
   await settle(5);
 });
+
+test('a bare #health (an old link) opens the current project\'s Architecture tab, not its Overview', async () => {
+  browserLocation.hash = '#health';
+  await settle(5);
+  assert.equal(browserLocation.hash, '#project/example/architecture');
+  assert.equal(store.sub, 'example/architecture');
+  assert.equal(tab('architecture').getAttribute('aria-selected'), 'true');
+});

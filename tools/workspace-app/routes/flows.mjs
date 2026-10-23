@@ -1,18 +1,44 @@
 // Flows (flows/<slug>.md, read and written by tools/lib/flows.mjs): read one with its images,
 // create or save one (with a hash against stale saves), caption an image, preview or run it,
-// archive and restore. A run is checked again at run time, not trusted from the page's list; a
-// flow with a required question (askRequired) does not start without an answer, and a linked
-// project starts in its checkout's real folder.
+// archive and restore, and list its recent launches. A run is checked again at run time, not
+// trusted from the page's list; a flow with a required question (askRequired) does not start
+// without an answer, and a linked project starts in its checkout's real folder.
+//
+// Where a run starts: a flow for any project (project "*") needs the request's `project`, a
+// known project the app can start in; a flow with a fixed project (or the hub) refuses another
+// one. Every launch that started appends its record, with the flow's version, to
+// <dataDir>/flow-runs.jsonl (flow-versions.mjs); a refused or failed launch writes nothing.
 import { basename, sep } from 'node:path';
 import {
-  archiveFlow, checkFlow, checkRunNotes, flowImages, flowImagesDir, flowLaunch, getFlow, LIMITS as FLOW_LIMITS, readCaptions,
-  restoreFlow, runPrompt, saveFlow, setCaption, skippedFlowImages,
+  archiveFlow, checkFlow, checkRunNotes, flowImages, flowImagesDir, flowLaunch, getFlow, isAnyProject, LIMITS as FLOW_LIMITS,
+  readCaptions, restoreFlow, runPrompt, saveFlow, setCaption, skippedFlowImages, SLUG_RE,
 } from '../../lib/flows.mjs';
 import { realProjectDir } from '../../lib/projects.mjs';
+import { allDone } from '../core/git.mjs';
+import { flowVersion, readFlowRuns, recordFlowRun, versionChanges } from '../flow-versions.mjs';
 import { HttpError, readJson } from '../http.mjs';
-import { flowOrThrow, launchableOrThrow } from '../lookup.mjs';
+import { findProject, flowOrThrow, launchableOrThrow } from '../lookup.mjs';
 
-export function routes({ root, actions }) {
+// The project a run of the checked flow `f` starts in ('' for the hub). `requested` is the
+// request's project: required for a flow for any project (a known project, its real spelling),
+// otherwise only allowed when it names the flow's own project (folder names match without case,
+// like everywhere in the workspace). Whether the app may start a terminal there is checked by
+// the caller, for every target.
+export function runProject(root, f, requested) {
+  if (requested != null && typeof requested !== 'string') throw new HttpError(400, 'project must be a project name');
+  const name = f.title || f.slug;
+  const asked = String(requested ?? '').trim();
+  if (isAnyProject(f)) {
+    if (!asked) throw new HttpError(400, `${name} runs in any project: choose the project to run it in`);
+    return findProject(root, asked);
+  }
+  if (!asked) return f.project;
+  if (f.target === 'hub') throw new HttpError(400, `${name} runs in the hub, not in ${asked}`);
+  if (asked.toLowerCase() !== f.project.toLowerCase()) throw new HttpError(400, `${name} runs in ${f.project}, not in ${asked}`);
+  return f.project;
+}
+
+export function routes({ root, actions, dataDir }) {
   return {
     // The flow, plus its images in run order (Image 1 first) with their captions.
     'GET /api/flow': async (req, res, url) => {
@@ -54,7 +80,8 @@ export function routes({ root, actions }) {
     },
 
     // preview: true only returns the prompt the run would start with (also before the question is
-    // answered; notesError then says what a real run would refuse).
+    // answered; notesError then says what a real run would refuse). The prompt doesn't depend on
+    // the project, so a preview doesn't need one. A run takes `project` (see runProject).
     'POST /api/flows/run': async req => {
       const b = await readJson(req);
       const stored = flowOrThrow(root, b.slug);
@@ -72,17 +99,42 @@ export function routes({ root, actions }) {
       const notesError = checkRunNotes(f, notes);
       if (b.preview === true) return { ok: true, prompt, launch, notesError };
       if (notesError) throw new HttpError(400, notesError);
+      const project = runProject(root, f, b.project);
+      if (f.target !== 'hub') launchableOrThrow(project);
+      // A linked project starts in its checkout's real folder (404 when the link is broken).
+      const dir = f.target === 'project' ? realProjectDir(root, project) : root;
       const readDirs = images.length ? [flowImagesDir(root, f.slug)] : [];
       const title = `Flow: ${f.title || f.slug}`;
-      if (f.target === 'hub') await actions.startClaude({ dir: root, title, prompt, readDirs, launch, kind: 'flow' });
-      else if (f.target === 'project') {
-        launchableOrThrow(f.project);
-        await actions.startClaude({ dir: realProjectDir(root, f.project), title, prompt, readDirs, launch, kind: 'flow', project: f.project });
-      } else {
-        launchableOrThrow(f.project);
-        await actions.startAgent({ project: f.project, agent: f.agent, title, prompt, readDirs, launch, kind: 'flow' });
+      // The version of the files this prompt was built from, taken before the terminal opens.
+      const version = await flowVersion(root, f.slug);
+      let started;
+      if (f.target === 'hub') started = await actions.startClaude({ dir, title, prompt, readDirs, launch, kind: 'flow' });
+      else if (f.target === 'project') started = await actions.startClaude({ dir, title, prompt, readDirs, launch, kind: 'flow', project });
+      else started = await actions.startAgent({ project, agent: f.agent, title, prompt, readDirs, launch, kind: 'flow' });
+      const sessionId = started && typeof started.sessionId === 'string' ? started.sessionId : '';
+      let recorded = true;
+      try {
+        await recordFlowRun(dataDir, { flow: f.slug, version, target: f.target, project, agent: f.agent, sessionId });
+      } catch (e) {
+        // Best effort, like sessions.jsonl: the session started, so the run still counts as started;
+        // the message says that its version wasn't recorded.
+        recorded = false;
+        console.error(`workspace-app: could not record the run of flow ${f.slug}: ${e.message}`);
       }
-      return { ok: true, message: `Started ${f.title || f.slug}` };
+      const where = isAnyProject(f) ? ` in ${project}` : '';
+      const note = recorded ? '' : "; its version could not be recorded (the app's log says why)";
+      return { ok: true, message: `Started ${f.title || f.slug}${where}${note}`, project, sessionId, recorded };
+    },
+
+    // The newest launches of one flow (at most 20, newest first), each with `changes`: what is
+    // different in the flow now ([] for nothing; see flow-versions.mjs versionChanges). `current`
+    // is the flow's version now, null once its file is gone (archived); its records stay.
+    'GET /api/flow-runs': async (req, res, url) => {
+      const slug = String(url.searchParams.get('flow') || '');
+      if (!SLUG_RE.test(slug)) throw new HttpError(400, `"${slug.slice(0, 80)}" is not a flow name`);
+      // allDone: a failed read still waits for flowVersion's git calls to finish.
+      const [current, runs] = await allDone([flowVersion(root, slug), readFlowRuns(dataDir, slug)]);
+      return { ok: true, flow: slug, current, runs: runs.map(r => ({ ...r, changes: versionChanges(r.version, current) })) };
     },
 
     'POST /api/flows/archive': async req => {

@@ -1,14 +1,17 @@
-// Tests for the flow question (ask, askRequired) in routes/flows.mjs: saving and reading it, the
-// run prompt with the answer under the question, and a 400 when a required question has no
-// answer (the preview still works and says what a run would refuse). The route module is called
-// directly with a fake request and an `actions` recorder, so no terminal opens.
+// Tests for routes/flows.mjs: the flow question (ask, askRequired: saving and reading it, the run
+// prompt with the answer under the question, a 400 when a required question has no answer while
+// the preview still works), where a run starts (a flow for any project needs a known, launchable
+// project; a fixed project refuses another one), and the launch record with the flow's version
+// (flow-runs.jsonl, GET /api/flow-runs). The route module is called directly with a fake request
+// and an `actions` recorder, so no terminal opens.
 // Run: node tools/run-tests.mjs workspace-app
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { flowRunsFile, flowVersion } from '../flow-versions.mjs';
 import * as flowRoutes from './flows.mjs';
 
 function postReq(body) {
@@ -16,18 +19,33 @@ function postReq(body) {
   return Object.assign(Readable.from([buf]), { headers: { 'content-length': String(buf.length) } });
 }
 
-function setup(t) {
+// A workspace with the projects "example" and "notes", plus "we;ird" (its name can't start a
+// terminal) and the agent "artist" in example. `failLaunch` makes every start throw, as when
+// claude is missing.
+function setup(t, { failLaunch = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'ws-flow-route-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  mkdirSync(join(root, 'projects', 'example'), { recursive: true });
+  for (const p of ['example', 'notes', 'we;ird']) mkdirSync(join(root, 'projects', p), { recursive: true });
+  const agent = join(root, 'projects', 'example', '.claude', 'agents', 'artist.md');
+  mkdirSync(dirname(agent), { recursive: true });
+  writeFileSync(agent, '---\nname: artist\ndescription: Draws.\nmemory: project\n---\n');
+  const dataDir = join(root, '.data');
   const calls = [];
-  const rec = name => async args => { calls.push({ name, ...args }); return { sessionId: '' }; };
-  const api = flowRoutes.routes({ root, actions: { startClaude: rec('startClaude'), startAgent: rec('startAgent') }, getPort: () => 0, workspaceTag: '', dataDir: join(root, '.data') });
+  const rec = name => async args => {
+    if (failLaunch) throw new Error('Claude Code was not found');
+    calls.push({ name, ...args });
+    return { sessionId: `session-${calls.length}` };
+  };
+  const api = flowRoutes.routes({ root, actions: { startClaude: rec('startClaude'), startAgent: rec('startAgent') }, getPort: () => 0, workspaceTag: '', dataDir });
   const call = async (key, body) => {
     try { return { status: 200, body: await api[key](postReq(body)) }; } catch (e) { return { status: e.status || 500, body: { ok: false, error: e.message } }; }
   };
   const get = async slug => api['GET /api/flow'](null, null, new URL(`http://127.0.0.1/api/flow?slug=${slug}`));
-  return { root, calls, call, get };
+  const runs = async flow => {
+    try { return { status: 200, body: await api['GET /api/flow-runs'](null, null, new URL(`http://127.0.0.1/api/flow-runs?flow=${encodeURIComponent(flow)}`)) }; } catch (e) { return { status: e.status || 500, body: { ok: false, error: e.message } }; }
+  };
+  const records = () => (existsSync(flowRunsFile(dataDir)) ? readFileSync(flowRunsFile(dataDir), 'utf8').trim().split('\n').map(l => JSON.parse(l)) : []);
+  return { root, dataDir, calls, call, get, runs, records };
 }
 
 const refactor = {
@@ -106,4 +124,164 @@ test('an optional question does not block a run; a hand-edited askRequired that 
   assert.equal(odd.status, 400);
   assert.match(odd.body.error, /askRequired must be true or false/);
   assert.equal(calls.length, 1);
+});
+
+const anyReview = { title: 'Review anything', target: 'project', project: '*', prompt: 'Review what changed.', permissionMode: 'plan' };
+
+test('a flow for any project runs in the project the run names, and both launches carry the same flow hash', async t => {
+  const { root, calls, call, get, records } = setup(t);
+  const saved = await call('POST /api/flows', anyReview);
+  assert.equal(saved.status, 200, saved.body.error);
+  assert.equal((await get(saved.body.slug)).project, '*');
+  const slug = saved.body.slug;
+
+  const one = await call('POST /api/flows/run', { slug, project: 'example' });
+  assert.equal(one.status, 200, one.body.error);
+  assert.deepEqual([one.body.message, one.body.project, one.body.sessionId, one.body.recorded], ['Started Review anything in example', 'example', 'session-1', true]);
+  // Names match without case; the folder's real spelling is what starts and what is recorded.
+  const two = await call('POST /api/flows/run', { slug, project: ' NOTES ' });
+  assert.equal(two.status, 200, two.body.error);
+  assert.deepEqual(calls.map(c => [c.name, c.dir, c.project, c.kind, c.launch]), [
+    ['startClaude', join(root, 'projects', 'example'), 'example', 'flow', { permissionMode: 'plan' }],
+    ['startClaude', join(root, 'projects', 'notes'), 'notes', 'flow', { permissionMode: 'plan' }],
+  ]);
+  assert.equal(calls[0].prompt, 'Review what changed.');
+
+  const [a, b] = records();
+  assert.deepEqual([a.flow, a.target, a.project, a.agent, a.sessionId], [slug, 'project', 'example', '', 'session-1']);
+  assert.deepEqual([b.project, b.sessionId], ['notes', 'session-2']);
+  assert.match(a.at, /^\d{4}-\d\d-\d\dT/);
+  assert.equal(a.version.sha256, b.version.sha256);
+  assert.deepEqual(a.version, await flowVersion(root, slug));
+  // The preview needs no project: the prompt is the same everywhere.
+  const preview = await call('POST /api/flows/run', { slug, preview: true });
+  assert.deepEqual([preview.status, preview.body.prompt], [200, 'Review what changed.']);
+});
+
+test('a flow for any project refuses a run without a project, or with one the app can\'t start in; nothing is recorded', async t => {
+  const { calls, call, records } = setup(t);
+  const { body: { slug } } = await call('POST /api/flows', anyReview);
+  const cases = [
+    [{ slug }, 400, /runs in any project: choose the project/],
+    [{ slug, project: '  ' }, 400, /choose the project/],
+    [{ slug, project: 'missing' }, 404, /projects\/missing was not found/],
+    [{ slug, project: '*' }, 404, /not found/],
+    [{ slug, project: '../example' }, 404, /not a project folder name/],
+    [{ slug, project: '.data' }, 404, /not a project folder name/],
+    [{ slug, project: 'we;ird' }, 400, /from a terminal/],
+    [{ slug, project: ['example'] }, 400, /project must be a project name/],
+  ];
+  for (const [body, status, error] of cases) {
+    const r = await call('POST /api/flows/run', body);
+    assert.equal(r.status, status, JSON.stringify(body));
+    assert.match(r.body.error, error, JSON.stringify(body));
+  }
+  assert.deepEqual([calls.length, records()], [0, []]);
+});
+
+test('a fixed project, the hub and an agent refuse another project; their own one (any case) is fine', async t => {
+  const { root, calls, call, records } = setup(t);
+  const fixed = (await call('POST /api/flows', { ...anyReview, title: 'Fixed', project: 'example' })).body.slug;
+  const hub = (await call('POST /api/flows', { ...anyReview, title: 'Hub', target: 'hub' })).body.slug;
+  const agent = (await call('POST /api/flows', { ...anyReview, title: 'Agent', target: 'agent', project: 'example', agent: 'artist' })).body.slug;
+  assert.equal((await call('POST /api/flows', { ...anyReview, title: 'Agent anywhere', target: 'agent', agent: 'artist' })).status, 400);
+
+  const refused = [
+    [{ slug: fixed, project: 'notes' }, /Fixed runs in example, not in notes/],
+    [{ slug: hub, project: 'example' }, /Hub runs in the hub, not in example/],
+    [{ slug: agent, project: 'notes' }, /Agent runs in example, not in notes/],
+  ];
+  for (const [body, error] of refused) {
+    const r = await call('POST /api/flows/run', body);
+    assert.equal(r.status, 400, JSON.stringify(body));
+    assert.match(r.body.error, error);
+  }
+  assert.equal(calls.length, 0);
+
+  for (const body of [{ slug: fixed }, { slug: fixed, project: 'EXAMPLE' }, { slug: hub, project: '' }, { slug: agent, project: 'example' }]) {
+    const r = await call('POST /api/flows/run', body);
+    assert.equal(r.status, 200, `${JSON.stringify(body)}: ${r.body.error}`);
+    assert.doesNotMatch(r.body.message, / in /, 'only a flow for any project says where it started');
+  }
+  assert.deepEqual(calls.map(c => [c.name, c.dir || '', c.project || '', c.agent || '']), [
+    ['startClaude', join(root, 'projects', 'example'), 'example', ''],
+    ['startClaude', join(root, 'projects', 'example'), 'example', ''],
+    ['startClaude', root, '', ''],
+    ['startAgent', '', 'example', 'artist'],
+  ]);
+  assert.deepEqual(records().map(r => [r.flow, r.target, r.project, r.agent, r.sessionId]), [
+    [fixed, 'project', 'example', '', 'session-1'],
+    [fixed, 'project', 'example', '', 'session-2'],
+    [hub, 'hub', '', '', 'session-3'],
+    [agent, 'agent', 'example', 'artist', 'session-4'],
+  ]);
+});
+
+test('a flow for any project starts a linked project in its checkout\'s real folder; a broken link is refused', async t => {
+  const { root, calls, call, records } = setup(t);
+  const checkout = mkdtempSync(join(tmpdir(), 'ws-flow-checkout-'));
+  t.after(() => rmSync(checkout, { recursive: true, force: true }));
+  symlinkSync(checkout, join(root, 'projects', 'linked'), 'junction');
+  const { body: { slug } } = await call('POST /api/flows', anyReview);
+  const r = await call('POST /api/flows/run', { slug, project: 'linked' });
+  assert.equal(r.status, 200, r.body.error);
+  assert.deepEqual([calls[0].dir, calls[0].project], [realpathSync.native(checkout), 'linked']);
+  assert.equal(records()[0].project, 'linked');
+  rmSync(checkout, { recursive: true, force: true });
+  const broken = await call('POST /api/flows/run', { slug, project: 'linked' });
+  assert.equal(broken.status, 404);
+  assert.deepEqual([calls.length, records().length], [1, 1]);
+});
+
+test('a launch that fails writes no record; a record that can\'t be written doesn\'t fail the launch', async t => {
+  const failing = setup(t, { failLaunch: true });
+  const { body: { slug } } = await failing.call('POST /api/flows', anyReview);
+  const r = await failing.call('POST /api/flows/run', { slug, project: 'example' });
+  assert.equal(r.status, 500);
+  assert.match(r.body.error, /Claude Code was not found/);
+  assert.deepEqual(failing.records(), []);
+
+  // The data folder path is a file: the session still started, and the answer says so.
+  const ok = setup(t);
+  writeFileSync(ok.dataDir, 'not a folder');
+  const made = (await ok.call('POST /api/flows', anyReview)).body.slug;
+  const original = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args.join(' '));
+  let run;
+  try { run = await ok.call('POST /api/flows/run', { slug: made, project: 'example' }); } finally { console.error = original; }
+  assert.equal(run.status, 200, run.body.error);
+  assert.deepEqual([run.body.recorded, ok.calls.length], [false, 1]);
+  assert.match(logged.join('\n'), /could not record the run of flow review-anything/);
+  // The answer (the page's toast) says so too.
+  assert.equal(run.body.message, "Started Review anything in example; its version could not be recorded (the app's log says why)");
+});
+
+test('GET /api/flow-runs: the newest runs first, what changed since each, and refusals', async t => {
+  const { root, call, get, runs } = setup(t);
+  const { body: { slug } } = await call('POST /api/flows', anyReview);
+  assert.deepEqual((await runs(slug)).body.runs, []);
+  await call('POST /api/flows/run', { slug, project: 'example' });
+  // Edit the prompt, then run again in another project.
+  const f = await get(slug);
+  assert.equal((await call('POST /api/flows', { ...anyReview, slug, hash: f.hash, prompt: 'Review it twice.' })).status, 200);
+  await call('POST /api/flows/run', { slug, project: 'notes' });
+
+  const answer = (await runs(slug)).body;
+  assert.equal(answer.ok, true);
+  assert.equal(answer.flow, slug);
+  assert.deepEqual(answer.current, await flowVersion(root, slug));
+  assert.deepEqual(answer.runs.map(r => [r.project, r.sessionId, r.changes]), [['notes', 'session-2', []], ['example', 'session-1', ['prompt']]]);
+  assert.notEqual(answer.runs[0].version.sha256, answer.runs[1].version.sha256);
+  // An image added since changes the images of both.
+  mkdirSync(join(root, 'inbox', 'attachments', '_flows', slug), { recursive: true });
+  writeFileSync(join(root, 'inbox', 'attachments', '_flows', slug, 'shot.png'), Buffer.from('89504e470d0a1a0a', 'hex'));
+  assert.deepEqual((await runs(slug)).body.runs.map(r => r.changes), [['images'], ['prompt', 'images']]);
+
+  // Once the file is archived there is no current version, and the records stay.
+  assert.equal((await call('POST /api/flows/archive', { slug })).status, 200);
+  const archived = (await runs(slug)).body;
+  assert.deepEqual([archived.current, archived.runs.length, archived.runs[0].changes], [null, 2, []]);
+  for (const bad of ['', '../x', 'Bad Name', 'a/b']) assert.equal((await runs(bad)).status, 400, bad);
+  assert.deepEqual((await runs('never-ran')).body, { ok: true, flow: 'never-ran', current: null, runs: [] });
 });

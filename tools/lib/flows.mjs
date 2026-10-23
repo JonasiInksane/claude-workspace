@@ -9,6 +9,9 @@
 // them), and an optional question for every run: ask (the label of the run's text box, at most
 // 120 characters) and askRequired (true: a run needs an answer). Values are written as JSON
 // strings, which are valid YAML, so ": " or "#" in a title can't break the file.
+// A project flow may name `project: "*"` (ANY_PROJECT): it runs in any project, chosen when you
+// run it, and is valid while at least one project exists. An agent flow always names its
+// project, because an agent belongs to one project.
 // A run starts Claude at the target with the labeled image paths first ("Image 1: <path>" plus
 // an optional caption from the image folder's captions.json), then the prompt, then optional
 // notes for that run (under the flow's ask when it has one); the session may read the image
@@ -16,9 +19,13 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { duplicateNames, listAgents, readFrontmatter, resolveProject, textHash } from './agents.mjs';
+import { projectNameMap } from './inbox.mjs';
 import { checkLaunch } from './prompt-file.mjs';
 
 export const FLOW_TARGETS = ['hub', 'project', 'agent'];
+// The `project` of a project flow that runs in any project (the run names the project).
+export const ANY_PROJECT = '*';
+export const isAnyProject = f => !!f && f.target === 'project' && f.project === ANY_PROJECT;
 export const FLOW_IMAGES_DIR = '_flows';
 export const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const LIMITS = { title: 120, description: 300, prompt: 16000, notes: 2000, images: 40, caption: 200, ask: 120 };
@@ -86,7 +93,7 @@ export function flowLaunch(flow) {
 }
 
 // Checks a flow's fields. Returns { error, flow }: `flow` is cleaned up (trimmed, the project's
-// real spelling, no project/agent where the target doesn't use them).
+// real spelling or ANY_PROJECT, no project/agent where the target doesn't use them).
 export function checkFlow(root, input) {
   const s = k => String(input[k] ?? '').trim();
   const flow = {
@@ -113,6 +120,12 @@ export function checkFlow(root, input) {
   flow.askRequired = required;
   if (!FLOW_TARGETS.includes(flow.target)) return bad('target must be hub, project or agent');
   if (flow.target === 'hub') return { error: '', flow };
+  if (s('project') === ANY_PROJECT) {
+    if (flow.target !== 'project') return bad('an agent flow runs in its agent\'s project, so it can\'t be for any project');
+    if (!projectNameMap(root).size) return bad('there is no project in projects/ to run it in');
+    flow.project = ANY_PROJECT;
+    return { error: '', flow };
+  }
   const { name, error } = resolveProject(root, s('project'));
   if (error) return bad(error);
   flow.project = name;

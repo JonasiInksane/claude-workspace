@@ -4,8 +4,9 @@ A small local app for this workspace, opened in its own Edge window: Today (what
 you, what runs, next up, health, inbox, active reports), a page for every project with the tabs
 of its type (a code project: Overview, Tasks, Findings, Changes, Checks, Architecture; see
 "Project pages" below), headless pipeline runs (launcher, live run, review gate and commit; see
-"Runs" below), flows (saved prompts with reference images, run in the hub, a project or one
-agent), the Library with a button for every skill and workspace tool, the pipelines and the
+"Runs" below), flows (saved prompts with reference images, run in the hub, a project, any
+project you pick, or one agent; every launch records the flow's version), the Library with a
+button for every skill and workspace tool, the pipelines and the
 settings, project cards that start Claude, per-project agents (create, edit, archive and restore, start
 isolated, view memory), image upload (Inbox images, opened from Assets: drag and drop, Ctrl+V,
 or choose files) into the hub inbox, a chosen agent's image folder or a flow, and an Assets view for projects with an asset
@@ -43,7 +44,8 @@ runs just opens another window.
 | `uploads.mjs` | Image targets, type check by content, dated folders, no overwrites |
 | `launch.mjs` | Builds the commands for terminals, Explorer, the editor and the window; runs workspace tools and collects their output |
 | `claude-prompt.mjs` | Runs in the new terminal: starts `claude <prompt>` with the prompt (and readable folders) from a prompt file, `tools/lib/prompt-file.mjs` |
-| `../lib/flows.mjs` | Flows: read, check, save, archive and restore `flows/<flow>.md`; build a run's prompt ([flows/README.md](../../flows/README.md)) |
+| `../lib/flows.mjs` | Flows: read, check, save, archive and restore `flows/<flow>.md` (`project: "*"`: any project, chosen on each run); build a run's prompt ([flows/README.md](../../flows/README.md)) |
+| `flow-versions.mjs` | Which version of a flow a launch used (`flowVersion`: the file's SHA-256 with CRLF as LF, the hub commit and whether the file is committed there, the hash of each image and of the captions), the launch record `flow-runs.jsonl`, and what changed since a launch |
 | `../lib/agents.mjs` | Agents, shared with the CLI tools; editing (`saveAgentText`, refuses renames and stale saves), archiving and restoring live here too |
 | `start-app.ps1` | Starts the server hidden with `--log` (shows a dialog if Node is missing) |
 | `make-shortcut.mjs` | Desktop / Start menu shortcut; never replaces or removes a "Claude Workspace" shortcut that starts something else (another workspace copy included) |
@@ -72,7 +74,10 @@ library always shows its `--dry-run` preview first). A flow's Run starts `claude
 (hub, project) or `agent-session.mjs --prompt-file` (agent) in a terminal, with the flow's
 launch settings as `--permission-mode` / `--model` / `--effort` and its pre-approved tools in
 the settings file (`tools/lib/prompt-file.mjs` checks them; `bypassPermissions` and `dontAsk`
-are refused). Archiving an agent
+are refused). A flow for any project starts in the project picked in its run dialog (the server
+checks it by name; a fixed project refuses another one). Each launch that started adds a line
+with the flow's version to `flow-runs.jsonl`; the flow editor lists the newest as Recent runs
+(`GET /api/flow-runs`). Archiving an agent
 moves its file to `.claude/agents-archived/`, outside the folder Claude Code loads agents
 from; archiving a flow moves it to `flows/_archived/`. Memory and images always stay.
 In Projects, the Repositories card reads `projects/repos.json` (`tools/lib/repos.mjs`): Clone
@@ -142,7 +147,8 @@ folder), never in this public repo: `profiles/<project>.json` (the project's che
 and fences; start from `pipelines/app/profiles/example.json`), `runs/` (one folder per run with
 `run.json`, `timeline.jsonl`, `inputs/`, `stages/`, `gates/`, `final/`, plus `index.jsonl` and
 the project locks), `baselines/`, `checks/`, `findings/`, `metrics/`, `worktrees/`,
-`settings.json` and `sessions.jsonl`. `pipelines/app/README.md` explains the profile.
+`settings.json`, `sessions.jsonl` and `flow-runs.jsonl` (one line per flow launch, with the
+flow's version). `pipelines/app/README.md` explains the profile.
 
 ## Safety
 

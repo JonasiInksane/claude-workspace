@@ -32,6 +32,7 @@ bottom is chronological.
 | Execution | Multi-agent workflows (user's choice), each under ~10 agents; I merge and verify between workflows | User approved |
 | Project folder | `projects/nextjs-workspace` (kebab-case rule); product name "Nextjs Workspace" | `tools/new-project.mjs` NAME_RE |
 | Autonomy | Continue without asking; follow the plan's recommendations; record every further decision here | User, 2026-10-23 |
+| Flow asset refs | Flows keep their `assets:` refs in `flows/*.md` (public hub repo); the flow editor warns that a project asset's id becomes public, and `flows/README.md` says so | User: "write it down. they aint sensitive" (Tattoogenda asset titles are not sensitive) |
 
 ## Status
 
@@ -47,7 +48,7 @@ bottom is chronological.
 | A3/A4 UI | Settings tab, Assets tab and library screens | done (merged `00369b6`); review state unknown, covered by A-review | `pm/w2a-settings-assets-ui` |
 | A6 | Run input manifest, attached assets into runs, flows and sessions; wave-1 follow-ups | done (merged `eb3f13b`); review state unknown, covered by A-review | `pm/w2b-run-provenance` |
 | A7 | Ask panel | done (merged `f5355af`) | `pm/w2c-ask-panel` |
-| A-review | Independent review of the whole Part A diff, fixes | todo | |
+| A-review | Independent review of the whole Part A diff, fixes | in progress: review done (0 high, 7 medium, ~20 low), fixes on 4 branches | `pm/w3a..w3d` |
 | A-docs | README, flows README, decision note, report revision | todo | |
 
 ### Part B: Nextjs-Workspace (`projects/nextjs-workspace`)
@@ -133,4 +134,49 @@ the missing slices (the briefs are in the script file).
   so three run tests fail there (run-review, run-diff, contextText) while a fresh checkout
   passes. Fix once per old checkout: delete the `w/crlf` files under
   `tools/workspace-app/test/fixtures` and `git checkout -- tools/workspace-app/test/fixtures`.
-  Note: Git Bash's `grep` hides CR bytes; use `git ls-files --eol` to check.
+  Note: Git Bash's `grep` hides CR bytes; use `git ls-files --eol` to check. Done on the nvm PC
+  (user approved); `project-model` pushed (fast-forward to `145aa47`, user approved).
+- 2026-10-23: Extra UI check (scratch script driving the example app with the fake Claude, Node
+  23): a real Explain run with settings v3 and four attached assets shows the Inputs card
+  (settings version, each asset with version, pinned or latest, hash; models; versions; "matches
+  its hash"); a settings version that attaches a missing asset refuses the run (400) as designed;
+  the Ask panel opens with focus in the question box, a question gets its answer and sources,
+  Escape returns focus to the Ask button; no console errors. Still not done: one real Ask run.
+- 2026-10-23: A-review: four independent read-only reviewers (code-reviewer agents) over
+  `git diff ac14380 project-model`, split by area with no overlap: backend stores and launch;
+  runs engine and prompts; Settings/assets/Ask UI; project page and navigation. No high findings.
+  Medium: (1) `saveRun` throws on a tampered manifest and `recover()` doesn't catch it, so the
+  engine can fail to start; (2) asset titles (default: the uploaded file name) sit outside the
+  `<data>` fence in stage prompts and in sessions' appended system prompt; (3) sessions get asset
+  folders as `additionalDirectories` and can edit the immutable files; (4) flow hash and hub
+  commit are not in `sessions.jsonl` (A5); (5) the Checks tab can't show passed/skipped because
+  `historyLine` drops them (the plan's "Met" was wrong); (6) a cancelled upload in New asset
+  keeps going and later closes whatever dialog is open; (7) Settings/Assets still say runs don't
+  read attached assets. About 20 lows (caps, races between loads and saves, history entries,
+  focus, SVG prolog bypass of a text upload, settings saves that every launch then refuses).
+  Left for the user: flow `assets:` refs in `flows/*.md` expose private project asset ids (made
+  from titles) in the public hub repo.
+- 2026-10-23: Fixes running in parallel, one agent per area, each in its own worktree on a branch
+  from `project-model`: `pm/w3a-runs-fixes` (runs engine), `pm/w3b-backend-fixes` (library,
+  settings, sessions, flows), `pm/w3c-ui-fixes` (Settings, library dialogs, flows dialog, Ask
+  panel, leave guard), `pm/w3d-project-page-fixes` (Checks counts, nav, routing, Overview).
+  File ownership is disjoint; each agent confirms a finding before fixing it.
+- 2026-10-23: The Claude Code process restarted mid-way and stopped agents A and B; the user
+  stopped C by accident. All work was committed except B's last finding, which B finished after
+  a resume. Result: A 5/5 findings fixed (4 commits), B 7/7 (7), C 9/9 (9), D 6/6 (6); every
+  finding confirmed real. Notable choices: a run whose run.json was edited by hand can still be
+  stopped (a save that stops it and writes back exactly the manifest on disk is allowed) and keeps
+  showing `manifestOk: false`; asset folders reach sessions readable plus a deny rule
+  `Edit(//c/<path>/**)` (docs: https://code.claude.com/docs/en/permissions, Claude Code 2.1.309;
+  case-insensitive matching on Windows not documented; a script writing files is still only
+  caught by `verifyFiles` at the next start); a text upload that starts with `<` and has an
+  `<svg>` element or the SVG namespace anywhere is refused (Markdown or JSON showing an `<svg>`
+  sample still passes); assets get a `revision` used as `expect` for rename and archive (409).
+  Merged into `project-model` (w3a, w3c, w3d, then w3b; no conflicts). Plus `678afc3`: the flow
+  editor and `flows/README.md` say a flow's asset refs are public (user's decision).
+- 2026-10-23: Unexplained: an uncommitted change to `runs/actions.mjs` and its test (Retry for a
+  run that failed before its current stage started) appeared in the main checkout at about 09:52.
+  None of the four fix agents made it; asked the user. Saved as
+  `scratchpad/stray-actions.patch`; left uncommitted.
+- 2026-10-23: Agent worktrees are created under `.claude/worktrees/` (git-ignored) and may check
+  out with CRLF fixtures (`core.autocrlf=true`); three run tests then fail there for the A0 reason.

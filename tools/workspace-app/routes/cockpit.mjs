@@ -1,6 +1,7 @@
-// The project cockpit's API (SPEC 4 and 5.3). GET /api/project answers with everything the
-// cockpit's header, facts bar, setup checklist and cards show about one project, plus the
-// launcher's path suggestions (`paths`, SPEC 5.5); the POST routes are the cockpit's buttons:
+// The project page's API (SPEC 4 and 5.3; it was the project cockpit's before the page got its
+// tabs, hub spec plan A1, so the file keeps that name). GET /api/project answers with everything
+// the page's header and its tabs' facts bar, setup checklist and cards show about one project,
+// plus the launcher's path suggestions (`paths`, SPEC 5.5); the POST routes are the page's buttons:
 //   POST /api/project/run-tg           one of the profile's runTg rows (a dev server) in a terminal tab
 //   POST /api/project/archive-branch   app/<x> becomes archive/app/<x>; nothing is deleted
 //   POST /api/project/profile-init     "Create from the example"; never overwrites a profile
@@ -9,7 +10,7 @@
 //
 // The page names a project and never sends a path. projectOrThrow() checks the name and finds the
 // project in projects/ (a linked checkout counts), in projects/repos.json or in the private data
-// folder. The other route modules behind the cockpit, Today and Health views (checks, findings,
+// folder. The other route modules behind the project page's tabs and Today (checks, findings,
 // metrics, today) use the same lookup and helpers, so they are exported from here.
 //
 // GET /api/project builds each part on its own: a part that fails (git can't read the checkout,
@@ -91,12 +92,13 @@ export function profileFor(ctx, p) {
   return loadProfile(ctx.dataDir, p.name, { hubRoot: ctx.root, mainDir: p.mainDir || undefined });
 }
 
-// Why a profile can't be used, or ''.
+// Why a profile can't be used, or ''. The hints name the project page's Settings tab
+// (#project/<name>/settings), which shows the profile and makes one from the example.
 export function profileProblem(info, name) {
-  if (!info.exists) return `${name} has no profile yet. Create one from the example in the cockpit.`;
+  if (!info.exists) return `${name} has no profile yet. Create one from the example on the project's Settings tab.`;
   if (!info.valid) {
     const n = info.errors.length;
-    return `The profile for ${name} has ${plural(n, 'problem')}; fix ${n === 1 ? 'it' : 'them'} in the cockpit setup first.${n ? ` First: ${info.errors[0]}` : ''}`;
+    return `The profile for ${name} has ${plural(n, 'problem')}; fix ${n === 1 ? 'it' : 'them'} first (the project's Settings tab lists ${n === 1 ? 'it' : 'them'}).${n ? ` First: ${info.errors[0]}` : ''}`;
   }
   return '';
 }
@@ -338,7 +340,7 @@ function checklistFor({ ctx, p, prof, isolation, trust, origin }) {
 // it can't start (no checkout, a folder outside it, a {pkg:...} that isn't installed).
 function runTgCommand(row, p) {
   if (!p.present) throw new Error('Link the checkout first.');
-  if (!Array.isArray(row.argv) || row.argv[0] !== '{node}') throw new Error('Only node commands start from the cockpit; the first argument must be {node}.');
+  if (!Array.isArray(row.argv) || row.argv[0] !== '{node}') throw new Error('Only node commands start from the app; the first argument must be {node}.');
   const cwd = typeof row.cwd === 'string' && row.cwd ? row.cwd : '.';
   const dir = resolve(p.mainDir, cwd);
   const rel = relative(p.mainDir, dir);

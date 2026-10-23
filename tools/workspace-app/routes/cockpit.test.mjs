@@ -12,7 +12,7 @@ import { acquire } from '../runs/locks.mjs';
 import { createRun } from '../runs/store.mjs';
 import { writeFiles } from '../test/helpers.mjs';
 import { busy409, call, quietDeps, routeHub } from '../test/fixtures/routes/hub.mjs';
-import { NOT_COVERED, projectOrThrow, routes } from './cockpit.mjs';
+import { NOT_COVERED, profileProblem, projectOrThrow, routes } from './cockpit.mjs';
 
 const NODE_ROW = { id: 'say-hi', label: 'Say hi', cwd: 'apps/web', argv: ['{node}', '-e', 'console.log(1)'], env: { EXAMPLE_FLAG: 'on' }, warn: 'Prints a line.' };
 const PKG_ROW = { id: 'missing-tool', label: 'Missing tool', cwd: '.', argv: ['{node}', '{pkg:nothing-here/cli.js}'], warn: 'Needs a package.' };
@@ -164,7 +164,16 @@ test('POST /api/project/run-tg needs a valid profile', async t => {
   const h = await routeHub(t, { profile: null });
   const r = await call(routes(h.ctx, quietDeps), 'POST /api/project/run-tg', { body: { project: 'example', id: 'dev-web' } });
   assert.equal(r.status, 400);
-  assert.match(r.body.error, /has no profile yet/);
+  assert.match(r.body.error, /has no profile yet\. Create one from the example on the project's Settings tab\./, 'the hint names the tab that has the button');
+});
+
+test('profileProblem: a missing or broken profile says where to fix it; a valid one says nothing', () => {
+  assert.equal(profileProblem({ exists: true, valid: true, errors: [] }, 'example'), '');
+  assert.match(profileProblem({ exists: false }, 'example'), /^example has no profile yet\. .*Settings tab/);
+  assert.equal(profileProblem({ exists: true, valid: false, errors: ['checks.quick is missing'] }, 'example'),
+    'The profile for example has 1 problem; fix it first (the project\'s Settings tab lists it). First: checks.quick is missing');
+  assert.match(profileProblem({ exists: true, valid: false, errors: ['a', 'b'] }, 'example'), /has 2 problems; fix them first \(the project's Settings tab lists them\)\. First: a$/);
+  assert.doesNotMatch(profileProblem({ exists: false }, 'example'), /cockpit/, 'no screen of that name any more');
 });
 
 test('POST /api/project/archive-branch renames app/<x> to archive/app/<x> and refuses everything else', async t => {

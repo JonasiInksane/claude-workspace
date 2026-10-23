@@ -110,7 +110,16 @@ Done when `npm run sprites` builds without warnings and the sheet is in assets/p
 Values are JSON strings (valid YAML), so quotes, colons and `#` are safe; a flow for any
 project has `target: project` and `project: "*"` (quoted: a bare `*` is not a plain YAML value).
 You can edit the file by hand; the app checks the target when it lists the flow and refuses to
-run one whose project or agent is gone. Archiving moves the file to `_archived/` and keeps the
+run one whose project or agent is gone.
+
+`assets` (optional) attaches assets from the workspace app's asset library, at most 20, as one
+string: `assets: "shared:style-guide, game-dev:palette@2"`. A ref is `shared:<id>` or
+`<project>:<id>`, with `@<n>` to pin a version (without it, a run takes the latest). A hub flow
+and a flow for any project attach shared assets only; a project or agent flow also its project's
+own. The flow editor writes this field for you. Note: `flows/` is committed to the hub
+repository, which is public, so the refs are public too: a project's name and each asset's id,
+which is made from its title. The assets' files stay in `inbox/attachments/` and are not
+committed. Archiving moves the file to `_archived/` and keeps the
 images, so Restore brings the flow back whole.
 
 Code: `tools/lib/flows.mjs`. Why it works this way:

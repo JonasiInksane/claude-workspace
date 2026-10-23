@@ -204,7 +204,8 @@ function assetPicker(initial, targetValue) {
   return {
     el: h('div', {},
       h('div', { class: 'section-label' }, h('span', {}, 'Attached assets')),
-      h('p', { class: 'muted small-text' }, 'From the asset library. A run lists them after the images, in these versions. A hub flow and a flow for any project take shared assets only.'),
+      h('p', { class: 'muted small-text' }, 'From the asset library. A run lists them after the images, in these versions. A hub flow and a flow for any project take shared assets only. ' +
+        "The list is saved in the flow's file in flows/, which the hub repository commits, so each ref (a project's name and an id made from the asset's title) becomes public there."),
       box),
     value: () => formatAssets(attached),
     setTarget(v) { if (v !== target) { target = v; load(); } },

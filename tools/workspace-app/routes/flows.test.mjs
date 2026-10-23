@@ -347,9 +347,9 @@ test('a run lists the flow\'s and the project\'s assets after the images, may re
   assert.equal(c.prompt, [
     `Reference images for this task. Read each one before you start:\n- Image 1: ${shot}`,
     "Assets for this task, from the workspace app's asset library. Read each one before you start:",
-  ].join('\n\n') + `\n- Asset 1: Logo (shared:logo v1, image) at ${logoFile}` +
-    `\n- Asset 2: Style guide (shared:style-guide v1, text) at ${styleFile}` +
-    `\n- Asset 3: Palette (example:palette v1, image) at ${paletteFile}\n\nRefactor what I describe.`);
+  ].join('\n\n') + `\n- Asset 1: shared:logo v1 (image) at ${logoFile}, titled "Logo"` +
+    `\n- Asset 2: shared:style-guide v1 (text) at ${styleFile}, titled "Style guide"` +
+    `\n- Asset 3: example:palette v1 (image) at ${paletteFile}, titled "Palette"\n\nRefactor what I describe.`);
   // The flow's own pin (style guide v1) wins over the project's attachment of the same asset.
   assert.deepEqual(c.assets.map(a => [a.ref, a.version]), [['shared:logo', 1], ['shared:style-guide', 1], ['example:palette', 1]]);
   // The image folder only: launch.mjs adds the assets' folders from `assets`, read-only.
@@ -410,7 +410,7 @@ test('the preview shows the effective launch, the assets with what a run would r
   assert.deepEqual([p.project, p.projectSettings], ['example', { version: 1, sha256: v1.sha256 }]);
   assert.deepEqual(p.assets.map(a => [a.ref, a.version, a.archived, a.missing]), [['shared:logo', 1, true, false], ['shared:style-guide', 4, false, true], ['example:palette', 1, false, false]]);
   assert.deepEqual(p.problems, ['shared:style-guide has no version 4']);
-  assert.match(p.prompt, /- Asset 1: Logo \(shared:logo v1, image\) at .*\n- Asset 2: Palette \(example:palette v1, image\) at /, 'a missing one is left out of the prompt');
+  assert.match(p.prompt, /- Asset 1: shared:logo v1 \(image\) at .*, titled "Logo"\n- Asset 2: example:palette v1 \(image\) at /, 'a missing one is left out of the prompt');
   assert.equal(ws.calls.length, 0, 'a preview starts nothing');
   // A flow for any project: nothing of a project until one is chosen.
   const any = (await ws.call('POST /api/flows', { ...anyReview, title: 'Any', assets: 'shared:logo' })).body.slug;

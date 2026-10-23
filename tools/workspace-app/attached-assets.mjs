@@ -112,13 +112,24 @@ export function assetInputName(item) {
   return name;
 }
 
-// A title on one line, at most 120 characters ('' for none).
-export const oneLineTitle = t => String(t ?? '').replace(/[\u0000-\u001f\u007f\s]+/g, ' ').trim().slice(0, TITLE_MAX);
+// A title on one line, at most 120 characters ('' for none): control characters and runs of white
+// space become one space, and a cut never splits a surrogate pair (half an emoji would be a lone
+// surrogate, which is not valid text).
+export function oneLineTitle(t) {
+  const s = String(t ?? '').replace(/[\u0000-\u001f\u007f-\u009f\s]+/g, ' ').trim();
+  if (s.length <= TITLE_MAX) return s;
+  const cut = s.slice(0, TITLE_MAX);
+  return (/[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut).trimEnd();
+}
 
-// "Asset 1: Style guide (shared:style-guide v2, text) at C:\...\v2.md" (`path` defaults to the
-// library file).
+// 'Asset 1: shared:style-guide v2 (text) at C:\...\v2.md, titled "Style guide"' (`path` defaults
+// to the library file). The line goes into a session's system prompt or a flow's prompt, so only
+// what the app made (ref, version, kind, path) is written as text; the title, which whoever
+// uploads a file chooses (the file's name by default), follows as quoted data: one line, capped,
+// and escaped as a JSON string, so it can't end the quotes or pose as part of the line.
 export function assetLine(item, index, path = item.path) {
-  return `Asset ${index + 1}: ${oneLineTitle(item.title) || item.ref} (${item.ref} v${item.version}, ${item.kind}) at ${path}`;
+  const title = oneLineTitle(item.title);
+  return `Asset ${index + 1}: ${item.ref} v${item.version} (${item.kind}) at ${path}${title ? `, titled ${JSON.stringify(title)}` : ''}`;
 }
 
 // What a session records of its assets: [{ ref, version, sha256 }].

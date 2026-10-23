@@ -252,7 +252,7 @@ test('runPrompt puts labeled images first, then the prompt, then the notes', () 
 });
 
 test('runPrompt lists the attached assets after the images and before the prompt', () => {
-  const line = 'Asset 1: Style guide (shared:style-guide v2, text) at C:\\ws\\inbox\\attachments\\_assets\\style-guide\\v2.md';
+  const line = 'Asset 1: shared:style-guide v2 (text) at C:\\ws\\inbox\\attachments\\_assets\\style-guide\\v2.md, titled "Style guide"';
   assert.equal(runPrompt({ prompt: 'Use Asset 1.' }, ['C:\\imgs\\a.png'], '', {}, [line]),
     'Reference images for this task. Read each one before you start:\n- Image 1: C:\\imgs\\a.png\n\n' +
     `Assets for this task, from the workspace app's asset library. Read each one before you start:\n- ${line}\n\nUse Asset 1.`);

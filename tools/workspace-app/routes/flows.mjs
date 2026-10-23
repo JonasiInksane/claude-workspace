@@ -12,7 +12,7 @@
 //
 // Assets: a run gets the flow's own attached assets (its `assets` field) and, in a project, the
 // ones the project's settings attach, resolved to exact versions (attached-assets.mjs). They are
-// listed in the prompt after the images ("Asset 1: <title> (<ref> v<n>, <kind>) at <path>"), and
+// listed in the prompt after the images ('Asset 1: <ref> v<n> (<kind>) at <path>, titled "<title>"'), and
 // the session may read their folders, as it reads the image folder, but not edit them (launch.mjs
 // sessionDirs). An asset, version or file
 // that is gone refuses the run (400), and so does a file that no longer matches its recorded

@@ -12,6 +12,10 @@
 // waiting and running runs; the top level gets runs: { waiting, running, atReviewGate }. The
 // counts come from the runs index (runs/store.mjs listRuns) through a summary cached for 2 s per
 // data folder, so a page that polls state doesn't reread the index on every call.
+//
+// Project types (project-types.mjs): each project also gets type ({ id, label }: code, assets or
+// generic) and tabs (the ids of its project page's tabs, in order), so the page builds its nav
+// and the tab bar from the state alone.
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { duplicateNames, listAgents, listArchivedAgents, projectDir, SHARED_DIR } from '../lib/agents.mjs';
@@ -25,6 +29,7 @@ import { assetProjects, listAssets } from './assets.mjs';
 import { isLaunchable } from './lookup.mjs';
 import { isLinked, realProjectDir } from '../lib/projects.mjs';
 import { defaultDataDir, PROJECT_RE } from './core/datadir.mjs';
+import { hasProfile, projectTypeOf, typeFields } from './project-types.mjs';
 import { listRuns } from './runs/store.mjs';
 
 export const RUNS_CACHE_MS = 2000;
@@ -90,7 +95,8 @@ function profileLabel(dataDir, name) {
   } catch { return ''; }
 }
 
-function projectsState(root, libCount, dataDir, runs) {
+// `pipelines` is assetProjects(root), read once per build for the types and the Assets list.
+function projectsState(root, libCount, dataDir, runs, pipelines) {
   return [...projectNameMap(root).values()].sort((a, b) => a.localeCompare(b)).map(name => {
     const dir = projectDir(root, name);
     let label = 'Other';
@@ -112,8 +118,9 @@ function projectsState(root, libCount, dataDir, runs) {
     return {
       name,
       label,
+      ...typeFields(projectTypeOf({ root, dataDir, name, assetProjects: pipelines })),
       ...placeOf(root, name, dir),
-      hasProfile: PROJECT_RE.test(name) && existsSync(join(dataDir, 'profiles', `${name}.json`)),
+      hasProfile: hasProfile(dataDir, name),
       profileLabel: profileLabel(dataDir, name),
       waiting: counts.waiting,
       running: counts.running,
@@ -136,7 +143,8 @@ async function build(root, tools, dataDir) {
   let inboxError = '';
   try { inbox = scanInbox(root); } catch (e) { inboxError = e.message; }
   const libCount = new Map(inbox.libraries.map(l => [`${l.project}/${l.agent.toLowerCase()}`, l.files]));
-  const projects = projectsState(root, libCount, dataDir, runs);
+  const pipelines = assetProjects(root);
+  const projects = projectsState(root, libCount, dataDir, runs, pipelines);
 
   const reports = readReports(root)
     .filter(r => r.status === 'active')
@@ -149,7 +157,7 @@ async function build(root, tools, dataDir) {
     error: f.error, images: flowImages(root, f.slug).length, launch: f.error ? {} : flowLaunch(f),
   }));
   const archivedFlows = listArchivedFlows(root).map(f => ({ archivedAs: f.archivedAs, title: f.title }));
-  const assets = assetProjects(root).map(project => ({ project, assets: listAssets(root, project) }));
+  const assets = pipelines.map(project => ({ project, assets: listAssets(root, project) }));
   const [list, unlisted, have] = await reposPending;
 
   return {

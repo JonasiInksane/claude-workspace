@@ -247,11 +247,13 @@ const manifestText = run => canonicalJson([run.manifest ?? null, run.manifestSha
 // Throws when a run's manifest no longer matches the hash it was created with (or one of the two
 // is gone): a manifest never changes. One exception, so the engine can still stop such a run
 // (recovery, cancel, a stage that failed): run.json was edited by hand, and this save leaves the
-// run stopped (any status but running) and writes back exactly the manifest and hash run.json
-// holds now. The edit stays for the run page to show (manifestOk: false), and the run can't go on.
+// run stopped (STOPPED_STATUSES: ended, or interrupted, parked, capped or paused, never running,
+// waiting or in a terminal) and writes back exactly the manifest and hash run.json holds now. The
+// edit stays for the run page to show (manifestOk: false), and the run can't go on.
+const STOPPED_STATUSES = [...TERMINAL_STATUSES, 'interrupted', 'parked', 'capped', 'paused-limit'];
 async function checkManifestKept(file, run) {
   if (manifestKept(run)) return;
-  if (run.status !== 'running') {
+  if (STOPPED_STATUSES.includes(run.status)) {
     const found = await serial(file, () => readJson(file, null)).catch(() => null);
     if (found && typeof found === 'object' && manifestText(found) === manifestText(run)) return;
   }

@@ -223,6 +223,10 @@ test('a run whose run.json was edited by hand loads, can be stopped with the edi
   const back = await loadRun(dataDir, 'example', 'r-h');
   assert.deepEqual([back.status, back.stages[0].status, back.manifest, back.manifestSha256],
     ['interrupted', 'interrupted', edited.manifest, manifestHash(MANIFEST)], 'the edit stays visible');
+  // Waiting or in a terminal is going on, so neither is saved (a takeover is refused before that).
+  for (const status of ['waiting', 'in-terminal']) {
+    await assert.rejects(saveRun(dataDir, { ...back, status }), /changed after the run was created/, status);
+  }
   back.status = 'cancelled';
   await saveRun(dataDir, back);
   assert.equal((await loadRun(dataDir, 'example', 'r-h')).status, 'cancelled');

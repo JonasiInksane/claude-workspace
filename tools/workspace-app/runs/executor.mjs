@@ -46,6 +46,7 @@ import * as catalogModule from './catalog.mjs';
 import * as promptsModule from './prompts.mjs';
 import { allowedActions, currentIndex, isUnpinnableEnd, lastSessionId, takeoverStageIndex } from './actions.mjs';
 import { contextBlock } from './context.mjs';
+import { manifestHash } from './manifest.mjs';
 
 // The three headless permission profiles; runs/argv.mjs owns the table (deps.argv wins).
 export const HEADLESS = {
@@ -2019,6 +2020,11 @@ export function createExecutor(deps = {}) {
     },
 
     async takeover(run, p) {
+      // A run whose run.json was edited by hand can be stopped but never goes on (runs/store.mjs),
+      // so it opens no terminal either.
+      if (run.manifest && manifestHash(run.manifest) !== run.manifestSha256) {
+        httpFail(409, "This run's input manifest was edited after it started, so it can't be taken over. Start a new run.");
+      }
       const idx = takeoverStageIndex(run, p);
       const s = p.stages[idx];
       const st = run.stages[idx];

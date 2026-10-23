@@ -1421,6 +1421,21 @@ test('assets: an edit stage gets the text inline and is told it can not open the
   assert.match(h.claudeCalls('review')[0].prompt, /Asset 2 \(example:palette v1, image\): Read .*project-palette@v1\.png before you start\./);
 });
 
+test('a run whose manifest was edited by hand is not taken over in a terminal', async t => {
+  const h = await harness(t);
+  let run = await h.drive(await runWithAssets(h, 'refactor', { what: 'Move cart totals into cents' }));
+  run = (await h.act(run, 'approve', {})).run;
+  assert.equal(run.waiting && run.waiting.kind, 'review', run.statusReason);
+  const file = join(store.runDir(h.data, run), 'run.json');
+  const edited = JSON.parse(readFileSync(file, 'utf8'));
+  edited.manifest.models = { implement: 'haiku' };
+  writeFileSync(file, JSON.stringify(edited));
+  run = await h.reload(run);
+  await assert.rejects(h.act(run, 'takeover'), err => err.status === 409 && /input manifest was edited after it started/.test(err.message));
+  assert.equal(h.calls.startClaude.length, 0, 'no terminal opened');
+  assert.equal((await h.reload(run)).status, 'waiting');
+});
+
 test('assets: a copy changed or gone since the run started stops the stage before Claude starts', async t => {
   const h = await harness(t);
   const changed = await runWithAssets(h, 'explain', { what: 'a' });

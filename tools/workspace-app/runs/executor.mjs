@@ -37,6 +37,7 @@ import * as projectSettingsModule from '../project-settings.mjs';
 import * as catalogModule from './catalog.mjs';
 import * as promptsModule from './prompts.mjs';
 import { allowedActions, currentIndex, isUnpinnableEnd, lastSessionId, takeoverStageIndex } from './actions.mjs';
+import { contextBlock } from './context.mjs';
 
 // The three headless permission profiles; runs/argv.mjs owns the table (deps.argv wins).
 export const HEADLESS = {
@@ -1369,6 +1370,8 @@ export function createExecutor(deps = {}) {
     vars.request = await block('request', 'request.md', await requestText(run, profile, { edit }));
     const { error, ...shown } = v;
     vars.values = await block('values', 'values.json', JSON.stringify(shown, null, 2));
+    // An Ask question (runs/context.mjs): what it is about, as inputs/context.md (hashed) and a data block.
+    if (run.context) vars.context = await contextBlock(dataDir, run, { write: (name, text) => input(run, name, text), preview, redact });
     if (run.plan) {
       const { output, ...plan } = run.plan;
       vars.plan = await block('plan', 'plan.json', JSON.stringify({ ...plan, summary: (output || {}).summary || '' }, null, 2));

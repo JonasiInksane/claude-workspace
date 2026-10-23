@@ -4,7 +4,7 @@
 //
 //   GET  /api/pipelines?project    the launcher's pipelines (stages, models, caps, cannot, fields,
 //                                  disabledReason) and the intent box's routing rules
-//   POST /api/runs                 { project, pipeline, values, preview } -> preview or { runId }
+//   POST /api/runs                 { project, pipeline, values, preview, context } -> preview or { runId }
 //   GET  /api/runs                 the runs index (latest line per run) with durationMs
 //   GET  /api/run?id&since         the run (secrets redacted, with its buttons) and timeline rows
 //   GET  /api/run-review?id        verdict, findings, notProven, proof, checks summary, files
@@ -16,9 +16,13 @@
 // picked from a fixed list of names; a diff file or a gate log is only ever one the app's own
 // listing names (the diff's file headers, the run's gates folder, the gate's summary.json), so no
 // path from the page is joined. Everything sent is redacted (gates/secrets.mjs) and text is cut
-// at 2 MB. The engine (ctx.getEngine) is asked for only inside handlers.
-import { open, readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+// at 2 MB. The engine (ctx.getEngine) is asked for only inside handlers. The run file readers
+// live in runs/run-files.mjs, shared with the Ask context (runs/context.mjs).
+//
+// A start may name a context (the Ask panel, hub spec plan A7): `context: { run }` or
+// `{ finding: { project, id } }`, plus `after` for a follow-up. Only Explain takes one, and the
+// server builds everything Claude sees from its own records (runs/context.mjs askContext).
+import { readdir } from 'node:fs/promises';
 import { HttpError, readJson } from '../http.mjs';
 import { PROJECT_RE } from '../core/datadir.mjs';
 import { loadSettings } from '../core/settings.mjs';
@@ -29,27 +33,15 @@ import * as store from '../runs/store.mjs';
 import { pipelineById, pipelinesForUi } from '../runs/catalog.mjs';
 import { routesForUi } from '../runs/intent.mjs';
 import { ACTIONS } from '../runs/actions.mjs';
+import { askContext } from '../runs/context.mjs';
+import { DIFF_FILE_MAX, firstText, readCapped, readRunJson, RUN_FILES, runDiff, runFile, splitDiff, TEXT_MAX } from '../runs/run-files.mjs';
 
+export { RUN_FILES, splitDiff, TEXT_MAX };
 // The run id rule of SPEC section 4 (the same as runs/store.mjs RUN_ID_RE).
 export const RUN_ID_RE = /^[0-9a-z-]{1,64}$/;
-export const TEXT_MAX = 2 * 1024 * 1024;
-// GET /api/run-file names and the run file each one reads (relative to the run folder).
-export const RUN_FILES = Object.freeze({
-  diff: ['final/diff.patch', 'inputs/diff.patch'],
-  proof: ['final/proof.md'],
-  review: ['final/review.json'],
-  'commit-msg': ['final/commit-msg.txt'],
-  'stopped-patch': ['final/stopped.patch'],
-  answer: ['final/answer.json'],
-  diagnosis: ['final/diagnosis.json'],
-  triage: ['final/triage.json'],
-  // The architecture scan's candidates ({ref, probe, path, line, text}) for the decide gate.
-  candidates: ['inputs/candidates.json'],
-});
 const GATE_DIR_RE = /^\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const CHECK_ID_RE = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,99}$/;
 const LOG_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/;
-const DIFF_FILE_MAX = 400;
 
 const isPlainObject = v => !!v && typeof v === 'object' && !Array.isArray(v);
 const asList = x => (Array.isArray(x) ? x : []);
@@ -85,83 +77,6 @@ async function runOr404(dataDir, id) {
   }
   if (!run) throw new HttpError(404, `There is no run ${id}.`);
   return run;
-}
-
-// A file inside the run folder (relative posix parts, all from this module's constants or the
-// app's own listings), read up to `max` bytes. null when it doesn't exist.
-async function readCapped(file, max = TEXT_MAX) {
-  let fh;
-  try { fh = await open(file, 'r'); } catch (err) {
-    if (err.code === 'ENOENT' || err.code === 'EISDIR' || err.code === 'ENOTDIR') return null;
-    throw err;
-  }
-  try {
-    const st = await fh.stat();
-    if (!st.isFile()) return null;
-    const want = Math.min(st.size, max) + 1; // one more byte than allowed tells a cut file
-    const buf = Buffer.alloc(want);
-    const { bytesRead } = await fh.read(buf, 0, want, 0);
-    return { text: buf.subarray(0, Math.min(bytesRead, max)).toString('utf8'), truncated: bytesRead > max };
-  } finally {
-    await fh.close();
-  }
-}
-
-const runFile = (dataDir, run, rel) => join(store.runDir(dataDir, run), ...rel.split('/'));
-
-async function readRunJson(dataDir, run, rel) {
-  const r = await readCapped(runFile(dataDir, run, rel));
-  if (!r || r.truncated) return null;
-  try { return JSON.parse(r.text); } catch { return null; }
-}
-
-// The first of `rels` that exists, redacted and capped: { text, truncated, rel } or null.
-async function firstText(dataDir, run, rels) {
-  for (const rel of rels) {
-    const r = await readCapped(runFile(dataDir, run, rel));
-    if (r) return { text: redact(r.text), truncated: r.truncated, rel };
-  }
-  return null;
-}
-
-// ---------- The diff
-
-// Splits a unified git diff into its files: [{ path, text, add, del }]. The path comes from the
-// "+++ b/" line (or "--- a/" for a deletion, or the "diff --git" header for binary and rename-only
-// parts), so only paths the diff itself names are ever offered.
-export function splitDiff(diff) {
-  const out = [];
-  const parts = String(diff || '').split(/^(?=diff --git )/m).filter(p => p.startsWith('diff --git '));
-  for (const text of parts) {
-    const lines = text.split('\n');
-    const plus = lines.find(l => l.startsWith('+++ '));
-    const minus = lines.find(l => l.startsWith('--- '));
-    const strip = (l, pre) => l.slice(4).replace(/\t$/, '').replace(new RegExp(`^${pre}/`), '');
-    let path = '';
-    if (plus && !/^\+\+\+ \/dev\/null/.test(plus)) path = strip(plus, 'b');
-    else if (minus && !/^--- \/dev\/null/.test(minus)) path = strip(minus, 'a');
-    else {
-      const m = /^diff --git a\/(.+) b\/(.+)$/.exec(lines[0]);
-      path = m ? m[2] : '';
-    }
-    if (!path || path.length > DIFF_FILE_MAX) continue;
-    let add = 0;
-    let del = 0;
-    let inHunk = false;
-    for (const l of lines) {
-      if (l.startsWith('@@')) { inHunk = true; continue; }
-      if (!inHunk) continue;
-      if (l.startsWith('+')) add++;
-      else if (l.startsWith('-')) del++;
-    }
-    out.push({ path, text, add, del });
-  }
-  return out;
-}
-
-async function runDiff(dataDir, run) {
-  const r = await firstText(dataDir, run, RUN_FILES.diff);
-  return r ? { files: splitDiff(r.text), truncated: r.truncated } : { files: [], truncated: false };
 }
 
 // ---------- The run as the page sees it
@@ -242,9 +157,11 @@ export function routes({ dataDir, getEngine }) {
       if (!def || def.hidden) throw new HttpError(400, `"${String(b.pipeline ?? '').slice(0, 40)}" is not a pipeline you can start here.`);
       if (b.values !== undefined && !isPlainObject(b.values)) throw new HttpError(400, 'The values must be an object.');
       const request = { project, pipeline: def.id, values: b.values || {} };
+      // Checked before the engine sees anything: { context, parent } from the app's own records.
+      const ask = b.context === undefined || b.context === null ? null : await askContext(dataDir, b.context, { project, pipeline: def.id });
       const manager = await engine();
       if (b.preview) return { ok: true, preview: redactDeep(await manager.preview(request)) };
-      const { runId } = await manager.start(request);
+      const { runId } = ask ? await manager.start(request, { parent: ask.parent, extra: { context: ask.context } }) : await manager.start(request);
       return { ok: true, runId };
     },
 

@@ -26,10 +26,21 @@ The launcher values:
 
 {{values}}
 
+## What the question is about
+
+When the user asked next to a run, a review gate or a finding, the app adds below what it knows
+about it, followed by the earlier questions and answers of the same thread; a question asked on
+its own shows (none):
+
+{{context}}
+
 ## Rules
 
 - You work read-only: you have Read, Grep and Glob and no shell. You cannot run tests or commands.
 - Inputs the app prepared are in {{inputsDir}}; Read them there.
+- When the question has a context, answer it about that run or finding. A run's changes may exist
+  only in its run worktree or on its branch, not in your working folder: its diff above is then
+  the authority. For a follow-up, build on the earlier answers instead of repeating them.
 - Every claim in the answer needs a source you actually read: a path and a line.
 - If the code can't settle something, say so in openQuestions instead of guessing.
 

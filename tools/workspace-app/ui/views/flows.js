@@ -597,15 +597,24 @@ export async function runFlowDialog(f) {
     else notes.removeAttribute('aria-invalid');
   };
   let timer = 0;
-  // The preview follows the chosen project, so its settings and attached assets show too.
+  let seq = 0;
+  // The preview follows the chosen project, so its settings and attached assets show too. Only
+  // the newest one asked for is shown: an older answer that arrives later is dropped.
   const preview = async () => {
+    clearTimeout(timer);
+    const mine = ++seq;
     try {
       const body = { slug: f.slug, notes: notes.value, preview: true, ...(picker && picker.pick.value ? { project: picker.pick.value } : {}) };
       const r = await api('/api/flows/run', { method: 'POST', body });
+      if (mine !== seq) return;
       pre.textContent = r.prompt;
       settings.textContent = sessionLine(r);
       problems.replaceChildren(...previewNotes(r).map(n => h('p', { class: n.problem ? 'form-error' : 'muted small-text' }, n.text)));
-    } catch (e) { pre.textContent = e.message; problems.replaceChildren(); }
+    } catch (e) {
+      if (mine !== seq) return;
+      pre.textContent = e.message;
+      problems.replaceChildren();
+    }
   };
   if (picker) picker.pick.addEventListener('change', () => { runError.hidden = true; sync(); preview(); });
   notes.addEventListener('input', () => {

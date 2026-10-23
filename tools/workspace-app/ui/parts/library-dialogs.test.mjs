@@ -3,7 +3,7 @@
 // and a 409 that keeps what was typed, the guard on typed details, a new version through the
 // dialog's upload with its checks, Archive after a question, Attach or Detach for a project), the
 // New asset dialog (titles from file names or a pasted image, several files, a file it can't
-// take, a partial failure, the place), and the picker (shared and the project's own, attached
+// take, a partial failure, the place, an upload that is still running), and the picker (shared and the project's own, attached
 // ones fixed, search and kind, the limit, a refusal shown in it).
 // Run: node tools/run-tests.mjs workspace-app
 import { after, test } from 'node:test';
@@ -56,10 +56,16 @@ const calls = fakeFetch((path, { method, body }) => {
   }
   return { ok: true };
 });
-// Uploads send the file itself as the body: keep it aside and give the fake no body.
+// Uploads send the file itself as the body: keep it aside and give the fake no body. While a test
+// sets uploadGate (a promise), every upload waits for it first.
 const fake = globalThis.fetch;
+let uploadGate = null;
 globalThis.fetch = (path, opts = {}) => {
-  if (opts.body && typeof opts.body !== 'string') { uploads.push({ path, name: opts.body.name }); return fake(path, { ...opts, body: undefined }); }
+  if (opts.body && typeof opts.body !== 'string') {
+    uploads.push({ path, name: opts.body.name });
+    const send = () => fake(path, { ...opts, body: undefined });
+    return uploadGate ? uploadGate.then(send) : send();
+  }
   return fake(path, opts);
 };
 // The large preview of a text asset.
@@ -67,7 +73,7 @@ const realFetch = globalThis.fetch;
 globalThis.fetch = (path, opts) => (String(path).startsWith('/library-file') ? Promise.resolve({ ok: true, status: 200, text: async () => '# Guide\n- Short.\n' }) : realFetch(path, opts));
 
 const { assetPicker, newAssetDialog, openAssetDialog } = await import('./library-dialogs.js');
-const { closeDialog } = await import('../dialog.js');
+const { closeDialog, openDialog } = await import('../dialog.js');
 const dialog = dom.document.querySelector('#dialog');
 const toasts = () => dom.document.querySelector('#toasts').textContent;
 const byKey = key => dialog.querySelectorAll('[data-key]').find(n => n.dataset.key === key);
@@ -278,6 +284,41 @@ test('New asset: a pasted image gets a dated title; a locked place says where; a
   closeDialog();
   assert.equal(dialog.open, false, 'nothing chosen, nothing to lose');
   answer = true;
+});
+
+test('New asset: while the upload runs the dialog and its files stay; each file keeps its own title; a late end leaves another dialog alone', async () => {
+  newAssetDialog({});
+  const drop = files => dialog.querySelector('.lib-new .drop').dispatchEvent(fakeEvent('drop', { dataTransfer: { types: ['Files'], files, items: [] } }));
+  drop([file('first.md', 5)]);
+  assert.equal(dialog.querySelector('#libNewTitle').value, 'first', 'one file: its title in the box');
+  drop([file('Second file.md', 5)]);
+  let release;
+  uploadGate = new Promise(r => { release = r; });
+  const n = uploads.length;
+  dom.click(byKey('na:submit'));
+  await settle();
+  assert.equal(byKey('na:submit').textContent, 'Uploading…');
+  assert.equal(byKey('na:cancel').disabled, true);
+  assert.deepEqual(dialog.querySelectorAll('.lib-files button').map(b => b.disabled), [true, true], 'no ✕ while it runs');
+  dom.click(byKey('na:rm:0'));
+  assert.equal(dialog.querySelectorAll('.lib-files li').length, 2, 'a ✕ clicked anyway removes nothing');
+  closeDialog(); // Esc, Close and the backdrop ask the guard too
+  assert.equal(dialog.open, true, 'it waits for the upload');
+  assert.match(textOf(dialog.querySelector('.lib-new .form-error')), /still running: wait for it to finish/);
+  // Another dialog opened meanwhile (by code: this one refuses to close) stays when the upload ends.
+  const other = dom.document.createElement('p');
+  other.textContent = 'Something else';
+  openDialog('Another dialog', other);
+  release();
+  uploadGate = null;
+  await settle(5);
+  assert.deepEqual(uploads.slice(n).map(u => new URL(u.path, 'http://x').searchParams.get('title')), ['first', 'Second file'],
+    'the second file is titled by its name, not by the box');
+  assert.match(toasts(), /Added 2 assets/);
+  assert.equal(dialog.open, true);
+  assert.equal(dialog.querySelector('#dialogTitle').textContent, 'Another dialog');
+  assert.ok(dialog.contains(other));
+  dialog.close();
 });
 
 test('the picker: shared and the project\'s own, attached ones fixed, search, kind, the limit, a refusal', async () => {

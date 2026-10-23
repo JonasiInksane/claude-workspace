@@ -130,7 +130,8 @@ function detailDialog(first, { onChange, attach }) {
     noteLabel.hidden = asset.archived;
     archivedNote.hidden = !asset.archived;
     if (attachBtn) attachBtn.textContent = attach.attached() ? `Detach from ${attach.project}` : `Attach to ${attach.project}`;
-    const head = dialog.querySelector('#dialogTitle');
+    // A paint after a late answer (a big upload, a reload) leaves another dialog's title alone.
+    const head = holds(body) ? dialog.querySelector('#dialogTitle') : null;
     if (head) head.textContent = asset.title;
     syncSave();
   }
@@ -412,22 +413,23 @@ export function assetPicker({ project, assets = [], attached = [], limit = 50, o
 
   search.addEventListener('input', paint);
   kind.addEventListener('change', paint);
+  const body = h('div', { class: 'form lib-picker' },
+    h('p', { class: 'muted' }, only === 'shared' ? 'Shared assets from the library.' : `Shared assets, and ${project}'s own. Each follows its latest version until you pin one.`),
+    h('div', { class: 'lib-pick-filters' }, search, kind),
+    list, error);
   attach.addEventListener('click', async () => {
     if (attach.disabled) return;
     attach.disabled = true;
     showError(error, '');
     try {
       await onAttach([...chosen]);
-      dialog.close();
+      if (holds(body)) dialog.close();
     } catch (e) {
       showError(error, e.message);
       sync();
     }
   });
-  openDialog(`Attach assets to ${project}`, h('div', { class: 'form lib-picker' },
-    h('p', { class: 'muted' }, only === 'shared' ? 'Shared assets from the library.' : `Shared assets, and ${project}'s own. Each follows its latest version until you pin one.`),
-    h('div', { class: 'lib-pick-filters' }, search, kind),
-    list, error), {
+  openDialog(`Attach assets to ${project}`, body, {
     wide: true,
     actions: [count, h('button', { class: 'btn', type: 'button', on: { click: closeDialog } }, 'Cancel'), attach],
   });

@@ -4,7 +4,8 @@
 // dialog's upload with its checks, Archive after a question, Attach or Detach for a project), the
 // New asset dialog (titles from file names or a pasted image, several files, a file it can't
 // take, a partial failure, the place, an upload that is still running), and the picker (shared and the project's own, attached
-// ones fixed, search and kind, the limit, a refusal shown in it).
+// ones fixed, search and kind, the limit, a refusal shown in it), and late answers in both that
+// leave a dialog opened meanwhile alone.
 // Run: node tools/run-tests.mjs workspace-app
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -372,5 +373,44 @@ test('the picker: shared and the project\'s own, attached ones fixed, search, ki
   dialog.close();
   assetPicker({ project: 'example', assets: [], onAttach: async () => {} });
   assert.match(textOf(dialog), /There are no assets to attach yet/);
+  dialog.close();
+});
+
+test('late answers in the details and the picker leave a dialog opened meanwhile alone', async () => {
+  const other = () => {
+    const p = dom.document.createElement('p');
+    p.textContent = 'Something else';
+    openDialog('Another dialog', p);
+  };
+  // A new version that is still on its way when the details give way to another dialog.
+  asset = guide(2);
+  let changed = 0;
+  await openAssetDialog('shared:guide', { onChange: () => { changed++; } });
+  let release;
+  uploadGate = new Promise(r => { release = r; });
+  dialog.querySelector('.lib-add-version .drop').dispatchEvent(fakeEvent('drop', {
+    dataTransfer: { types: ['Files'], items: [{ kind: 'file', getAsFile: () => file('guide.md', 10, 'text/markdown'), webkitGetAsEntry: () => null }] },
+  }));
+  await settle();
+  other();
+  release();
+  uploadGate = null;
+  await settle(5);
+  assert.equal(changed, 1, 'the version was added');
+  assert.equal(dialog.querySelector('#dialogTitle').textContent, 'Another dialog', 'its title stays');
+  dialog.close();
+  // The picker: attaching takes a while; a dialog opened meanwhile stays open.
+  let attached;
+  assetPicker({ project: 'example', assets: [guide(1)], onAttach: () => new Promise(r => { attached = r; }) });
+  const box = dialog.querySelector('.lib-pick input');
+  box.checked = true;
+  box.dispatchEvent(fakeEvent('change'));
+  dom.click(byKey('pk:attach'));
+  await settle();
+  other();
+  attached();
+  await settle(5);
+  assert.equal(dialog.open, true);
+  assert.equal(dialog.querySelector('#dialogTitle').textContent, 'Another dialog');
   dialog.close();
 });

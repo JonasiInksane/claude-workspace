@@ -453,7 +453,7 @@ test('quotedLength is what Node writes on a Windows command line for one argumen
 test('Windows refuses a command line of 32,767 characters, counted as quotedLength counts them', { skip: process.platform !== 'win32' && 'Windows command line' }, () => {
   const fixed = quotedLength(process.execPath) + ' -e 0 '.length;
   const base = 'a "b" c\\ d e\\"f\n'.repeat(1000);
-  const start = extra => spawnSync(process.execPath, ['-e', '0', base + 'y'.repeat(32766 - fixed - quotedLength(base) + extra)]);
+  const start = extra => spawnSync(process.execPath, ['-e', '0', base + 'y'.repeat(32766 - fixed - quotedLength(base) + extra)], { windowsHide: true });
   assert.equal(start(0).status, 0, 'a command line of 32,766 characters starts');
   const over = start(1);
   assert.equal(over.error && over.error.code, 'ENAMETOOLONG');
@@ -581,7 +581,7 @@ test('claude-prompt.mjs hands the rules and the prompt to claude as separate arg
   const file = join(prompts, 'p.json');
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !['PATH', 'TEMP', 'TMP', 'TMPDIR'].includes(k.toUpperCase())));
   Object.assign(env, { PATH: join(dir, 'bin'), TEMP: dir, TMP: dir, TMPDIR: dir });
-  const run = (...args) => spawnSync(process.execPath, [join(appDir, 'claude-prompt.mjs'), ...args], { encoding: 'utf8', env });
+  const run = (...args) => spawnSync(process.execPath, [join(appDir, 'claude-prompt.mjs'), ...args], { encoding: 'utf8', env, windowsHide: true });
   writeFileSync(file, JSON.stringify({ prompt: '-Refactor "it"\nnow', readDirs: [], launch: { sessionId: ID, model: 'opus', allowedTools: ['Read'], appendSystemPrompt: RULES } }));
   const r = run(file, '--print');
   assert.equal(r.status, 0, r.stderr);

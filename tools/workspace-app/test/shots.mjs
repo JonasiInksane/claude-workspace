@@ -6,7 +6,7 @@
 //
 //   node tools/workspace-app/test/shots.mjs --out <dir> [--routes today,projects,runs]
 //        [--theme light|dark|both] [--width 1400] [--height 900] [--full]
-//        [--example] [--fixtures] [--data-dir <dir>] [--url <sign-in link>] [--wait 900]
+//        [--example [--seed <file.mjs>]] [--fixtures] [--data-dir <dir>] [--url <sign-in link>] [--wait 900]
 //
 // - A route is a hash route ("cockpit/example" becomes #cockpit/example) or, when it starts
 //   with "/", a path on the app's origin.
@@ -15,15 +15,21 @@
 //   pipelines/app/profiles/example.json) at projects/example, its profile and the sample runs in
 //   a temporary data folder, plus "sample-art" (an asset pipeline with one asset) and "notes"
 //   (a plain project). Use it to see every kind of project screen; nothing real is touched.
+// - --seed <file.mjs> (with --example): a module whose default export, async ({ root, dataDir }),
+//   runs before the app starts, to add data the screens show (library assets, settings versions).
+//   test/seed-library.mjs seeds the asset library and two settings versions of "example".
 // - --fixtures loads the sample runs (test/fixtures/runs/install.mjs) into the data folder.
 // - --data-dir reuses a data folder you prepared (profiles, runs); default is a new temp folder.
 // - --full captures the whole page height instead of the viewport.
 // - Exit code 1 when the page logged an error or an exception, 2 on a setup failure.
+//
+// Imported (not run), it exports startExample, startEdge and cdp, so a script can drive the same
+// page further (click, type, open dialogs) and take its own screenshots.
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SERVER = resolve(here, '..', 'server.mjs');
@@ -33,7 +39,7 @@ const EDGE_PATHS = [
 ];
 
 function parseArgs(argv) {
-  const o = { out: '', routes: ['today'], theme: 'light', width: 1400, height: 900, full: false, example: false, fixtures: false, dataDir: '', url: '', wait: 900 };
+  const o = { out: '', routes: ['today'], theme: 'light', width: 1400, height: 900, full: false, example: false, seed: '', fixtures: false, dataDir: '', url: '', wait: 900 };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const val = () => argv[++i] ?? '';
@@ -44,6 +50,7 @@ function parseArgs(argv) {
     else if (a === '--height') o.height = Number(val());
     else if (a === '--full') o.full = true;
     else if (a === '--example') o.example = true;
+    else if (a === '--seed') o.seed = val();
     else if (a === '--fixtures') o.fixtures = true;
     else if (a === '--data-dir') o.dataDir = val();
     else if (a === '--url') o.url = val();
@@ -53,7 +60,16 @@ function parseArgs(argv) {
   }
   if (!o.out) fail('--out <dir> is required');
   if (!['light', 'dark', 'both'].includes(o.theme)) fail('--theme must be light, dark or both');
+  if (o.seed && !o.example) fail('--seed needs --example (it seeds the temporary workspace)');
+  if (o.seed && !existsSync(o.seed)) fail(`--seed: ${o.seed} was not found`);
   return o;
+}
+
+// Runs a --seed module's default export on the example workspace before the app starts.
+async function runSeed(file, { root, dataDir }) {
+  const mod = await import(pathToFileURL(resolve(file)).href);
+  if (typeof mod.default !== 'function') fail(`--seed: ${file} has no default export function`);
+  await mod.default({ root, dataDir });
 }
 
 function fail(msg) {
@@ -91,8 +107,9 @@ function startServer(dataDir) {
 }
 
 // The --example workspace: the real app (createApp) in this process on a temporary root, with
-// the fake Claude for every stage. Resolves with the sign-in link and a stop function.
-async function startExample(dataDir) {
+// the fake Claude for every stage, after `seed` (a --seed module's path) ran on it. Resolves with
+// the sign-in link, the workspace root and a stop function.
+export async function startExample(dataDir, { seed = '' } = {}) {
   const { createServer } = await import('node:http');
   const { cpSync } = await import('node:fs');
   const { createApp } = await import('../app.mjs');
@@ -117,6 +134,7 @@ async function startExample(dataDir) {
   // A short worktree path (the profile allows at most 50 characters); it is never created here.
   writeFiles(dataDir, { 'profiles/example.json': fakeProfile({ isolation: { worktreePath: join(tmpdir(), 'ws-shots-run') } }) });
   await installRunFixtures(dataDir);
+  if (seed) await runSeed(seed, { root, dataDir });
   const token = 'shots'.padEnd(32, '0');
   const fake = resolve(here, 'fake-claude.mjs');
   const noop = async () => ({});
@@ -135,10 +153,11 @@ async function startExample(dataDir) {
     server.closeAllConnections?.();
     try { rmSync(base, { recursive: true, force: true }); } catch { /* a file may still be open */ }
   };
-  return { url: `http://127.0.0.1:${port}/?t=${token}`, stop };
+  return { url: `http://127.0.0.1:${port}/?t=${token}`, root, stop };
 }
 
-async function startEdge(o) {
+// Headless Edge with a DevTools port: { child, profile, ws } (the page target's WebSocket URL).
+export async function startEdge(o) {
   const edge = EDGE_PATHS.find(p => existsSync(p));
   if (!edge) fail('Microsoft Edge was not found');
   const profile = mkdtempSync(join(tmpdir(), 'ws-shots-edge-'));
@@ -163,7 +182,7 @@ async function startEdge(o) {
 }
 
 // A minimal DevTools protocol client: send() resolves with the result; on() listens to events.
-function cdp(wsUrl) {
+export function cdp(wsUrl) {
   return new Promise((resolveP, reject) => {
     const ws = new WebSocket(wsUrl);
     let id = 0;
@@ -214,7 +233,7 @@ async function main() {
   if (!url) {
     const dataDir = o.dataDir || (tempData = mkdtempSync(join(tmpdir(), 'ws-shots-data-')));
     if (o.example) {
-      example = await startExample(dataDir);
+      example = await startExample(dataDir, { seed: o.seed });
       url = example.url;
     } else {
       if (o.fixtures) {
@@ -276,4 +295,7 @@ async function main() {
   }
 }
 
-main().catch(e => { console.error(`shots: ${e.message}`); process.exit(2); });
+// Run as a script only; a driver script imports the helpers above.
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  main().catch(e => { console.error(`shots: ${e.message}`); process.exit(2); });
+}

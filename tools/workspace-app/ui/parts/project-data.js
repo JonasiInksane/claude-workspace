@@ -10,6 +10,8 @@
 //   runs      GET /api/runs?project (8)     the newest runs (Recent runs, the board's run tags)
 //   tasks     GET /api/runs?project (200)   the runs the Tasks tab groups into tasks
 //   waiting   GET /api/runs?project&status=waiting   runs that wait at a gate (the Changes tab)
+//   settings  GET /api/project-settings?project      rules and settings, every version (Settings, Assets)
+//   library   GET /api/library?project&archived=1    shared assets plus the project's own (Settings, Assets)
 //
 // A screen asks for the parts it shows with use(name, parts), in its onShow, and lets go with the
 // function use() returns, in its onHide. Parts in use load at once and then stay fresh: every 10 s
@@ -32,6 +34,8 @@ export const PARTS = {
   runs: name => `/api/runs?${qs({ project: name, limit: 8 })}`,
   tasks: name => `/api/runs?${qs({ project: name, limit: TASK_LIMIT })}`,
   waiting: name => `/api/runs?${qs({ project: name, status: 'waiting', limit: 100 })}`,
+  settings: name => `/api/project-settings?${qs({ project: name })}`,
+  library: name => `/api/library?${qs({ project: name, archived: '1' })}`,
 };
 const isPart = p => Object.prototype.hasOwnProperty.call(PARTS, p);
 

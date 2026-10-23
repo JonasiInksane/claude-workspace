@@ -1,6 +1,7 @@
 // The page's entry point (index.html loads it as a module). It builds the sidebar and one
 // <section> per view, routes by the URL hash (#<route> or #<route>/<sub>, so Back works and
-// every screen has a URL), renders the current view whenever the store changes, and runs the
+// every screen has a URL; a screen with unsaved work asks before it is left, parts/leave-guard.js),
+// renders the current view whenever the store changes, and runs the
 // shell's background work: the heartbeat, refresh on focus, the live-update stream with its
 // polling fallback, notifications, the theme toggle, the palette and the keyboard shortcuts.
 // Pasted and dropped image files go to the open dialog or the current view (unchanged).
@@ -31,6 +32,7 @@ import {
 } from './store.js';
 import { initPalette, isPaletteOpen, openPalette, togglePalette } from './parts/palette.js';
 import { footItems, isCurrentItem, navItems as buildNav } from './parts/nav.js';
+import { mayLeave } from './parts/leave-guard.js';
 import today from './views/today.js';
 import project from './views/project.js';
 import launcher from './views/launcher.js';
@@ -338,7 +340,13 @@ window.addEventListener('focus', () => {
   if (msSinceRefresh() > 5000) refreshCounts();
 });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) ping(); });
-window.addEventListener('hashchange', () => { const r = parseHash(); show(r.id, r.sub); });
+// A screen with unsaved work (the project Settings tab) may keep the route: the address goes
+// back and nothing else happens (parts/leave-guard.js).
+window.addEventListener('hashchange', () => {
+  if (!mayLeave(location.hash)) return;
+  const r = parseHash();
+  show(r.id, r.sub);
+});
 window.addEventListener('pagehide', () => { if (source) source.close(); });
 
 document.addEventListener('paste', e => {

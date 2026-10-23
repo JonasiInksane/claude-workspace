@@ -1,0 +1,91 @@
+/* The project Settings tab (views/project/settings.js): the note on where the settings apply, the
+   editor (the rules box and its count, the defaults, the tools, the attached assets, the conflict
+   note and the save bar that stays in view), the versions, and the View and Compare dialogs (the
+   line diff of parts/textdiff.js and the table of the other settings). The profile card keeps its
+   rules in css/project.css. Linked after project.css in index.html. Colours always sit next to
+   words: a count says its numbers, a diff line starts with + or -. */
+
+/* ---------- Editor */
+.st-where { line-height: 1.5; }
+.st-form { gap: var(--s5); }
+.st-block { display: grid; gap: 6px; min-width: 0; }
+fieldset.st-block { border: 0; margin: 0; padding: 0; }
+.st-block legend, .st-label { font-weight: 600; font-size: var(--t-md); padding: 0; }
+/* .form textarea (app.css) would otherwise win over .code-edit and keep the box at 70px */
+.st-form textarea.st-rules { min-height: 42vh; }
+.st-rules-foot { display: flex; justify-content: flex-end; margin-top: -2px; }
+.st-count { font-size: var(--t-sm); color: var(--muted); font-variant-numeric: tabular-nums; }
+.st-count.near { color: var(--amber); font-weight: 600; }
+.st-count.over { color: var(--red); font-weight: 600; }
+.st-problems { margin: 0; padding-left: 18px; color: var(--red); font-size: var(--t-md); font-weight: 400; overflow-wrap: anywhere; }
+.st-form [aria-invalid="true"] { border-color: var(--red); }
+.st-defaults-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s3); }
+.st-defaults-grid label { align-content: start; }
+.st-form input.mono { font-family: var(--mono); font-size: 12.5px; }
+
+/* ---------- Attached assets: one row each, with its state, its version and Remove */
+.st-assets-head { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
+.st-assets-head .row-actions { margin-left: auto; }
+.st-assets { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.st-asset {
+  display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; min-width: 0;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
+}
+.st-asset-icon svg { width: 18px; height: 18px; color: var(--muted); display: block; }
+.st-asset .main { flex: 1; min-width: 180px; display: flex; flex-direction: column; }
+.st-asset .title { font-weight: 600; overflow-wrap: anywhere; }
+.st-asset .sub { font-size: var(--t-sm); color: var(--muted); overflow-wrap: anywhere; }
+.st-form select.st-pin { padding: 4px 8px; max-width: 160px; }
+.st-assets-empty { margin: 0; }
+
+/* ---------- Conflict and other errors (shown only when there is something to say) */
+.st-alerts { display: grid; gap: var(--s2); }
+.st-alerts:not(:has(> :not([hidden]))) { display: none; }
+.st-conflict { display: grid; gap: var(--s2); }
+
+/* ---------- The save bar stays at the bottom of the window while the editor is in view */
+.st-foot {
+  position: sticky; bottom: 0; z-index: 2; background: var(--card);
+  border-radius: 0 0 var(--radius) var(--radius); box-shadow: 0 -6px 12px -10px rgba(0, 0, 0, .25);
+}
+.st-foot .push { margin-left: auto; }
+.st-status { font-weight: 500; }
+.st-status.dirty { color: var(--amber); font-weight: 600; }
+
+/* ---------- Versions */
+.st-versions .list li { align-items: flex-start; }
+.st-versions .list .title { white-space: normal; }
+.st-broken .title { color: var(--red); }
+
+/* ---------- View and Compare */
+.st-view, .st-compare { display: grid; gap: var(--s2); min-width: 0; }
+pre.st-rules-view {
+  margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 12px; font-family: var(--mono); font-size: 12.5px; max-height: 40vh; overflow: auto;
+}
+.st-view-assets, .st-changes { margin: 0; padding-left: 18px; font-size: var(--t-md); }
+pre.textdiff {
+  margin: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 0;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.5; max-height: 50vh; overflow: auto;
+}
+/* One line: the numbers in their own column, the text (with its sign) wrapping beside them */
+pre.textdiff > span { display: grid; grid-template-columns: auto minmax(0, 1fr); padding-right: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+pre.textdiff .ln { display: inline-flex; gap: 6px; padding: 0 10px 0 6px; color: var(--muted); user-select: none; }
+pre.textdiff .ln span { display: inline-block; min-width: 3ch; text-align: right; }
+pre.textdiff .add { background: var(--green-soft); }
+pre.textdiff .del { background: var(--red-soft); }
+pre.textdiff .skip { display: block; color: var(--muted); font-style: italic; padding: 2px 12px; }
+table.st-fields th[scope="row"] { font-weight: 600; white-space: nowrap; color: var(--text); font-size: var(--t-md); }
+table.st-fields th[scope="row"] .badge { margin-left: 6px; }
+table.st-fields td { overflow-wrap: anywhere; }
+table.st-fields tr.changed td { background: var(--amber-soft); }
+
+/* ---------- Narrow screens (app.css breakpoints: 1180, 1080, 760) */
+@media (max-width: 1080px) {
+  .st-defaults-grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 760px) {
+  .st-defaults-grid { grid-template-columns: 1fr; }
+  .st-foot { flex-direction: column; align-items: stretch; }
+  .st-foot .push { margin-left: 0; justify-content: flex-end; }
+}

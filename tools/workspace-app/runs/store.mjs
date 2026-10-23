@@ -14,11 +14,15 @@
 // - Timeline rows get `seq`, the 1-based line number, so a poller asks "rows after seq N". A torn
 //   last line (a crash mid-write) keeps its line number, and the next append starts a fresh line.
 // - inputs/ files are hashed when written; verifyInputs re-hashes them before a gate (R27).
+// - A new run records the project's current settings version, `projectSettings: { version,
+//   sha256 }` or null (project-settings.mjs), read once here: its Claude stages get the rules of
+//   that version, so a save during the run changes nothing in it.
 // Ids and names are checked by regex before any path is joined, so ".." can never reach out.
 import { appendFile, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { appendJsonl, PROJECT_RE, readJson, readJsonl, renameRetry, sha256Text, writeJsonAtomic } from '../core/datadir.mjs';
+import { currentSettings, isSettingsRef, settingsRef } from '../project-settings.mjs';
 
 export const RUN_ID_RE = /^[0-9a-z-]{1,64}$/;
 export const RUN_STATUSES = ['running', 'waiting', 'in-terminal', 'passed', 'failed', 'gates-red', 'capped', 'parked',
@@ -186,7 +190,7 @@ function newRunObject(init, id, at) {
     level: null, levelReason: [], reviewEffort: null, createdAt: at, updatedAt: at, endedAt: null,
     status: 'running', statusReason: '', current: firstStage(stages), waiting: null,
     isolation: null, base: null, branch: null, commit: null,
-    versions: { node: process.versions.node, claudeCode: null },
+    versions: { node: process.versions.node, claudeCode: null }, projectSettings: null,
     lockHeld: false, plan: null, allowances: [], pins: [], redTests: [], inputsHashes: {},
     fixRounds: { auto: 0, user: 0, maxAuto: 2, maxUser: 2 }, gatedTree: null, stages, takeover: null, error: null,
   };
@@ -221,19 +225,30 @@ async function claimRunId(dataDir, init, now) {
   }
 }
 
+// The settings version a new run uses: init.projectSettings when given (null or { version,
+// sha256 }), otherwise the project's current one. Read before the run folder exists, so settings
+// that can't be read stop the start and leave nothing behind.
+async function runSettings(dataDir, init) {
+  if (init.projectSettings === undefined) return settingsRef(await currentSettings(dataDir, init.project));
+  if (!isSettingsRef(init.projectSettings)) throw new Error('projectSettings must be null or { version, sha256 } of saved settings.');
+  return init.projectSettings;
+}
+
 // Creates the run folder (with inputs/, stages/, gates/, final/, tmp/) and run.json, and indexes
 // the run. `init` holds any run.json fields to set (project and pipeline are required; `id` is
-// optional and must be free). Returns the run.
+// optional and must be free; projectSettings defaults to the project's current settings version).
+// Returns the run.
 export async function createRun(dataDir, init = {}, { now = Date.now } = {}) {
   checkProject(init.project);
   checkName(init.pipeline, 'pipeline id');
+  const projectSettings = await runSettings(dataDir, init);
   await mkdir(projectRunsDir(dataDir, init.project), { recursive: true });
   // One creation at a time per data folder, so two projects can't pick the same free id at once.
   const id = await serial(runsRoot(dataDir), () => claimRunId(dataDir, init, now));
   const dir = runDir(dataDir, init.project, id);
   for (const f of RUN_FOLDERS) await mkdir(join(dir, f), { recursive: true });
   const { slugText, ...fields } = init;
-  const run = newRunObject(fields, id, iso(now()));
+  const run = newRunObject({ ...fields, projectSettings }, id, iso(now()));
   checkStatuses(run);
   await saveRun(dataDir, run, { now });
   runProjects.set(id, run.project);

@@ -21,6 +21,11 @@
 // and exactly the gated files (R17); a failed editing run saves final/stopped.patch, resets the
 // tree and gives the lock back.
 //
+// Project rules: a run records the project's settings version when it is created (runs/store.mjs,
+// project-settings.mjs). Every fresh Claude stage gets the rules of exactly that version after
+// CLAUDE.md and AGENTS.md; a version that is gone or no longer matches its recorded hash stops
+// the stage instead of running with other rules. A resumed stage already has them in its session.
+//
 // Every dependency is injected (createExecutor(deps)), so tests run with fakes; defaultDeps()
 // loads the real modules for the wiring and the integration test.
 import { createHash, randomUUID } from 'node:crypto';
@@ -28,6 +33,7 @@ import { mkdir, readFile, stat } from 'node:fs/promises';
 import { writeJsonAtomic, writeTextAtomic } from '../core/datadir.mjs';
 import { basename, extname, join, posix, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as projectSettingsModule from '../project-settings.mjs';
 import * as catalogModule from './catalog.mjs';
 import * as promptsModule from './prompts.mjs';
 import { allowedActions, currentIndex, isUnpinnableEnd, lastSessionId, takeoverStageIndex } from './actions.mjs';
@@ -348,8 +354,10 @@ export function buildHypothesisPlan(diagnosis, payload = {}, { mustTickFor = () 
 //   profileLib.workspaceOf, slots {claude, checks}, register, unregister, signals, proc, clock, redact,
 //   redactDeep, trustFor(run) or trustState(path), startClaude (or launcher.startClaude), startRun,
 //   schedule, claudeCommand, nodePath, gitBash, timing (claude-stage test override), argv.
+//   prompts, catalog and projectSettings (project-settings.mjs: getSettingsVersion,
+//   currentSettings) default to the real modules.
 export function createExecutor(deps = {}) {
-  const d = { prompts: promptsModule, catalog: catalogModule, ...deps };
+  const d = { prompts: promptsModule, catalog: catalogModule, projectSettings: projectSettingsModule, ...deps };
   if (!d.dataDir) throw new Error('The executor needs deps.dataDir (the private data folder).');
   if (!d.hubRoot) throw new Error('The executor needs deps.hubRoot (the workspace root).');
   if (!d.store) throw new Error('The executor needs deps.store (runs/store.mjs).');
@@ -1397,10 +1405,28 @@ export function createExecutor(deps = {}) {
       if (v.error) await input(run, 'error.txt', v.error);
       if (v.screenshot) await copyScreenshot(run, v.screenshot);
     }
+    const rules = await rulesFor(run);
     vars.projectInstructions = preview && !run.base
-      ? '(CLAUDE.md and AGENTS.md from the base commit go here when the run starts.)'
-      : await d.prompts.projectInstructions({ git: d.git, dir: cwd, sha: run.base.sha });
+      ? ['(CLAUDE.md and AGENTS.md from the base commit go here when the run starts.)', rules].filter(Boolean).join('\n\n')
+      : await d.prompts.projectInstructions({ git: d.git, dir: cwd, sha: run.base.sha, extra: [rules] });
     return vars;
+  }
+
+  // The rules of the settings version the run recorded (run.projectSettings), as a
+  // <project_instructions> block, or '' (no settings, no rules, or a run from before settings).
+  // Throws when that version is gone or no longer matches its hash: the run must not go on with
+  // other rules than the ones it started with.
+  async function rulesFor(run) {
+    const ref = run.projectSettings;
+    if (!ref) return '';
+    let settings;
+    try { settings = await dep('projectSettings.getSettingsVersion')(dataDir, run.project, ref.version); } catch (e) {
+      throw new Error(`This run started with the project settings v${ref.version} of ${run.project}, which can't be read now: ${e.message}`);
+    }
+    if (settings.sha256 !== ref.sha256) {
+      throw new Error(`The project settings v${ref.version} of ${run.project} are not the ones this run started with (their hash changed).`);
+    }
+    return projectSettingsModule.rulesBlock(settings);
   }
 
   // Copies an inbox image into inputs/ through the store, so it is hashed like every input.
@@ -2242,6 +2268,8 @@ export function createExecutor(deps = {}) {
       try {
         const base = need === 'tree' ? await revParse(mainDir, profile.git.integrationBranch) : await revParse(mainDir, 'HEAD');
         pseudo.base = { sha: base };
+        // The settings a run started now would record (runs/store.mjs createRun).
+        pseudo.projectSettings = projectSettingsModule.settingsRef(await dep('projectSettings.currentSettings')(dataDir, draft.project));
         const vars = await buildVars(pseudo, first, { profile, cwd: mainDir, edit: first.profile === 'EDIT', preview: true });
         const { pipeline, stage } = promptName(first);
         out.prompt = d.prompts.renderPrompt(await d.prompts.loadPrompt(d.hubRoot, pipeline, stage), vars);

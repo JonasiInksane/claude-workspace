@@ -51,6 +51,7 @@ const calls = fakeFetch((path, { method, body }) => {
 globalThis.confirm = () => true;
 
 const store = await import('../../store.js');
+const { keepFocus } = await import('../../lib.js');
 const { attachedEntries, pinBadge, pipelineAssets, default: assets } = await import('./assets.js');
 const dialog = dom.document.querySelector('#dialog');
 const toasts = () => dom.document.querySelector('#toasts').textContent;
@@ -103,13 +104,18 @@ test('the attached assets and its own: pins, a missing one, archived ones only o
   assert.match(textOf(el), /Attached in its settings \(3\)/);
   assert.match(textOf(el), /Show archived \(1\)/);
   const box = el.querySelector('.pa-library .card-head input[type="checkbox"]');
+  box.focus();
   box.checked = true;
   box.dispatchEvent(fakeEvent('change'));
   await settle(5);
-  assets.render(el, ctx(example));
+  keepFocus(el, () => assets.render(el, ctx(example))); // as project.js repaints
   assert.deepEqual(titles(grids(el)[1]), ['Order schema', 'Old sketch']);
-  box.checked = false;
-  box.dispatchEvent(fakeEvent('change'));
+  const again = el.querySelector('.pa-library .card-head input[type="checkbox"]');
+  assert.notEqual(again, box, 'the card was built again');
+  assert.equal(dom.document.activeElement, again, 'the focus stays on the checkbox');
+  assert.equal(again.checked, true);
+  again.checked = false;
+  again.dispatchEvent(fakeEvent('change'));
   await settle(5);
   assets.onHide();
 });

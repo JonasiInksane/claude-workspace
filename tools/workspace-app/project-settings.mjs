@@ -84,7 +84,8 @@ export const isSettingsRef = ref => ref === null ||
 function rulesField(raw, problems) {
   if (raw === null) return '';
   if (typeof raw !== 'string') { problems.push('rules must be text'); return ''; }
-  const text = raw.replace(/\r\n?/g, '\n').replace(/^(?:[ \t]*\n)+/, '').replace(/\s+$/, '');
+  // trimEnd, not /\s+$/: that pattern backtracks over every long run of spaces inside the text.
+  const text = raw.replace(/\r\n?/g, '\n').replace(/^(?:[ \t]*\n)+/, '').trimEnd();
   if (text.length > SETTINGS_LIMITS.rules) problems.push(`the rules are longer than ${SETTINGS_LIMITS.rules} characters (${text.length})`);
   const bad = CONTROL_RE.exec(text);
   if (bad) {
@@ -99,7 +100,7 @@ function defaultsField(raw, base, problems) {
   if (raw === null) return emptyDefaults();
   const out = { ...base };
   if (!isPlain(raw)) { problems.push('defaults must be an object with model, effort and permissionMode'); return out; }
-  for (const k of Object.keys(raw)) if (!DEFAULT_KEYS.includes(k)) problems.push(`defaults.${k} is not a setting (use ${DEFAULT_KEYS.join(', ')})`);
+  for (const k of Object.keys(raw)) if (!DEFAULT_KEYS.includes(k)) problems.push(`defaults.${k.slice(0, 60)} is not a setting (use ${DEFAULT_KEYS.join(', ')})`);
   for (const k of DEFAULT_KEYS) {
     if (raw[k] === undefined) continue;
     if (raw[k] !== null && typeof raw[k] !== 'string') { problems.push(`defaults.${k} must be text`); continue; }
@@ -139,7 +140,7 @@ function assetsField(raw, project, problems) {
   raw.forEach((a, i) => {
     const at = `assets[${i}]`;
     if (!isPlain(a)) { problems.push(`${at} must be an object with ref and pin`); return; }
-    for (const k of Object.keys(a)) if (k !== 'ref' && k !== 'pin') problems.push(`${at}.${k} is not an asset field (use ref and pin)`);
+    for (const k of Object.keys(a)) if (k !== 'ref' && k !== 'pin') problems.push(`${at}.${k.slice(0, 60)} is not an asset field (use ref and pin)`);
     const ref = typeof a.ref === 'string' ? a.ref.trim() : '';
     const m = ref.length <= SETTINGS_LIMITS.assetRef ? ASSET_REF_RE.exec(ref) : null;
     if (!m) problems.push(`${at}.ref must look like shared:<asset> or ${project}:<asset> (lowercase words joined by hyphens)`);
@@ -160,7 +161,7 @@ export function checkSettingsInput(input, project, base = null) {
   checkProject(project);
   if (!isPlain(input)) return { value: null, problems: ['the settings must be sent as an object'] };
   const problems = [];
-  for (const k of Object.keys(input)) if (!SETTINGS_FIELDS.includes(k)) problems.push(`"${k}" is not a project setting (use ${SETTINGS_FIELDS.join(', ')})`);
+  for (const k of Object.keys(input)) if (!SETTINGS_FIELDS.includes(k)) problems.push(`"${k.slice(0, 60)}" is not a project setting (use ${SETTINGS_FIELDS.join(', ')})`);
   const b = base ? fieldsOf(base) : emptyFields();
   const value = {
     rules: input.rules === undefined ? b.rules : rulesField(input.rules, problems),

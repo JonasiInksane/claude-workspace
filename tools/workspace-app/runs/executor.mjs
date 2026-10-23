@@ -1343,6 +1343,7 @@ export function createExecutor(deps = {}) {
   // EDIT stages have no --add-dir, so their inputs are written into the prompt. With `preview`
   // nothing is written.
   async function buildVars(run, s, { profile, cwd, edit, preview = false }) {
+    const rules = await rulesFor(run); // first: settings that can't be used stop the stage before any input is written
     const inputsDir = preview ? '<run folder>\\inputs' : join(runDir(run), 'inputs');
     const out = run.outputs || {};
     const v = run.values || {};
@@ -1405,7 +1406,6 @@ export function createExecutor(deps = {}) {
       if (v.error) await input(run, 'error.txt', v.error);
       if (v.screenshot) await copyScreenshot(run, v.screenshot);
     }
-    const rules = await rulesFor(run);
     vars.projectInstructions = preview && !run.base
       ? ['(CLAUDE.md and AGENTS.md from the base commit go here when the run starts.)', rules].filter(Boolean).join('\n\n')
       : await d.prompts.projectInstructions({ git: d.git, dir: cwd, sha: run.base.sha, extra: [rules] });

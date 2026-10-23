@@ -171,6 +171,13 @@ test('each field is checked on its own: types, control characters, limits and un
   assert.ok(ASSET_REF_RE.test('shared:style-guide') && ASSET_REF_RE.test('my-app:logo-2') && !ASSET_REF_RE.test('shared:Logo') && !ASSET_REF_RE.test('a:b:c'));
 });
 
+test('a long text is checked in linear time: 60,000 characters with one long run of spaces are refused at once', async t => {
+  const { dataDir } = setup(t);
+  const t0 = Date.now();
+  await assert.rejects(saveSettings(dataDir, 'example', { rules: `a${' '.repeat(60000)}b` }, { basedOn: 0 }), status(400, /longer than 20000 characters \(60002\)/));
+  assert.ok(Date.now() - t0 < 1000, `took ${Date.now() - t0} ms`);
+});
+
 test('what a save keeps: tidy line ends, one copy of each tool, cleared fields and partial defaults', async t => {
   const { dataDir } = setup(t);
   const v1 = await saveSettings(dataDir, 'example', {

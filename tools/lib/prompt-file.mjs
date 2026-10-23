@@ -24,8 +24,9 @@
 // never part of launchArgs: that text only goes on a command line Node spawns
 // (promptSessionArgs here, agent-session.mjs), never into a PowerShell command.
 //
-// Windows gives a program at most 32,767 characters of command line, so writePromptFile refuses a
-// prompt and system prompt text that would not fit together once quoted (COMMAND_TEXT_BUDGET).
+// Windows refuses a command line of 32,767 characters or more (spawn fails with ENAMETOOLONG), so
+// writePromptFile refuses a prompt and system prompt text that would not fit together once quoted
+// (COMMAND_TEXT_BUDGET).
 import { mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -45,9 +46,9 @@ export const TOOL_RULE_RE = /^[A-Za-z][\w-]*(\([^()\r\n"]{1,200}\))?$/;
 export const MAX_TOOL_RULES = 20;
 // --append-system-prompt text: a project's rules (workspace-app/project-settings.mjs).
 export const MAX_APPEND_SYSTEM_PROMPT = 20000;
-// What the prompt and the system prompt text may take of the 32,767-character Windows command
-// line together, quoted as Node quotes them; the rest is room for claude's path, the flags and
-// the settings file.
+// What the prompt and the system prompt text may take together, quoted as Node quotes them, of a
+// Windows command line (which must stay under 32,767 characters); the rest is room for claude's
+// path, the flags and the settings file.
 export const COMMAND_TEXT_BUDGET = 30000;
 
 export const promptDir = () => join(tmpdir(), 'claude-workspace', 'prompts');

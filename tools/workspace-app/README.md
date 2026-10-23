@@ -50,7 +50,7 @@ runs just opens another window.
 | `make-icon.mjs` | Draws `ui/icon.ico` (16 to 256 px) from the same design as `ui/icon.svg`; its PNG encoder is shared with `bmp.mjs` |
 | `bmp.mjs` | BMP to PNG on upload (uncompressed 1, 4, 8, 24 and 32-bit; others are refused with a message) |
 | `assets.mjs` | The Assets view: finds projects with `tools/asset.mjs` (3D) or `tools/sprite.mjs` (sprites) and `assets/`, reads each asset's `asset.json` (`"kind": "sprite"` for a sprite), check reports, renders and brief log, and a sprite's sheet (`export/SPR_<Name>.png`, `.json`, `_N` normal map, `_E` emissive); serves only PNG, JPEG, JSON and GLB files from inside `assets/` (sandboxed); writes a verdict (Approve, Revise, Reject) as the `asset.json` status plus a dated line in the brief's log |
-| `ui/index.html` | The page shell: sidebar, `<main>`, the dialog, the palette (`#palette`) and commit dialog (`#commitDialog`), the live-updates pill and the "waiting" live region; links `app.css` then `css/<view>.css`; loads `main.js` as a module |
+| `ui/index.html` | The page shell: sidebar (the nav `#nav`, and `#navFoot` for Library above the Hub session buttons), `<main>`, the dialog, the palette (`#palette`) and commit dialog (`#commitDialog`), the live-updates pill and the "waiting" live region; links `app.css` then `css/<view>.css`; loads `main.js` as a module |
 | `ui/main.js` | The views registry (`VIEWS`), the sidebar (`ui/parts/nav.js`: Today; Projects with every project under it, a code project with its amber waiting count; Assets; Flows; Runs with up to three review gates under it; Library at the foot, above the Hub session buttons), hash routing with sub-routes (`#project/<name>/<tab>`, `#run/<id>`; a project route the state completes is corrected in place; unknown goes to `#today`; Back works), live updates (one `EventSource('/api/events')`, polling while it is down), keyboard (`Ctrl K`, `g t`/`g p`/`g a`/`g f`/`g r`), notifications, the theme toggle, pasted and dropped images, heartbeat, refresh on focus |
 | `ui/lib.js` | `h()` (data always as text; refuses a `style` prop), `api()`, `act()`, `toast()`, `copy()`, formatting helpers (`fmtAgo`, `fmtDuration`, `fmtClock`), `statusBadge`, focus helpers, `announce`, `confirmDialog`, the "not connected" overlay |
 | `ui/store.js` | The shared state (`state`, `view`, `sub`, `currentProject`, `settings`, `pipelines`, run signals), `setState`, `subscribe`, `refresh`, `go()`, the hash helpers (`projectRoute`, `projectSub`, `goProject`, `canonicalProjectSub`; the old `#cockpit/<name>` and `#health/<name>` read as Overview and Architecture), `openLauncher` and the title badge |
@@ -186,7 +186,8 @@ the project locks), `baselines/`, `checks/`, `findings/`, `metrics/`, `worktrees
 
 Tests: `node tools/run-tests.mjs workspace-app`. Next to each module is its `*.test.mjs`;
 `test/e2e.test.mjs` drives Explain, Review and a Refactor to its commit through the real app
-and engine with the fake claude, on a synthetic repo.
+and engine with the fake claude, on a synthetic repo. A test of a page module (`ui/**/*.js`)
+renders it in `test/dom.mjs`, a stand-in DOM with a fake `fetch` (`installDom`, `fakeFetch`).
 
 Screens: `node tools/workspace-app/test/shots.mjs --out <dir> --example --routes project/example/overview,runs --theme both`
 saves one PNG per route from headless Edge and lists every console error, CSP violation and
@@ -202,8 +203,9 @@ the app on this workspace with a temporary data folder. Dev only; needs Node 22+
   with `readJson(req)`. Look names up through `lookup.mjs`, never take a path from the page.
 - **A view:** add `ui/views/<id>.js` (default export `{ id, label, icon, render(el, ctx) }`, plus
   optional `onShow(ctx)` and `onHide()`, which also run when only the sub-route changes, such as
-  another run id) and list it in `VIEWS` in `ui/main.js`; add it to `navItems()` in
-  `ui/parts/nav.js` if it belongs in the sidebar. Its styles go in `ui/css/<id>.css`, linked in
+  another run id) and list it in `VIEWS` in `ui/main.js`. If it belongs in the sidebar, add it to
+  `NAV_VIEWS` in `ui/main.js` (which hands the modules to the nav) and give it its place in
+  `navItems()` or `footItems()` in `ui/parts/nav.js`. Its styles go in `ui/css/<id>.css`, linked in
   `index.html`.
 - **A project tab:** add `ui/views/project/<id>.js` with the default export
   `{ id, label, render(el, ctx), onShow?(ctx), onHide?() }`, where

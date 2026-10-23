@@ -2,11 +2,8 @@
    checks.js, and parts/kanban.js), which were the project cockpit's (UI-COCKPIT; mockup
    #v-cockpit). Linked after app.css in index.html; narrow-screen rules for these cards go here too.
    Generic names from the mockup (.col, .more, .phase, .span2) are scoped to their parent, since
-   every view's CSS is global. Status and severity colours always sit next to words. */
-
-/* ---------- Header */
-.ck-title { min-width: 0; }
-.ck-title .mono { overflow-wrap: anywhere; }
+   every view's CSS is global. Status and severity colours always sit next to words. The page's
+   header is in css/project.css. */
 
 /* ---------- Facts bar and the Setup checklist */
 .factsbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 10px var(--s4); margin-bottom: var(--s4); }

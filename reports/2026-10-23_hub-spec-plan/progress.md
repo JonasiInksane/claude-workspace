@@ -51,7 +51,8 @@ bottom is chronological.
 
 | Step | What | Status | Commit |
 |---|---|---|---|
-| B1+B2 | Scaffold, core types, data layer, architecture doc | todo | |
+| B0 | Repo, pinned toolchain install, architecture doc, 5 decision records, CLAUDE.md, tooling configs | done | `d3d23ec`, `4b6a63c` (nextjs-workspace) |
+| B1+B2 | Scaffold of every package, core domain, data layer, start command, auth, shell, skills, CI | in progress (WF-B1) | |
 | B3 | Runner core | todo | |
 | B4 | Import, inspector, git, checks | todo | |
 | B5 | Audit flow (real SDK) | todo | |
@@ -65,6 +66,7 @@ bottom is chronological.
 | # | Name | Script | Run id | Result |
 |---|---|---|---|---|
 | WF-A1 | `hub-app-wave-1`: 4 slices (A1+A2, A3 backend, A4 backend, A5), each implement → review-and-fix in its own worktree | `~/.claude/projects/C--dev-claude-workspace/5108b4b5-cc8f-4f47-adae-6ce3174930d6/workflows/scripts/hub-app-wave-1-wf_05cd4a1a-2f8.js` | `wf_05cd4a1a-2f8` | running |
+| WF-B1 | `nws-foundation`: core+db ‖ apps skeleton (same checkout, disjoint folders, no agent commits), then integrate + review | `.../workflows/scripts/nws-foundation-wf_7d149b2a-dab.js` | `wf_7d149b2a-dab` | running |
 
 Resume a workflow in the same session with `Workflow({scriptPath, resumeFromRunId})`. In a new
 session the run cache is gone: check which `pm/*` branches exist and have commits, and rerun only
@@ -85,3 +87,11 @@ the missing slices (the briefs are in the script file).
   into `project-model` by hand afterwards.
 - 2026-10-23: Decision: prepare Part B (new repo, architecture doc, dependency install) in
   parallel with WF-A1 to save time; the two share no files.
+- 2026-10-23: B0 done in `projects/nextjs-workspace` (local git repo, branch `main`): pinned
+  stack installed (619 packages), `docs/architecture.md` (the contract for all Part B agents),
+  `docs/decisions/0001..0005`, CLAUDE.md, README, tooling (tsconfig base, Vitest projects,
+  ESLint with import-direction rules, Prettier). Verified: better-sqlite3 13 on Node 24 (SQLite
+  3.53.4, WAL), the SDK's bundled Claude Code 2.1.309 reports the claude.ai login, ESLint 10 runs
+  eslint-config-next's rules. Decisions: ESLint 10 kept (9 is EOL; plugin peer ranges cosmetic),
+  `@eslint/js` + `globals` added, new package `packages/repo` (read-only repo access).
+- 2026-10-23: WF-B1 launched (run `wf_7d149b2a-dab`), parallel to WF-A1.

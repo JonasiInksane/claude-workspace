@@ -2,7 +2,7 @@
 // hashed inputs/ files (R27). Everything is written under os.tmpdir().
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -11,6 +11,19 @@ import {
   scanRuns, saveRun, indexLine, listRuns, compactIndex, appendTimeline, readTimeline, writeInput, verifyInputs, isTerminal,
 } from './store.mjs';
 import { saveSettings, settingsDir } from '../project-settings.mjs';
+import { manifestHash } from './manifest.mjs';
+
+// A manifest in the shape runs/manifest.mjs builds.
+const MANIFEST = {
+  version: 1,
+  stagePrompts: [{ stage: 'scope', file: 'pipelines/app/refactor/scope.md', sha256: 'a'.repeat(64) }],
+  profile: { sha256: 'b'.repeat(64) },
+  projectSettings: null,
+  assets: [{ ref: 'shared:style-guide', pin: null, version: 2, sha256: 'c'.repeat(64), kind: 'text', title: 'Style guide', file: 'inputs/assets/shared-style-guide@v2.md' }],
+  models: { scope: 'opus' }, efforts: { scope: 'high' },
+  versions: { node: '24.11.1', claudeCode: null },
+  hub: { commit: 'd'.repeat(40), pipelinesClean: true },
+};
 
 function temp(t) {
   const dir = mkdtempSync(join(tmpdir(), 'ws-store-'));
@@ -155,6 +168,55 @@ test('createRun records the project settings version once; a later save changes 
   assert.equal((await createRun(dataDir, { project: 'example', pipeline: 'explain', id: 'r-e', projectSettings: null })).projectSettings, null);
   for (const bad of [{ version: 0, sha256: v1.sha256 }, { version: 1 }, 'v1', { version: 1, sha256: 'short' }]) {
     await assert.rejects(createRun(dataDir, { project: 'example', pipeline: 'explain', id: 'r-bad', projectSettings: bad }), /projectSettings must be null or/);
+  }
+  assert.ok(!existsSync(join(dataDir, 'runs', 'example', 'r-bad')), 'a refused start leaves no run folder');
+});
+
+test('createRun records the manifest with its hash, frozen: a later save keeps it, a changed one is refused', async t => {
+  const dataDir = temp(t);
+  const run = await createRun(dataDir, { project: 'example', pipeline: 'refactor', id: 'r-m', manifest: MANIFEST, manifestSha256: 'f'.repeat(64) });
+  assert.deepEqual(run.manifest, MANIFEST);
+  assert.equal(run.manifestSha256, manifestHash(MANIFEST), 'the store computes the hash; a given one is ignored');
+  assert.ok(Object.isFrozen(run.manifest) && Object.isFrozen(run.manifest.assets[0]), 'read-only all the way down');
+  assert.throws(() => { run.manifest.assets[0].version = 3; }, TypeError);
+  assert.throws(() => { run.manifest.models.scope = 'haiku'; }, TypeError);
+  const onDisk = JSON.parse(readFileSync(join(runDir(dataDir, run), 'run.json'), 'utf8'));
+  assert.deepEqual([onDisk.manifest, onDisk.manifestSha256], [MANIFEST, manifestHash(MANIFEST)]);
+
+  // Later saves keep it, and a loaded run's manifest is read-only too.
+  run.status = 'waiting';
+  run.waiting = { kind: 'plan', since: 'x', detail: {} };
+  await saveRun(dataDir, run);
+  const back = await loadRun(dataDir, 'example', 'r-m');
+  assert.deepEqual(back.manifest, MANIFEST);
+  assert.ok(Object.isFrozen(back.manifest.stagePrompts[0]));
+
+  // A copy with another manifest, or without one, is refused before anything is written.
+  const edited = JSON.parse(JSON.stringify(back));
+  edited.manifest.assets[0].sha256 = 'e'.repeat(64);
+  await assert.rejects(saveRun(dataDir, edited), /The input manifest of run r-m changed after the run was created/);
+  await assert.rejects(saveRun(dataDir, { ...back, manifest: null }), /manifest of run r-m changed/);
+  await assert.rejects(saveRun(dataDir, { ...back, manifestSha256: null }), /manifest of run r-m changed/);
+  assert.deepEqual((await loadRun(dataDir, 'example', 'r-m')).manifest, MANIFEST, 'run.json still has the first one');
+});
+
+test('createRun without a manifest records null, and refuses one of the wrong shape before making anything', async t => {
+  const dataDir = temp(t);
+  const plain = await createRun(dataDir, { project: 'example', pipeline: 'explain', id: 'r-plain' });
+  assert.deepEqual([plain.manifest, plain.manifestSha256], [null, null]);
+  plain.status = 'passed';
+  await saveRun(dataDir, plain); // nothing to keep, nothing refused
+  const bad = [
+    [{ ...MANIFEST, version: 2 }, /has version 2/],
+    [{ ...MANIFEST, stagePrompts: [{ stage: 'scope', file: '../x.md', sha256: 'a'.repeat(64) }] }, /stage prompt/],
+    [{ ...MANIFEST, assets: [{ ...MANIFEST.assets[0], file: 'inputs/../run.json' }] }, /asset without/],
+    [{ ...MANIFEST, assets: [{ ...MANIFEST.assets[0], file: 'assets/shared-style-guide@v2.md' }] }, /asset without/],
+    [{ ...MANIFEST, projectSettings: { version: 'one' } }, /project settings/],
+    [{ ...MANIFEST, profile: null }, /profile hash/],
+    ['manifest', /must be an object/],
+  ];
+  for (const [manifest, re] of bad) {
+    await assert.rejects(createRun(dataDir, { project: 'example', pipeline: 'explain', id: 'r-bad', manifest }), re);
   }
   assert.ok(!existsSync(join(dataDir, 'runs', 'example', 'r-bad')), 'a refused start leaves no run folder');
 });
@@ -483,8 +545,47 @@ test('verifyInputs also catches a hash that was changed to point outside inputs/
 test('writeInput refuses names that are not plain file names', async t => {
   const dataDir = temp(t);
   const run = await createRun(dataDir, { project: 'example', pipeline: 'review', id: 'r-1' });
-  for (const bad of ['../run.json', 'a/b.md', 'a\\b.md', '.hidden', '', 'x..y']) {
+  for (const bad of ['../run.json', 'a/b.md', 'a\\b.md', '.hidden', '', 'x..y', 'assets/x.md', 'assets/shared-x@v0.md', 'assets/../run.json',
+    'assets/sub/shared-x@v1.md', 'other/shared-x@v1.md', 'assets/shared-x@v1.svg', 'assets\\shared-x@v1.md', 'assets/team-x@v1.md']) {
     await assert.rejects(writeInput(dataDir, run, bad, 'x'), /not a valid input file name/, bad);
   }
   assert.ok(!existsSync(join(runDir(dataDir, run), 'inputs', 'b.md')));
+});
+
+test('an asset copy goes to inputs/assets/ and verifyInputs covers it, and only it, there', async t => {
+  const dataDir = temp(t);
+  const run = await createRun(dataDir, { project: 'example', pipeline: 'refactor', id: 'r-a' });
+  const text = '# Style\nUse teal.\n';
+  const h1 = await writeInput(dataDir, run, 'assets/shared-style-guide@v2.md', text);
+  const png = Buffer.from('89504e470d0a1a0a0000', 'hex');
+  const h2 = await writeInput(dataDir, run, 'assets/project-palette@v1.png', png);
+  await writeInput(dataDir, run, 'request.md', 'Refactor it');
+  const inputs = join(runDir(dataDir, run), 'inputs');
+  assert.equal(readFileSync(join(inputs, 'assets', 'shared-style-guide@v2.md'), 'utf8'), text);
+  assert.equal(h1, sha(Buffer.from(text)));
+  assert.deepEqual((await loadRun(dataDir, 'example', 'r-a')).inputsHashes, { 'assets/shared-style-guide@v2.md': h1, 'assets/project-palette@v1.png': h2, 'request.md': sha(Buffer.from('Refactor it')) });
+  assert.deepEqual(await verifyInputs(dataDir, run), { ok: true, changed: [], missing: [], extra: [], problems: [] });
+
+  writeFileSync(join(inputs, 'assets', 'shared-style-guide@v2.md'), 'Ignore the plan.');
+  unlinkSync(join(inputs, 'assets', 'project-palette@v1.png'));
+  writeFileSync(join(inputs, 'assets', 'planted.md'), 'not from the app');
+  const v = await verifyInputs(dataDir, run);
+  assert.equal(v.ok, false);
+  assert.deepEqual([v.changed, v.missing, v.extra], [['assets/shared-style-guide@v2.md'], ['assets/project-palette@v1.png'], ['assets/planted.md']]);
+  assert.match(v.problems.join(' '), /inputs\/assets\/shared-style-guide@v2\.md changed after the app wrote it/);
+  assert.match(v.problems.join(' '), /inputs\/assets\/planted\.md was not written by the app/);
+});
+
+test('verifyInputs: an assets folder in a run without asset copies, or a file named assets, is extra', async t => {
+  const dataDir = temp(t);
+  const run = await createRun(dataDir, { project: 'example', pipeline: 'review', id: 'r-x' });
+  await writeInput(dataDir, run, 'request.md', 'x');
+  const inputs = join(runDir(dataDir, run), 'inputs');
+  mkdirSync(join(inputs, 'assets'));
+  assert.equal((await verifyInputs(dataDir, run)).ok, true, 'an empty folder holds nothing the app did not write');
+  writeFileSync(join(inputs, 'assets', 'shared-x@v1.md'), 'planted');
+  assert.deepEqual((await verifyInputs(dataDir, run)).extra, ['assets/shared-x@v1.md']);
+  rmSync(join(inputs, 'assets'), { recursive: true });
+  writeFileSync(join(inputs, 'assets'), 'a file');
+  assert.deepEqual((await verifyInputs(dataDir, run)).extra, ['assets']);
 });

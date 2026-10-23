@@ -5,13 +5,21 @@
 // real process is started or stopped.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { ADOPT_STATUSES, DEFAULT_LIMITS, createManager, createSlot, defaultTreeMode } from './manager.mjs';
 import * as store from './store.mjs';
 import * as locks from './locks.mjs';
+import * as realCatalog from './catalog.mjs';
+import { manifestHash, profileHash, templateHash } from './manifest.mjs';
+import { loadPrompt } from './prompts.mjs';
 import { matchRecord } from '../core/proc.mjs';
+import { addVersion, createAsset, setArchived } from '../asset-library.mjs';
+import { saveSettings, settingsDir } from '../project-settings.mjs';
+
+const HUB = fileURLToPath(new URL('../../../', import.meta.url));
 
 const HOLDER = { pid: 4242, image: 'node.exe', startedAt: 1_000_000 };
 const DEAD_APP = { pid: 999, image: 'node.exe', startedAt: 900_000 };
@@ -342,11 +350,15 @@ test('start refuses bad requests with 400 and creates nothing', async t => {
   assert.deepEqual(await store.listRuns(dataDir), []);
 });
 
-test('a project without a profile is refused with the cockpit hint', async t => {
+test('a project without a profile, or with a broken one, is refused with a pointer to its Settings tab', async t => {
   const { mgr } = setup(t, { profile: null });
   const [code, msg] = await status(mgr.start({ project: 'example', pipeline: 'explain', values: { what: 'x' } }));
   assert.equal(code, 400);
-  assert.match(msg, /example has no profile yet\. Create one from the example in the project cockpit/);
+  assert.match(msg, /example has no profile yet\. Create one from the example on the project's Settings tab\./);
+  assert.doesNotMatch(msg, /cockpit/, 'no screen of that name any more');
+  const broken = setup(t, { deps: { profileFor: async () => ({ exists: true, valid: false, profile: null, errors: ['commands.test is missing', 'x'], warnings: [] }) } });
+  const [, two] = await status(broken.mgr.start({ project: 'example', pipeline: 'explain', values: { what: 'x' } }));
+  assert.equal(two, "The profile for example has 2 problems; fix them first (the project's Settings tab lists them).");
 });
 
 test('preview shows what a start would create, with value problems in `error` rather than thrown', async t => {
@@ -949,4 +961,119 @@ test('shutdown reports a click that did not finish in time and leaves its run al
 test('shutdown with nothing running is quick and reports nothing', async t => {
   const { mgr } = setup(t);
   assert.deepEqual(await mgr.shutdown({ settleMs: 10 }), { killed: [], failed: [], interrupted: [], errors: [] });
+});
+
+// ---------- the input manifest and attached assets (plan row A6)
+
+const PNG = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000000', 'hex');
+const HUB_STATE = { commit: 'a'.repeat(40), pipelinesClean: true };
+
+// A workspace with pipelines/app and projects/example, a shared text asset with two versions and
+// a project image, and a manager on the real catalog (Explain: one Claude stage, answer).
+async function assetWorld(t, { settings = null } = {}) {
+  const root = temp(t);
+  cpSync(join(HUB, 'pipelines', 'app'), join(root, 'pipelines', 'app'), { recursive: true });
+  mkdirSync(join(root, 'projects', 'example'), { recursive: true });
+  const style = await createAsset(root, { scope: 'shared', title: 'Style guide', originalName: 'style.md' }, Buffer.from('# Style\nUse teal.\n'));
+  await addVersion(root, style.ref, Buffer.from('# Style v2\nUse navy.\n'), { originalName: 'style.md', expectVersions: 1 });
+  await createAsset(root, { scope: 'project', project: 'example', title: 'Palette', originalName: 'palette.png' }, PNG);
+  const dataDir = temp(t);
+  const saved = await saveSettings(dataDir, 'example', settings || {
+    rules: 'Money is in cents.', assets: [{ ref: 'shared:style-guide', pin: 1 }, { ref: 'example:palette', pin: null }],
+  }, { basedOn: 0 });
+  const log = [];
+  const mgr = createManager({
+    root, dataDir, clock: { now: () => Date.parse('2026-10-22T10:00:00.000Z') },
+    deps: {
+      store, locks, proc: fakeProc(log), catalog: realCatalog, actions: fakeActions, holder: HOLDER,
+      profileFor: async () => ({ exists: true, profile: PROFILE, errors: [], warnings: [] }), getSettings: async () => ({ isolation: {} }),
+      riskTags: () => ({ tags: [], hits: [] }), trustFor: async () => true, hubState: async () => HUB_STATE,
+      createExecutor: engine => makeExecutor({ ...engine, testLog: log }, {}),
+    },
+  });
+  t.after(async () => { await mgr.shutdown({ settleMs: 50 }).catch(() => {}); await mgr.settled().catch(() => {}); });
+  return { root, dataDir, mgr, saved };
+}
+const EXPLAIN = { project: 'example', pipeline: 'explain', values: { what: 'How is tax added?' } };
+
+test('start writes the input manifest, frozen, and copies the attached assets into inputs/assets', async t => {
+  const { root, dataDir, mgr, saved } = await assetWorld(t);
+  const { runId } = await mgr.start(EXPLAIN);
+  await mgr.settled();
+  const run = await store.findRun(dataDir, runId);
+  assert.equal(run.status, 'passed', 'the executor saved the run with its manifest unchanged');
+  const m = run.manifest;
+  assert.equal(run.manifestSha256, manifestHash(m));
+  assert.deepEqual(m.stagePrompts, [{ stage: 'answer', file: 'pipelines/app/explain/answer.md', sha256: templateHash(await loadPrompt(root, 'explain', 'answer')) }]);
+  assert.deepEqual(m.profile, { sha256: profileHash(PROFILE) });
+  assert.deepEqual([m.projectSettings, run.projectSettings], [{ version: 1, sha256: saved.sha256 }, { version: 1, sha256: saved.sha256 }], 'the same version as the run');
+  assert.deepEqual(m.assets.map(a => [a.ref, a.pin, a.version, a.kind, a.title, a.file]), [
+    ['shared:style-guide', 1, 1, 'text', 'Style guide', 'inputs/assets/shared-style-guide@v1.md'],
+    ['example:palette', null, 1, 'image', 'Palette', 'inputs/assets/project-palette@v1.png'],
+  ]);
+  assert.deepEqual([m.models, m.efforts], [{ answer: 'sonnet' }, { answer: 'high' }]);
+  assert.deepEqual(m.versions, { node: process.versions.node, claudeCode: null });
+  assert.deepEqual(m.hub, HUB_STATE);
+  // The copies, hashed through the store, the pinned version and not the latest.
+  const inputs = join(store.runDir(dataDir, run), 'inputs', 'assets');
+  assert.equal(readFileSync(join(inputs, 'shared-style-guide@v1.md'), 'utf8'), '# Style\nUse teal.\n');
+  assert.deepEqual(readFileSync(join(inputs, 'project-palette@v1.png')), PNG);
+  assert.equal(run.inputsHashes['assets/shared-style-guide@v1.md'], `sha256:${m.assets[0].sha256}`);
+  assert.equal((await store.verifyInputs(dataDir, run)).ok, true);
+  const rows = (await timeline(dataDir, run)).map(r => r.msg);
+  assert.ok(rows.includes('Copied 2 attached assets into inputs/assets: shared:style-guide v1, example:palette v1.'), rows.join('\n'));
+});
+
+test('an archived asset is still used and noted; a run without attached assets gets an empty list', async t => {
+  const { root, dataDir, mgr } = await assetWorld(t);
+  await setArchived(root, 'example:palette', true);
+  const preview = await mgr.preview(EXPLAIN);
+  assert.deepEqual(preview.refusals, []);
+  assert.match(preview.warnings.join(' '), /example:palette is archived; it is used anyway/);
+  const { runId } = await mgr.start(EXPLAIN);
+  await mgr.settled();
+  const run = await store.findRun(dataDir, runId);
+  assert.deepEqual(run.manifest.assets.map(a => [a.ref, !!a.archived]), [['shared:style-guide', false], ['example:palette', true]]);
+  assert.ok((await timeline(dataDir, run)).some(r => r.kind === 'info' && /example:palette is archived; it is used anyway, because archiving only hides/.test(r.msg)));
+
+  const none = await assetWorld(t, { settings: { rules: 'Just rules.' } });
+  const { runId: plainId } = await none.mgr.start(EXPLAIN);
+  await none.mgr.settled();
+  const plain = await store.findRun(none.dataDir, plainId);
+  assert.deepEqual(plain.manifest.assets, []);
+  assert.ok(!existsSync(join(store.runDir(none.dataDir, plain), 'inputs', 'assets')), 'no assets folder without assets');
+});
+
+test('a missing asset or pinned version, or settings that can not be read, refuse the start and create nothing', async t => {
+  const cases = [
+    [{ assets: [{ ref: 'shared:style-guide', pin: 7 }] }, /The assets attached to example can't be used: shared:style-guide has no version 7\. Fix them in the project's settings\./],
+    [{ assets: [{ ref: 'shared:gone', pin: null }] }, /shared:gone is not in the asset library/],
+  ];
+  for (const [settings, re] of cases) {
+    const { dataDir, mgr } = await assetWorld(t, { settings });
+    const p = await mgr.preview(EXPLAIN);
+    assert.match(p.refusals.join(' '), re, 'the launcher shows it before a start');
+    const [code, msg] = await status(mgr.start(EXPLAIN));
+    assert.equal(code, 400);
+    assert.match(msg, re);
+    assert.deepEqual(await store.listRuns(dataDir), []);
+  }
+  const { dataDir, mgr } = await assetWorld(t);
+  writeFileSync(join(settingsDir(dataDir, 'example'), 'v1.json'), '{ damaged');
+  const [code, msg] = await status(mgr.start(EXPLAIN));
+  assert.equal(code, 400);
+  assert.match(msg, /The project settings of example can't be read, so no run can start: The settings v1 of example can't be used/);
+  assert.deepEqual(await store.listRuns(dataDir), []);
+});
+
+test('a version file edited by hand after it was saved refuses the start with 409', async t => {
+  const { root, dataDir, mgr } = await assetWorld(t);
+  writeFileSync(join(root, 'inbox', 'attachments', '_assets', 'style-guide', 'v1.md'), '# Style\nUse pink.\n');
+  const [code, msg] = await status(mgr.start(EXPLAIN));
+  assert.equal(code, 409);
+  assert.match(msg, /the file of shared:style-guide v1 no longer matches the SHA-256 the library recorded for it \(it was changed after it was saved\)/);
+  assert.deepEqual(await store.listRuns(dataDir), []);
+  rmSync(join(root, 'inbox', 'attachments', 'example', '_assets', 'palette', 'v1.png'));
+  const [, gone] = await status(mgr.start(EXPLAIN));
+  assert.match(gone, /the file of example:palette v1 is missing/);
 });

@@ -13,16 +13,24 @@
 //   latest line per id (temporary file, then rename).
 // - Timeline rows get `seq`, the 1-based line number, so a poller asks "rows after seq N". A torn
 //   last line (a crash mid-write) keeps its line number, and the next append starts a fresh line.
-// - inputs/ files are hashed when written; verifyInputs re-hashes them before a gate (R27).
+// - inputs/ files are hashed when written; verifyInputs re-hashes them before a gate (R27). Plain
+//   names sit in inputs/ itself; the copies of the project's attached assets in inputs/assets/
+//   (assets/<scope>-<id>@v<n>.<ext>, attached-assets.mjs), the only subfolder.
 // - A new run records the project's current settings version, `projectSettings: { version,
 //   sha256 }` or null (project-settings.mjs), read once here: its Claude stages get the rules of
 //   that version, so a save during the run changes nothing in it.
+// - A run started by the manager gets its input manifest (runs/manifest.mjs) at creation, with
+//   manifestSha256, the hash of its canonical JSON. It is frozen: the object is read-only in
+//   memory, and a save whose manifest no longer matches that hash is refused. Runs from before
+//   manifests, and runs created without one, have manifest null.
 // Ids and names are checked by regex before any path is joined, so ".." can never reach out.
 import { appendFile, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { appendJsonl, PROJECT_RE, readJson, readJsonl, renameRetry, sha256Text, writeJsonAtomic } from '../core/datadir.mjs';
 import { currentSettings, isSettingsRef, settingsRef } from '../project-settings.mjs';
+import { ASSET_INPUT_DIR, ASSET_INPUT_RE } from '../attached-assets.mjs';
+import { manifestHash, manifestProblem } from './manifest.mjs';
 
 export const RUN_ID_RE = /^[0-9a-z-]{1,64}$/;
 export const RUN_STATUSES = ['running', 'waiting', 'in-terminal', 'passed', 'failed', 'gates-red', 'capped', 'parked',
@@ -190,15 +198,45 @@ function newRunObject(init, id, at) {
     level: null, levelReason: [], reviewEffort: null, createdAt: at, updatedAt: at, endedAt: null,
     status: 'running', statusReason: '', current: firstStage(stages), waiting: null,
     isolation: null, base: null, branch: null, commit: null,
-    versions: { node: process.versions.node, claudeCode: null }, projectSettings: null,
+    versions: { node: process.versions.node, claudeCode: null }, projectSettings: null, manifest: null, manifestSha256: null,
     lockHeld: false, plan: null, allowances: [], pins: [], redTests: [], inputsHashes: {},
     fixRounds: { auto: 0, user: 0, maxAuto: 2, maxUser: 2 }, gatedTree: null, stages, takeover: null, error: null,
   };
   for (const [k, v] of Object.entries(init)) {
-    if (!['id', 'version', 'createdAt', 'updatedAt', 'endedAt', 'stages'].includes(k) && v !== undefined) run[k] = v;
+    if (!['id', 'version', 'createdAt', 'updatedAt', 'endedAt', 'stages', 'manifestSha256'].includes(k) && v !== undefined) run[k] = v;
   }
   run.title = cap(String(run.title || ''), 200);
   return run;
+}
+
+// Makes a value read-only all the way down (the manifest: nothing may change it after creation).
+function deepFreeze(value) {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const v of Object.values(value)) deepFreeze(v);
+  }
+  return value;
+}
+
+// The manifest a new run gets: null, or a checked manifest (runs/manifest.mjs), frozen, with its
+// hash. Throws on a manifest of the wrong shape.
+function frozenManifest(manifest) {
+  if (manifest === undefined || manifest === null) return { manifest: null, manifestSha256: null };
+  const problem = manifestProblem(manifest);
+  if (problem) throw new Error(`The run can't be created: ${problem}.`);
+  const copy = JSON.parse(JSON.stringify(manifest));
+  return { manifest: deepFreeze(copy), manifestSha256: manifestHash(copy) };
+}
+
+// Throws when a run's manifest no longer matches the hash it was created with (or one of the two
+// is gone): a manifest never changes.
+function checkManifestKept(run) {
+  const has = run.manifest !== undefined && run.manifest !== null;
+  const hash = run.manifestSha256 ?? null;
+  if (!has && hash === null) return;
+  if (!has || hash === null || manifestHash(run.manifest) !== hash) {
+    throw new Error(`The input manifest of run ${run.id} changed after the run was created; a run's manifest never changes.`);
+  }
 }
 
 function checkStatuses(run) {
@@ -236,11 +274,13 @@ async function runSettings(dataDir, init) {
 
 // Creates the run folder (with inputs/, stages/, gates/, final/, tmp/) and run.json, and indexes
 // the run. `init` holds any run.json fields to set (project and pipeline are required; `id` is
-// optional and must be free; projectSettings defaults to the project's current settings version).
-// Returns the run.
+// optional and must be free; projectSettings defaults to the project's current settings version;
+// `manifest`, optional, is the run's input manifest, which gets its manifestSha256 here and is
+// frozen from then on). Returns the run.
 export async function createRun(dataDir, init = {}, { now = Date.now } = {}) {
   checkProject(init.project);
   checkName(init.pipeline, 'pipeline id');
+  const { manifest, manifestSha256 } = frozenManifest(init.manifest);
   const projectSettings = await runSettings(dataDir, init);
   await mkdir(projectRunsDir(dataDir, init.project), { recursive: true });
   // One creation at a time per data folder, so two projects can't pick the same free id at once.
@@ -248,14 +288,15 @@ export async function createRun(dataDir, init = {}, { now = Date.now } = {}) {
   const dir = runDir(dataDir, init.project, id);
   for (const f of RUN_FOLDERS) await mkdir(join(dir, f), { recursive: true });
   const { slugText, ...fields } = init;
-  const run = newRunObject({ ...fields, projectSettings }, id, iso(now()));
+  const run = newRunObject({ ...fields, projectSettings, manifest }, id, iso(now()));
+  run.manifestSha256 = manifestSha256;
   checkStatuses(run);
   await saveRun(dataDir, run, { now });
   runProjects.set(id, run.project);
   return run;
 }
 
-// Reads run.json of one run; null when it doesn't exist.
+// Reads run.json of one run; null when it doesn't exist. Its manifest comes back read-only.
 export async function loadRun(dataDir, project, id) {
   const file = join(runDir(dataDir, project, id), 'run.json');
   const run = await readJson(file, null);
@@ -263,6 +304,7 @@ export async function loadRun(dataDir, project, id) {
   if (!run || typeof run !== 'object' || run.id !== id || run.project !== project) {
     throw new Error(`${file} does not describe run ${id} of ${project}.`);
   }
+  if (run.manifest && typeof run.manifest === 'object') deepFreeze(run.manifest);
   return run;
 }
 
@@ -380,11 +422,12 @@ function indexIfChanged(dataDir, run, at) {
 
 // Writes run.json (atomically, one write at a time per run) and appends an index line when the
 // status, stage or waiting kind changed. Sets updatedAt, and endedAt while the status is
-// terminal. Returns the run.
+// terminal. Refuses a run whose manifest no longer matches its manifestSha256. Returns the run.
 export async function saveRun(dataDir, run, { now = Date.now } = {}) {
   checkProject(run?.project);
   checkRunId(run.id);
   checkStatuses(run);
+  checkManifestKept(run);
   const at = iso(now());
   run.version = run.version || 1;
   run.updatedAt = at;
@@ -485,18 +528,22 @@ export async function readTimeline(dataDir, run, since = 0, limit = 500) {
   return { rows: out, next: more ? (out[out.length - 1].seq ?? next) : next, more };
 }
 
+// A plain name in inputs/, or assets/<scope>-<id>@v<n>.<ext> for an attached asset's copy.
+const isInputName = s => (INPUT_NAME_RE.test(s) && !s.includes('..')) || ASSET_INPUT_RE.test(s);
+
 function checkInputName(name) {
   const s = String(name ?? '');
-  if (!INPUT_NAME_RE.test(s) || s.includes('..')) throw new Error(`"${name}" is not a valid input file name.`);
+  if (!isInputName(s)) throw new Error(`"${name}" is not a valid input file name.`);
   return s;
 }
 
 const hashOf = buf => `sha256:${sha256Text(buf)}`;
 
 // Writes inputs/<name>, records its hash in run.inputsHashes and saves the run (R27: the hash
-// lives in run.json, which no stage can reach). Returns the hash.
+// lives in run.json, which no stage can reach). `name` is a plain file name, or an asset copy's
+// assets/<scope>-<id>@v<n>.<ext>. Returns the hash.
 export async function writeInput(dataDir, run, name, data, opts = {}) {
-  const file = join(runDir(dataDir, run), 'inputs', checkInputName(name));
+  const file = join(runDir(dataDir, run), 'inputs', ...checkInputName(name).split('/'));
   const buf = Buffer.isBuffer(data) ? data : data instanceof Uint8Array ? Buffer.from(data) : Buffer.from(String(data ?? ''), 'utf8');
   await mkdir(dirname(file), { recursive: true });
   await writeFile(file, buf);
@@ -504,6 +551,29 @@ export async function writeInput(dataDir, run, name, data, opts = {}) {
   run.inputsHashes = { ...(run.inputsHashes || {}), [name]: hash };
   await saveRun(dataDir, run, opts);
   return hash;
+}
+
+async function listEntries(dir) {
+  try { return await readdir(dir, { withFileTypes: true }); } catch (err) {
+    if (err.code === 'ENOENT') return [];
+    throw err;
+  }
+}
+
+// What is in inputs/ that run.inputsHashes doesn't list: names in inputs/ itself, and in
+// inputs/assets/ (as "assets/<name>") when that is a real folder. Anything else is extra,
+// including a link where the assets folder should be.
+async function extraInputs(dir, recorded) {
+  const extra = [];
+  for (const e of await listEntries(dir)) {
+    if (e.name === ASSET_INPUT_DIR && e.isDirectory()) {
+      for (const a of await listEntries(join(dir, ASSET_INPUT_DIR))) {
+        const rel = `${ASSET_INPUT_DIR}/${a.name}`;
+        if (!Object.hasOwn(recorded, rel)) extra.push(rel);
+      }
+    } else if (!Object.hasOwn(recorded, e.name)) extra.push(e.name);
+  }
+  return extra;
 }
 
 // Re-hashes inputs/ against run.inputsHashes. Returns { ok, changed, missing, extra, problems }:
@@ -514,17 +584,15 @@ export async function verifyInputs(dataDir, run) {
   const changed = [];
   const missing = [];
   for (const [name, hash] of Object.entries(recorded)) {
-    if (!INPUT_NAME_RE.test(name) || name.includes('..')) { changed.push(name); continue; }
+    if (!isInputName(name)) { changed.push(name); continue; }
     let buf;
-    try { buf = await readFile(join(dir, name)); } catch (err) {
+    try { buf = await readFile(join(dir, ...name.split('/'))); } catch (err) {
       if (err.code === 'ENOENT') { missing.push(name); continue; }
       throw err;
     }
     if (hashOf(buf) !== hash) changed.push(name);
   }
-  let entries = [];
-  try { entries = await readdir(dir, { withFileTypes: true }); } catch (err) { if (err.code !== 'ENOENT') throw err; }
-  const extra = entries.filter(e => !Object.hasOwn(recorded, e.name)).map(e => e.name);
+  const extra = await extraInputs(dir, recorded);
   const problems = [
     ...changed.map(n => `inputs/${n} changed after the app wrote it.`),
     ...missing.map(n => `inputs/${n} is missing.`),

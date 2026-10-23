@@ -134,7 +134,9 @@ const root = resolve(opts.root || join(dirname(fileURLToPath(import.meta.url)), 
 const stateDir = join(tmpdir(), 'claude-workspace');
 const rootTag = createHash('sha1').update(root.toLowerCase()).digest('hex').slice(0, 8);
 const stateFile = join(stateDir, `app-${rootTag}.json`);
-const actions = realActions({ root });
+// The same data folder as the app's routes: sessions read the project settings saved there and
+// record themselves in its sessions.jsonl.
+const actions = realActions({ root, ...(opts.dataDir ? { dataDir: resolve(opts.dataDir) } : {}) });
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
 const linkFor = (port, token) => `http://127.0.0.1:${port}/?t=${token}`;

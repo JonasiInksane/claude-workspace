@@ -18,7 +18,10 @@
 //   app's flows use it). Its readDirs are added to the folders the session may read, its launch
 //   settings become --permission-mode / --model / --effort, and its pre-approved tools go into
 //   the settings' permissions.allow. A settings file named in its launch is merged into the
-//   agent's settings file (its values win, its lists add up).
+//   agent's settings file (its values win, its lists add up). Its appendSystemPrompt (the
+//   project's rules from the workspace app) becomes --append-system-prompt <rules>, an argument
+//   of this tool's own spawn, never of a PowerShell command. A file without a prompt (only launch
+//   settings or rules) starts the session without a first prompt.
 // - --session-id <uuid> gives the new session that id (the workspace app records it).
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -112,6 +115,7 @@ const rootTag = createHash('sha1').update(root.toLowerCase()).digest('hex').slic
 let handed = null;
 if (opts.promptFile) {
   try { handed = takePromptFile(opts.promptFile); } catch (e) { fail(e.message); }
+  if (handed.launch.continueLast) fail("an agent session starts new or resumes one by id; it can't continue the last session (-c)");
 }
 let settings = sessionSettings(root, project, opts.agent, agent.memory);
 // Extra readable folders, pre-approved tools and a launch settings file get their own settings
@@ -137,11 +141,13 @@ try { cwd = realProjectDir(root, project); } catch (e) { fail(e.message); }
 const args = ['--agent', opts.agent, '--settings', settingsFile];
 const sessionId = opts.sessionId || (handed && handed.launch.sessionId) || '';
 if (handed) {
+  // launchArgs leaves appendSystemPrompt out; it is added below, as an argument of this spawn.
   const { settingsFile: _merged, sessionId: _id, ...flags } = handed.launch;
   args.push(...launchArgs(flags));
 }
 if (sessionId && !(handed && handed.launch.resume)) args.push('--session-id', sessionId);
-if (handed) args.push(...promptArgs(handed.prompt));
+if (handed && handed.launch.appendSystemPrompt) args.push('--append-system-prompt', handed.launch.appendSystemPrompt);
+if (handed && handed.prompt) args.push(...promptArgs(handed.prompt));
 
 if (opts.print) {
   console.log(JSON.stringify({ cwd, command: claude.path, args, settingsFile }, null, 2));

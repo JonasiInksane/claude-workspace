@@ -168,6 +168,12 @@ Tests: `node tools/run-tests.mjs workspace-app`. Next to each module is its `*.t
 `test/e2e.test.mjs` drives Explain, Review and a Refactor to its commit through the real app
 and engine with the fake claude, on a synthetic repo.
 
+Screens: `node tools/workspace-app/test/shots.mjs --out <dir> --example --routes cockpit/example,runs --theme both`
+saves one PNG per route from headless Edge and lists every console error, CSP violation and
+exception the page logged (exit code 1 when there are any). `--example` runs the app on a
+temporary workspace with the synthetic project and the sample runs; without it the tool starts
+the app on this workspace with a temporary data folder. Dev only; needs Node 22+.
+
 ## Extending the app
 
 - **A route:** add `'GET /api/x'` or `'POST /api/x'` to the object a `routes/<area>.mjs` returns from

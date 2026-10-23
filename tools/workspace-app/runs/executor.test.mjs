@@ -1283,21 +1283,23 @@ test('project rules: every fresh Claude stage gets the version its run recorded,
 
 test('project rules: none without saved settings, none for a run from before them, none when the rules are empty', async t => {
   const h = await harness(t);
+  // The fence paragraph names the rules' source; the block itself is what must be missing.
+  const RULES_BLOCK = /source="workspace-rules@/;
   const plain = await h.drive(await h.newRun('explain', { what: 'x' }));
   assert.equal(plain.projectSettings, null);
-  assert.doesNotMatch(h.claudeCalls('answer')[0].prompt, /workspace-rules/);
+  assert.doesNotMatch(h.claudeCalls('answer')[0].prompt, RULES_BLOCK);
   // run.json written before project settings existed has no projectSettings at all.
   await saveSettings(h.data, PROJECT, { rules: 'New rules.' }, { basedOn: 0 });
   const old = await h.newRun('explain', { what: 'y' });
   delete old.projectSettings;
   await store.saveRun(h.data, old);
   assert.equal((await h.drive(old)).status, 'passed');
-  assert.doesNotMatch(h.claudeCalls('answer')[1].prompt, /workspace-rules/);
+  assert.doesNotMatch(h.claudeCalls('answer')[1].prompt, RULES_BLOCK);
   // Settings with defaults only: the run records them, the prompt has no empty block.
   await saveSettings(h.data, PROJECT, { rules: '', defaults: { model: 'opus' } }, { basedOn: 1 });
   const empty = await h.drive(await h.newRun('explain', { what: 'z' }));
   assert.equal(empty.projectSettings.version, 2);
-  assert.doesNotMatch(h.claudeCalls('answer')[2].prompt, /workspace-rules/);
+  assert.doesNotMatch(h.claudeCalls('answer')[2].prompt, RULES_BLOCK);
 });
 
 test('project rules: a stage stops before Claude starts when the recorded version is gone or no longer matches its hash', async t => {

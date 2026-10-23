@@ -9,7 +9,10 @@ import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { hashFor, livePoll, matchRoute, parseHash, routeOf, setLive, viewOf, defaultSettings as pageDefaults } from './ui/store.js';
+import {
+  canonicalProjectSub, hashFor, livePoll, matchRoute, parseHash, projectEntry, projectHash, projectRoute, projectSub, routeOf, setLive,
+  tabsOf, upgradeRoute, viewOf, defaultSettings as pageDefaults,
+} from './ui/store.js';
 import { fmtAgo, fmtClock, fmtDuration, statusBadge } from './ui/lib.js';
 import { routeIntent, routesForUi } from './runs/intent.mjs';
 import { defaultSettings as serverDefaults } from './core/settings.mjs';
@@ -58,8 +61,67 @@ test('hash routes: #<route> and #<route>/<sub>, encoded both ways', () => {
   assert.equal(hashFor('home'), '#home');
   assert.equal(hashFor('flows', 'a b/c'), '#flows/a%20b/c');
   assert.deepEqual(parseHash(hashFor('runs', 'x y#1')), { id: 'runs', sub: 'x y#1' });
-  assert.equal(hashFor('cockpit', 'example'), '#cockpit/example');
+  assert.equal(hashFor('project', 'example/findings'), '#project/example/findings');
   assert.equal(hashFor('run', '261022-104212-explain-x'), '#run/261022-104212-explain-x');
+});
+
+test('project routes: #project/<name>/<tab>[/<rest>] apart and together; a rest needs a tab', () => {
+  assert.deepEqual(projectRoute('example/findings/EX-12'), { name: 'example', tab: 'findings', rest: 'EX-12' });
+  assert.deepEqual(projectRoute('example/findings/a/b'), { name: 'example', tab: 'findings', rest: 'a/b' });
+  assert.deepEqual(projectRoute('example'), { name: 'example', tab: '', rest: '' });
+  assert.deepEqual(projectRoute(''), { name: '', tab: '', rest: '' });
+  assert.deepEqual(projectRoute(undefined), { name: '', tab: '', rest: '' });
+  assert.deepEqual(projectRoute('/checks/x'), { name: '', tab: '', rest: '' }, 'no name: nothing else counts');
+  assert.deepEqual(projectRoute('example//x'), { name: 'example', tab: '', rest: '' }, 'no tab: no rest');
+  assert.equal(projectSub('example', 'checks'), 'example/checks');
+  assert.equal(projectSub('example', 'findings', 'EX-1'), 'example/findings/EX-1');
+  assert.equal(projectSub('example', '', 'EX-1'), 'example', 'a rest without a tab is dropped');
+  assert.equal(projectSub('', 'checks'), '');
+  assert.equal(projectHash('we;ird', 'overview'), '#project/we%3Bird/overview');
+  assert.deepEqual(parseHash(projectHash('we;ird', 'overview')), { id: 'project', sub: 'we;ird/overview' });
+});
+
+test('old routes still work: #cockpit/<name> is the Overview tab, #health/<name> the Architecture tab', () => {
+  assert.deepEqual(parseHash('#cockpit/example'), { id: 'project', sub: 'example/overview' });
+  assert.deepEqual(parseHash('#health/example'), { id: 'project', sub: 'example/architecture' });
+  assert.deepEqual(parseHash('#cockpit'), { id: 'project', sub: '' }, 'no name: the current project, later');
+  assert.deepEqual(parseHash('#cockpit/example/extra'), { id: 'project', sub: 'example/overview' });
+  assert.equal(hashFor('cockpit', 'example'), '#project/example/overview');
+  assert.equal(hashFor('health', 'example'), '#project/example/architecture');
+  assert.deepEqual(upgradeRoute('runs', 'example'), { id: 'runs', sub: 'example' }, 'other routes stay as they are');
+  assert.deepEqual(upgradeRoute('constructor', 'x'), { id: 'constructor', sub: 'x' }, 'no prototype lookups');
+  assert.equal(viewOf('project'), 'project');
+});
+
+test('canonicalProjectSub: the state completes a project route (first tab, known tab, spelling, current project)', () => {
+  const projects = [
+    { name: 'example', type: { id: 'code' }, tabs: ['overview', 'tasks', 'findings', 'changes', 'checks', 'architecture', 'assets', 'settings'] },
+    { name: 'notes', type: { id: 'generic' }, tabs: ['overview', 'agents', 'assets', 'settings'] },
+    { name: 'Tattoo', type: { id: 'generic' } },
+  ];
+  assert.equal(canonicalProjectSub('example', projects), 'example/overview', 'no tab: the first tab of its type');
+  assert.equal(canonicalProjectSub('example/checks', projects), 'example/checks');
+  assert.equal(canonicalProjectSub('example/findings/EX-3', projects), 'example/findings/EX-3', 'the rest stays with a known tab');
+  assert.equal(canonicalProjectSub('notes/checks', projects), 'notes/overview', 'a tab the type has not: the first tab');
+  assert.equal(canonicalProjectSub('notes/bogus/x', projects), 'notes/overview', 'the rest goes with an unknown tab');
+  assert.equal(canonicalProjectSub('EXAMPLE/checks', projects), 'example/checks', 'names match without case');
+  assert.equal(canonicalProjectSub('tattoo', projects), 'Tattoo/overview', 'no tabs sent: Overview');
+  assert.equal(canonicalProjectSub('ghost/checks', projects), 'ghost/checks', 'a project the state does not list stays (the page asks the server)');
+  assert.equal(canonicalProjectSub('', projects, 'notes'), 'notes/overview', 'no name: the current project');
+  assert.equal(canonicalProjectSub('', projects, 'gone'), '', 'a current project that is gone gives nothing');
+  assert.equal(canonicalProjectSub('', projects, ''), '');
+  assert.equal(canonicalProjectSub('example', null, ''), 'example', 'before the state arrives the route stays');
+  assert.equal(canonicalProjectSub('', null, 'example'), 'example');
+  for (const s of ['example', 'notes/checks', 'EXAMPLE', '', 'ghost/x']) {
+    const once = canonicalProjectSub(s, projects, 'example');
+    assert.equal(canonicalProjectSub(once, projects, 'example'), once, `stable: ${s}`);
+  }
+  assert.equal(projectEntry('Example', projects).name, 'example');
+  assert.equal(projectEntry('', projects), null);
+  assert.equal(projectEntry('x', null), null);
+  assert.deepEqual(tabsOf(projects[1]), ['overview', 'agents', 'assets', 'settings']);
+  assert.deepEqual(tabsOf({ tabs: [] }), ['overview']);
+  assert.deepEqual(tabsOf(null), ['overview']);
 });
 
 test('route aliases: #library shows views/tools.js, the old #home shows Today', () => {
@@ -98,18 +160,22 @@ test('views: every ui/views/<id>.js is registered in main.js, says its id, and i
   assert.ok(existsSync(join(uiDir, 'app.css')) && index.indexOf('/app.css') < index.indexOf('/css/'), 'app.css comes first');
 });
 
-test('views: the shell registers the wave-3 screens; Today replaced the old dashboard (home)', () => {
+test('views: the shell registers the screens; Today replaced the old dashboard, the project page the cockpit and Health', () => {
   const main = read('main.js');
   const registry = main.match(/const VIEWS = \[([^\]]*)\]/)[1].split(',').map(s => s.trim());
-  for (const id of ['today', 'cockpit', 'health', 'launcher', 'run', 'review', 'runs', 'tools']) {
+  for (const id of ['today', 'project', 'launcher', 'run', 'review', 'runs', 'tools', 'projects', 'assets', 'flows', 'images']) {
     assert.ok(registry.includes(id), `${id} is in VIEWS`);
   }
-  assert.ok(!registry.includes('home'), 'home is no longer a view (#home shows Today)');
+  for (const id of ['home', 'cockpit', 'health']) assert.ok(!registry.includes(id), `${id} is no longer a view`);
   assert.equal(registry[0], 'today', 'Today comes first');
-  // The plain nav entries: no Dashboard (home) among them.
-  const plain = main.match(/for \(const v of \[([^\]]*)\]\) \{\r?\n {4}if \(v\.visible/)[1].split(',').map(s => s.trim());
-  assert.deepEqual(plain, ['projects', 'flows', 'tools', 'images', 'assets']);
+  // The nav's views (parts/nav.js orders them): no Dashboard, no Images, Library at the foot.
+  assert.match(main, /const NAV_VIEWS = \{ today, projects, assets, flows, runs, tools \};/);
+  assert.match(read('index.html'), /<nav id="nav" aria-label="Views"><\/nav>[\s\S]*<div class="side-actions">\s*(<!--[^>]*-->\s*)?<nav id="navFoot"[^>]*aria-label="[^"]+"><\/nav>/,
+    'the foot nav (Library) sits in the side actions, above the Hub session buttons');
   assert.doesNotMatch(code(read('views/today.js')), /from '\.\/home\.js'/, 'Today no longer renders the old dashboard');
+  for (const file of uiScripts()) {
+    assert.doesNotMatch(code(read(file)), /go\('(cockpit|health)'/, `${file}: links go to the project page, not the old routes`);
+  }
 });
 
 test('index.html: the shell dialogs, the live regions, and nothing the CSP would block', () => {

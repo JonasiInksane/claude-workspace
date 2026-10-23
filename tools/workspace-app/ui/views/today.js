@@ -7,7 +7,8 @@
 // (POST /api/today/handoff, written by code from run folders and git, no Claude).
 //
 // Today replaces the old dashboard (views/home.js): the inbox and the active reports are cards
-// here; hub sessions, tool status, projects, flows and images are in the sidebar.
+// here; hub sessions, tool status, projects, assets (with Inbox images) and flows are in the
+// sidebar. Its links to a project open that project's page at the tab that shows the thing.
 //
 // Rendering: the screen is built once, then patched card by card. render() runs on every store
 // change, and rebuilding everything would wipe the text typed into the intent box and move the
@@ -19,7 +20,7 @@
 // signal, and every 10 s while the screen is visible and something runs. "Waiting for you"
 // changes are announced (lib.js announce), except the plain waiting runs main.js already announces.
 import { act, api, announce, fmtAgo, fmtDay, h, icon, keepFocus, keyed, openPlace, plural } from '../lib.js';
-import { go, onSignal, openLauncher, parseHash, refresh, runningCount, state, waitingCount } from '../store.js';
+import { go, goProject, onSignal, openLauncher, parseHash, refresh, runningCount, state, waitingCount } from '../store.js';
 import { intentBox } from '../parts/intent.js';
 import { spark } from '../parts/sparkline.js';
 import { badge, dot } from '../parts/status.js';
@@ -135,7 +136,8 @@ export function runningMeta(r, { withProject = false } = {}) {
   return { bits: [...lead, ...bits], branch: r.branch || '' };
 }
 
-// A server action href ("#run/<id>", "#cockpit/<project>") as a route, or null when it isn't one.
+// A server action href ("#run/<id>", "#project/<name>/checks") as a route, or null when it isn't
+// one. An old route ("#cockpit/<name>") reads as the route that replaced it (store.parseHash).
 export function routeOfHref(href) {
   if (typeof href !== 'string' || !/^#[a-z][a-z0-9-]*(\/|$)/.test(href)) return null;
   return parseHash(href);
@@ -407,9 +409,9 @@ function nextCard(m) {
   if (m.state === 'error') return card('Next up', null, errorNote(m.error));
   if (m.state === 'none') {
     return card('Next up', null,
-      h('p', { class: 'muted' }, m.project ? 'Nothing is open on the findings board. Import an audit or reconcile in the cockpit.'
+      h('p', { class: 'muted' }, m.project ? 'Nothing is open on the findings board. Import an audit or reconcile on the project\'s Findings tab.'
         : 'Next up comes from a project\'s findings board, once a project has a private profile.'),
-      m.project ? keyed(h('button', { class: 'link', type: 'button', on: { click: () => go('cockpit', m.project) } }, 'See the audit board'), 'next-board') : null);
+      m.project ? keyed(h('button', { class: 'link', type: 'button', on: { click: () => goProject(m.project, 'findings') } }, 'See the audit board'), 'next-board') : null);
   }
   const [label, cls] = SEVERITY[m.severity] || [m.severity || 'Severity unknown', ''];
   return card('Next up', h('span', { class: cls ? `badge ${cls}` : 'badge' }, label),
@@ -419,7 +421,7 @@ function nextCard(m) {
       class: 'btn primary small', type: 'button',
       on: { click: () => openLauncher('fix', { project: m.project, findingId: m.id, what: `Fix ${m.id}: ${m.title}`.trim() }) },
     }, 'Start fix'), 'next-start'),
-    keyed(h('button', { class: 'link push', type: 'button', on: { click: () => go('cockpit', m.project) } }, 'See the audit board'), 'next-board')]);
+    keyed(h('button', { class: 'link push', type: 'button', on: { click: () => goProject(m.project, 'findings') } }, 'See the audit board'), 'next-board')]);
 }
 
 function healthItems() {
@@ -455,15 +457,15 @@ function healthCard(m) {
     body.push(h('div', { class: 'big' }, String(m.score)));
     if (sp.length) body.push(spark(sp, `Health score over the last ${plural(sp.length, 'scan')}: ${sp[0]} to ${sp[sp.length - 1]}`));
   } else {
-    body.push(h('p', { class: 'muted small today-noscan' }, 'No scan yet. Run the architecture check in Health and wins (free, 1-3 min).'));
+    body.push(h('p', { class: 'muted small today-noscan' }, 'No scan yet. Run the architecture check on the project\'s Architecture tab (free, 1-3 min).'));
   }
   body.push(
     h('div', { class: 'kv' }, h('span', { class: 'muted' }, 'Known test failures'), h('b', {}, m.known)),
     h('div', { class: 'kv' }, h('span', { class: 'muted' }, 'Node for checks'), h('b', {}, m.node)));
   if (!m.linked) body.push(h('p', { class: 'note mt-2' }, 'The checkout is not linked yet, so checks and scans can\'t run.'));
-  if (!m.valid) body.push(h('p', { class: 'note mt-2' }, 'The profile has errors. The cockpit lists them.'));
+  if (!m.valid) body.push(h('p', { class: 'note mt-2' }, 'The profile has errors. The project\'s Overview and Settings tabs list them.'));
   return card(`${m.label} health`, m.trendText ? h('span', { class: `trend ${m.trend}` }, m.trendText) : null, body,
-    [keyed(h('button', { class: 'link', type: 'button', on: { click: () => go('health', m.project) } }, 'Open health'), `health:${m.project}`),
+    [keyed(h('button', { class: 'link', type: 'button', on: { click: () => goProject(m.project, 'architecture') } }, 'Open Architecture'), `health:${m.project}`),
       m.scanned ? h('span', { class: 'push small' }, `Last scan ${m.scanned}`) : null]);
 }
 
@@ -494,7 +496,7 @@ function inboxCard(m) {
     body.push(h('ul', { class: 'list' }, m.groups.map(g => h('li', {},
       h('div', { class: 'main' }, h('div', { class: 'title' }, g.text), h('div', { class: 'sub' }, [g.folder, g.ago].filter(Boolean).join(' · ')))))));
   } else if (!m.error && !m.total) {
-    body.push(h('div', { class: 'empty' }, h('b', {}, 'Inbox zero'), 'Drop notes, links and screenshots in inbox/, or paste images under Images.'));
+    body.push(h('div', { class: 'empty' }, h('b', {}, 'Inbox zero'), 'Drop notes, links and screenshots in inbox/, or paste images in Inbox images (under Assets).'));
   }
   if (m.libFiles) body.push(h('p', { class: 'muted small mt-2' }, `Agent images (not triage items): ${plural(m.libFiles, 'file')} in ${plural(m.libFolders, 'folder')}.`));
   const why = !m.claude ? 'Claude Code was not found, so Triage is off.' : !m.total ? 'Nothing to triage.' : m.busy ? 'Starting /inbox-triage…' : '';

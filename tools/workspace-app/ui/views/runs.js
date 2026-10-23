@@ -197,7 +197,7 @@ function emptyCard() {
   return h('div', { class: 'empty' }, h('b', {}, 'No runs yet'), 'Try Explain: 3 minutes, read-only.',
     project
       ? h('p', {}, h('button', { class: 'btn small primary mt-2', type: 'button', on: { click: () => openLauncher('explain', { project }) } }, `Explain something in ${project}`))
-      : h('p', { class: 'small mt-2' }, 'Runs need a project with a profile: set one up in its cockpit first.'));
+      : h('p', { class: 'small mt-2' }, 'Runs need a project with a profile: create one on the project\'s Settings tab first.'));
 }
 
 function resultsCard() {
@@ -295,7 +295,7 @@ function render(el) {
 
 function onShow({ sub }) {
   visible = true;
-  // #runs/<project>: the list for that project (the cockpit's "All runs"). The filters are kept
+  // #runs/<project>: the list for that project ("All runs" on its page). The filters are kept
   // between visits; the rows shown last stay on screen while they refresh.
   let reset = !list.loaded || !!list.error || list.missing;
   if (sub && sub !== filters.project) {

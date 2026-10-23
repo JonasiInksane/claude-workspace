@@ -1,5 +1,8 @@
 /* Projects view and its dialogs (views/projects.js). Loaded after app.css (index.html). */
 .project .card-head { flex-wrap: wrap; }
+/* The card's name opens the project's page */
+.project-link { color: var(--text); font-weight: 700; text-align: left; }
+.project-link:hover { color: var(--accent); }
 .agents { list-style: none; margin: 0; padding: 0; }
 .agent { display: grid; grid-template-columns: 1fr auto; gap: 6px 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .agent:last-child { border-bottom: 0; }

@@ -18,7 +18,7 @@
 // shell win: a key right after g is left to them.
 import { act, api, confirmDialog, fmtClock, h, icon, keepFocus, keyed, plural, qs, toast } from '../lib.js';
 import { formDialog } from '../dialog.js';
-import { go, livePoll, openLauncher, settings, singleKeyOk, waitingKind } from '../store.js';
+import { go, goProject, livePoll, openLauncher, settings, singleKeyOk, waitingKind } from '../store.js';
 import { statusPair } from '../parts/status.js';
 import { checksChip, checksTable } from '../parts/checks-table.js';
 import { diffSummary, diffView, fileChips, isCut, lineIndex, parseDiff, SHOW_LINES } from '../parts/diff.js';
@@ -230,6 +230,7 @@ function head() {
     : `A read-only reviewer${model ? ` (${model})` : ''} looked at the diff.`;
   return h('div', { class: 'view-head' }, h('div', {},
     h('p', { class: 'crumb' },
+      run && run.project ? [h('button', { class: 'link', type: 'button', title: 'The project\'s Changes tab', on: { click: () => goProject(run.project, 'changes') } }, run.project), ' / '] : null,
       run ? runLink(run.title || 'Run') : h('button', { class: 'link', type: 'button', on: { click: () => go('runs') } }, 'Runs'),
       ' / Review gate'),
     h('h2', {}, 'Review gate', verdictBadge(), run && !atGate() ? statusPair(run.status) : null),

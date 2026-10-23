@@ -4,9 +4,13 @@
 // Everything is written under os.tmpdir(). Run: node tools/run-tests.mjs workspace-app
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { hasAssetPipeline, hasProfile, PROJECT_TYPES, projectTypeOf, typeById, typeFields } from './project-types.mjs';
 import { tempDir, writeFiles } from './test/helpers.mjs';
+
+const here = dirname(fileURLToPath(import.meta.url));
 
 test('the registry: code, assets, then generic last; each type lists its tabs, Overview first', () => {
   assert.deepEqual(PROJECT_TYPES.map(t => t.id), ['code', 'assets', 'generic']);
@@ -81,4 +85,13 @@ test('typeFields: what /api/state sends, as copies the caller may change', () =>
   assert.deepEqual(f, { type: { id: 'assets', label: 'Asset pipeline' }, tabs: ['overview', 'assets', 'agents', 'settings'] });
   f.tabs.push('extra');
   assert.deepEqual(typeById('assets').tabs, ['overview', 'assets', 'agents', 'settings']);
+});
+
+test('every tab a type names has its module in ui/views/project/ and is listed in tabs.js', () => {
+  const dir = join(here, 'ui', 'views', 'project');
+  const list = readFileSync(join(dir, 'tabs.js'), 'utf8');
+  for (const id of new Set(PROJECT_TYPES.flatMap(t => t.tabs))) {
+    assert.ok(existsSync(join(dir, `${id}.js`)), `ui/views/project/${id}.js exists`);
+    assert.match(list, new RegExp(`import \\w+ from '\\./${id}\\.js';`), `tabs.js imports ${id}.js`);
+  }
 });

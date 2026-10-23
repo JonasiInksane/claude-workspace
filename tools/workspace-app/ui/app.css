@@ -97,6 +97,8 @@ nav button.sub { padding: 4px 10px 4px 38px; font-weight: 400; font-size: var(--
 nav .nav-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 nav .count { margin-left: auto; font-size: var(--t-sm); color: var(--muted); font-variant-numeric: tabular-nums; }
 nav .count.amber { color: var(--amber); font-weight: 600; }
+/* The foot of the sidebar: Library, above the Hub session buttons */
+.nav-foot { margin-bottom: 4px; }
 .nav-label { font-size: var(--t-sm); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 12px 10px 4px; }
 .side-actions { display: flex; flex-direction: column; gap: 6px; margin-top: auto; }
 .side-note { font-size: var(--t-sm); color: var(--muted); padding: 0 4px; }

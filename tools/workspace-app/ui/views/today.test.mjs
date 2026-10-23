@@ -92,7 +92,9 @@ test('today: a running row shows stage, round, turns, minutes, tree and branch',
 
 test('today: only hash routes of the app are followed', () => {
   assert.deepEqual(routeOfHref('#run/261022-100005-explain-running'), { id: 'run', sub: '261022-100005-explain-running' });
-  assert.deepEqual(routeOfHref('#cockpit/example'), { id: 'cockpit', sub: 'example' });
+  assert.deepEqual(routeOfHref('#project/example/checks'), { id: 'project', sub: 'example/checks' });
+  assert.deepEqual(routeOfHref('#cockpit/example'), { id: 'project', sub: 'example/overview' }, 'an old link opens the tab that replaced it');
+  assert.deepEqual(routeOfHref('#health/example'), { id: 'project', sub: 'example/architecture' });
   assert.deepEqual(routeOfHref('#launcher'), { id: 'launcher', sub: '' });
   for (const bad of ['https://example.com/#run/x', 'javascript:alert(1)', '#', '#Run/x', '', null, 42]) assert.equal(routeOfHref(bad), null, String(bad));
 });

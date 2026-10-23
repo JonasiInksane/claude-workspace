@@ -1,4 +1,4 @@
-// The findings board of the cockpit's Audit progress card (SPEC 5.3; mockup .kanban): four
+// The findings board on a project's Findings tab (SPEC 5.3; mockup .kanban): four
 // columns, Open, In run, On branch and Done, from the `columns` of GET /api/findings. Every card
 // is a button that says the finding's id, its title and "Severity · Phase · tag" in words, so the
 // severity colour of its border is never the only sign (SPEC 5.11). What a click does depends on
@@ -11,7 +11,7 @@
 // A long column shows its first few cards, then "+ N more, including ..." and a Show all toggle
 // (aria-expanded) that the view keeps per column.
 //
-// The helpers above kanban() are pure (no DOM), so ui/views/cockpit.test.mjs tests them.
+// The helpers above kanban() are pure (no DOM), so ui/parts/kanban.test.mjs tests them.
 import { h, keyed, plural, statusBadge } from '../lib.js';
 
 export const SEVERITY_LABELS = { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low' };

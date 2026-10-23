@@ -15,22 +15,24 @@
 // visible() feed the nav entry of a plain view (Projects, Flows, Assets...). onFiles receives
 // image files pasted or dropped while the view is on screen.
 //
-// The nav (SPEC 5.1): Today; one entry per project with a profile (amber waiting count) with
-// "Health and wins" under it; Runs (running count) with up to three runs waiting at a review
-// gate under it; Projects, Flows, Library (views/tools.js), Images, and Assets when used.
-// Counts are aria-hidden and have their own screen-reader text; the active entry has
-// aria-current="page".
+// The nav (SPEC 5.1, hub spec plan A2; parts/nav.js builds it): Today; Projects with every
+// project nested under it (a code project shows its amber waiting count); Assets; Flows; Runs
+// (running count) with up to three runs waiting at a review gate under it. Library sits at the
+// foot of the sidebar, above the Hub session buttons. A project's page (#project/<name>/<tab>,
+// views/project.js) has the tabs of its type; the old #cockpit and #health links open its
+// Overview and Architecture tabs. Counts are aria-hidden and have their own screen-reader text;
+// the active entry has aria-current="page".
 import { $, announce, api, checkServer, focusedKey, h, icon, isStopped, isTyping, keepFocus, keyed, launch, openPlace, plural, restoreFocus, toast } from './lib.js';
 import { dialog, getDialogUpload } from './dialog.js';
 import {
-  countOf, currentProject, emitSignal, go, hashFor, live, loadPipelines, loadRuns, loadSettings, msSinceRefresh, notifyOn, parseHash,
-  profiledProjects, refresh, restoreProject, reviewWaits, routeOf, runningCount, setCurrentProject, setLive, setTitleBadge, setView,
-  state, sub, subscribe, view, viewOf, waitingCount,
+  canonicalProjectSub, currentProject, emitSignal, go, hashFor, live, loadPipelines, loadRuns, loadSettings, msSinceRefresh, notifyOn,
+  parseHash, refresh, restoreProject, reviewWaits, runningCount, setLive, setTitleBadge, setView, state, sub, subscribe, view, viewOf,
+  waitingCount,
 } from './store.js';
 import { initPalette, isPaletteOpen, openPalette, togglePalette } from './parts/palette.js';
+import { footItems, isCurrentItem, navItems as buildNav } from './parts/nav.js';
 import today from './views/today.js';
-import cockpit from './views/cockpit.js';
-import health from './views/health.js';
+import project from './views/project.js';
 import launcher from './views/launcher.js';
 import run from './views/run.js';
 import review from './views/review.js';
@@ -45,7 +47,7 @@ import images from './views/images.js';
 // Every view module. A new view: its module here, and its CSS file (if any) in index.html.
 // home (the old dashboard) is no longer a view: Today replaced it, and #home shows Today
 // (store.ROUTE_VIEWS). Its import above stays until views/home.js itself is retired.
-const VIEWS = [today, cockpit, health, launcher, run, review, runs, flows, tools, projects, assets, images];
+const VIEWS = [today, project, launcher, run, review, runs, flows, tools, projects, assets, images];
 const byId = new Map(VIEWS.map(v => [v.id, v]));
 const sections = new Map();
 let shown = ''; // the view on screen, '' before the first show()
@@ -64,41 +66,12 @@ const ctx = () => ({ state, sub, go, refresh, project: currentProject });
 
 // ---------------------------------------------------------------- the sidebar
 
+// The views behind the nav entries (parts/nav.js reads their icon and count).
+const NAV_VIEWS = { today, projects, assets, flows, runs, tools };
+
 // The nav entries for the current state: { key, route, sub, label, icon, count, countCls, sr, cls }.
-function navItems() {
-  const items = [{ key: 'today', route: 'today', label: 'Today', icon: today.icon }];
-  for (const p of profiledProjects()) {
-    const waiting = countOf(p.waiting);
-    items.push({ key: `cockpit/${p.name}`, route: 'cockpit', sub: p.name, label: p.name, icon: cockpit.icon,
-      count: waiting || '', countCls: 'amber', sr: waiting ? `, ${waiting} waiting` : '' });
-    items.push({ key: `health/${p.name}`, route: 'health', sub: p.name, label: 'Health and wins', cls: 'sub' });
-  }
-  const running = runningCount();
-  items.push({ key: 'runs', route: 'runs', label: 'Runs', icon: runs.icon, count: running || '', sr: running ? `, ${running} running` : '' });
-  for (const r of reviewWaits().slice(0, 3)) {
-    items.push({ key: `review/${r.id}`, route: 'review', sub: r.id, label: `Review gate: ${r.title || r.id}`, cls: 'sub', title: r.title || r.id });
-  }
-  for (const v of [projects, flows, tools, images, assets]) {
-    if (v.visible && !v.visible(state)) continue;
-    const count = v.count ? v.count(state) : '';
-    const label = v.id === 'tools' ? 'Library' : v.label;
-    items.push({ key: v.id, route: routeOf(v.id), label, icon: v.icon, count, sr: count !== '' ? `, ${countText(v.id, count)}` : '' });
-  }
-  return items;
-}
-
-// "1 flow", "3 projects": the screen-reader text of a plain view's count.
-const COUNT_WORDS = { projects: 'project', flows: 'flow', assets: 'asset', images: 'image' };
-const countText = (id, n) => (COUNT_WORDS[id] && Number.isFinite(Number(n)) ? plural(Number(n), COUNT_WORDS[id]) : String(n));
-
-// Is this nav entry the screen on show? Runs also covers a single run; a cockpit or health
-// entry needs its project.
-function isCurrent(item) {
-  if (item.route === 'runs') return view === 'runs' || view === 'run';
-  if (item.route === 'cockpit' || item.route === 'health') return view === item.route && (sub || currentProject) === item.sub;
-  if (item.route === 'review') return view === 'review' && sub === item.sub;
-  return routeOf(view) === item.route;
-}
+const navItems = () => buildNav(state, { views: NAV_VIEWS, running: runningCount(), reviews: reviewWaits() });
+const isCurrent = item => isCurrentItem(item, view, sub);
 
 function navButton(item) {
   const hasCount = item.count !== '' && item.count != null && item.count !== 0;
@@ -112,16 +85,19 @@ function navButton(item) {
   hasCount && item.sr ? h('span', { class: 'sr-only' }, item.sr) : null), item.key);
 }
 
-// Rebuilds the nav only when something in it changed, and keeps the focus on the same entry.
+// Rebuilds the nav (and the Library entry at the foot) only when something in it changed, and
+// keeps the focus on the same entry.
 function renderNav() {
-  const items = navItems().map(it => ({ ...it, current: isCurrent(it) }));
-  const signature = JSON.stringify(items.map(({ icon: _i, ...rest }) => rest));
+  const main = navItems().map(it => ({ ...it, current: isCurrent(it) }));
+  const foot = footItems(state, { views: NAV_VIEWS }).map(it => ({ ...it, current: isCurrent(it) }));
+  const signature = JSON.stringify([main, foot].map(list => list.map(({ icon: _i, ...rest }) => rest)));
   if (signature === navSignature) return;
   navSignature = signature;
-  const nav = $('nav');
-  const key = focusedKey(nav);
-  nav.replaceChildren(...items.map(navButton));
-  restoreFocus(nav, key);
+  for (const [nav, items] of [[$('#nav'), main], [$('#navFoot'), foot]]) {
+    const key = focusedKey(nav);
+    nav.replaceChildren(...items.map(navButton));
+    restoreFocus(nav, key);
+  }
 }
 
 function renderSide() {
@@ -146,9 +122,14 @@ function sideDate(ymd) {
 // ---------------------------------------------------------------- views and routes
 
 // The sidebar and the current view. Re-rendering replaces the view; the reader's place and the
-// focused row (data-key) are kept.
+// focused row (data-key) are kept. A project page whose route the new state completes (its
+// first tab, a tab it has, the project's spelling) is shown at that route first.
 function render() {
   if (!state) return;
+  if (view === 'project') {
+    const fixed = canonicalProjectSub(sub);
+    if (fixed !== sub) { show('project', fixed, { focus: false }); return; }
+  }
   renderSide();
   const section = sections.get(view);
   const main = $('main');
@@ -158,13 +139,14 @@ function render() {
 }
 
 // Shows the screen for a route (an unknown one shows Today). The hash is corrected without a
-// new history entry. `focus` moves the focus to the view's heading (after a navigation).
+// new history entry (also a project route the state completes). `focus` moves the focus to the
+// view's heading (after a navigation).
 function show(route, subPath = '', { focus = true } = {}) {
   let id = viewOf(route);
   if (!byId.has(id)) { id = 'today'; subPath = ''; }
+  if (id === 'project') subPath = canonicalProjectSub(subPath);
   const changed = shown !== id || shownSub !== subPath;
   if (changed && shown && byId.get(shown).onHide) byId.get(shown).onHide();
-  if ((id === 'cockpit' || id === 'health') && subPath) setCurrentProject(subPath);
   setView(id, subPath);
   for (const [vid, s] of sections) s.hidden = vid !== id;
   const hash = hashFor(id, subPath);
@@ -294,9 +276,16 @@ function notifyWaiting(fresh) {
 // ---------------------------------------------------------------- keyboard (SPEC 5.11)
 
 // Ctrl+K toggles the palette (also from a text field, but not over another dialog).
-// g then t / p / r jumps to Today, the current project's cockpit, Runs: the second key within
-// 1 s, never while typing or while a dialog is open. Single-key shortcuts belong to the views
-// (store.singleKeyOk checks the setting and the panel).
+// g then t / p / a / f / r jumps to Today, the current project's page (Projects without one),
+// Assets, Flows, Runs: the second key within 1 s, never while typing or while a dialog is open.
+// Single-key shortcuts belong to the views (store.singleKeyOk checks the setting and the panel).
+const G_KEYS = {
+  t: () => go('today'),
+  p: () => (currentProject ? go('project', currentProject) : go('projects')),
+  a: () => go('assets'),
+  f: () => go('flows'),
+  r: () => go('runs'),
+};
 let gAt = 0;
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k') {
@@ -311,9 +300,7 @@ document.addEventListener('keydown', e => {
   if (gAt && Date.now() - gAt <= 1000) {
     gAt = 0;
     const k = e.key.toLowerCase();
-    if (k === 't') { e.preventDefault(); go('today'); }
-    else if (k === 'p') { e.preventDefault(); if (currentProject) go('cockpit', currentProject); else go('projects'); }
-    else if (k === 'r') { e.preventDefault(); go('runs'); }
+    if (Object.prototype.hasOwnProperty.call(G_KEYS, k)) { e.preventDefault(); G_KEYS[k](); }
     return;
   }
   gAt = e.key === 'g' && !e.shiftKey ? Date.now() : 0;
@@ -390,7 +377,7 @@ document.addEventListener('drop', e => {
   clearDropZones();
   const upload = dialog.open ? getDialogUpload() : byId.get(view).onFiles;
   if (dialog.open && !upload) { toast('Close the dialog first, then drop the files.', true); return; }
-  if (!upload) { toast('Open Images (or a flow) first, then drop the files there.', true); return; }
+  if (!upload) { toast('Open Inbox images (under Assets) or a flow first, then drop the files there.', true); return; }
   const files = [];
   let folders = 0;
   for (const item of [...e.dataTransfer.items]) {

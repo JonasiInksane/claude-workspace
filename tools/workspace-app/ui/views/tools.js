@@ -321,7 +321,8 @@ function settingsCard() {
         h('p', { class: 'muted small', id: 'lib-notify-help' },
           'The default for every run; a run can turn it off for itself. ', permissionText())), 'set-notify')),
     h('div', { class: 'card-foot' }, 'Keys everywhere: ', h('kbd', {}, 'Ctrl K'), ' opens the palette; ',
-      h('kbd', {}, 'g'), ' then ', h('kbd', {}, 't'), ', ', h('kbd', {}, 'p'), ' or ', h('kbd', {}, 'r'), ' jumps to Today, the project cockpit or Runs.'));
+      h('kbd', {}, 'g'), ' then ', h('kbd', {}, 't'), ', ', h('kbd', {}, 'p'), ', ', h('kbd', {}, 'a'), ', ', h('kbd', {}, 'f'), ' or ', h('kbd', {}, 'r'),
+      ' jumps to Today, the current project\'s page, Assets, Flows or Runs.'));
 }
 
 // ---------------------------------------------------------------- the view

@@ -1,25 +1,24 @@
-// Health and wins (#health/<project>, SPEC 5.4; mockup #v-health): what the code probes measured
-// and what got better. The score row (number, trend, sparkline), the metric tiles (each with its
-// trend in words, a sparkline named by a text summary, "What is this?", and Start a slice or a
-// badge such as "Within allowlist"), the architecture lenses, the new candidates of the last
-// architecture check (Make finding, Decide, Dismiss), and the wins: the phase boss, ratchet wins,
-// the fun settings, achievements and this week's ship log. The header starts an architecture
-// check (through the launcher) and rebuilds the allowlist (a preview first, then Save).
+// The project page's Architecture tab (#project/<name>/architecture, code projects): what the code
+// probes measured and what got better, moved from the Health and wins screen (SPEC 5.4). The score
+// row (number, trend, sparkline), the metric tiles (each with its trend in words, a sparkline named
+// by a text summary, "What is this?", and Start a slice or a badge such as "Within allowlist"),
+// the architecture lenses, the new candidates of the last architecture check (Make finding, Decide,
+// Dismiss), and the wins: the phase boss, ratchet wins, the fun settings, achievements and this
+// week's ship log. The tab's head starts an architecture check (through the launcher) and rebuilds
+// the allowlist (a preview first, then Save).
 //
-// Data: GET /api/metrics?project, which reads files and git only (no probe, no Claude). A probe
-// that failed in the last scan shows "probe failed: <why>" on its own tile. Rendering and refresh
-// work like the cockpit (views/cockpit.js): cards are cached by what they show and swapped one by
-// one, controls carry data-keys, and the view refreshes every 10 s while a run is running, after
-// a live signal for the project, on focus and after an action.
-//
+// Data: GET /api/metrics (project-data.js `metrics`), which reads files and git only: no probe, no
+// Claude. A probe that failed in the last scan shows "probe failed: <why>" on its own tile.
 // The pure helpers (trendText, sparkLabel, changeView, verdictBadge, badgeClass, needsYou) are
-// exported for the tests.
-import { act, api, checkServer, fmtAgo, fmtTime, h, keepFocus, keyed, plural, qs, toast } from '../lib.js';
-import { dialog, openDialog } from '../dialog.js';
-import { go, openLauncher, saveSettings, settings, sub, view } from '../store.js';
-import { bar } from '../parts/bar.js';
-import { spark } from '../parts/sparkline.js';
-import { createMemo, nameOf, patch, projectLabel, refresher } from './cockpit.js';
+// exported for architecture.test.mjs.
+import { act, fmtAgo, fmtTime, h, plural, toast } from '../../lib.js';
+import { dialog, openDialog } from '../../dialog.js';
+import { go, openLauncher, saveSettings, settings } from '../../store.js';
+import { bar } from '../../parts/bar.js';
+import { spark } from '../../parts/sparkline.js';
+import { createBlocks, createMemo, patch } from '../../parts/patch.js';
+import { reload, slot, use } from '../../parts/project-data.js';
+import { btn, cardHead, closeButton, errorNote, post } from '../../parts/project-ui.js';
 
 const TREND = { better: 'Better', same: 'Same', worse: 'Worse' };
 
@@ -62,59 +61,6 @@ export function badgeClass(text) {
 // How many candidates wait for a decision (an issue or "you decide" without one).
 export const needsYou = items => (items || []).filter(c => (c.verdict === 'issue' || c.verdict === 'owner-decision') && !c.decision).length;
 
-// ---------------------------------------------------------------- data
-
-const slots = new Map(); // project -> { metrics: { data, error, status }, loading, again }
-
-function slot(name) {
-  if (!slots.has(name)) slots.set(name, { loading: false, again: false });
-  return slots.get(name);
-}
-
-async function load(name) {
-  if (!name) return;
-  const s = slot(name);
-  if (s.loading) { s.again = true; return; }
-  s.loading = true;
-  try {
-    s.metrics = { data: await api(`/api/metrics?${qs({ project: name })}`) };
-  } catch (e) {
-    if (e.network) checkServer();
-    s.metrics = { data: s.metrics && s.metrics.data, error: e.message, status: e.status };
-  }
-  s.loading = false;
-  repaint(name);
-  if (s.again) {
-    s.again = false;
-    load(name);
-  }
-}
-
-let section = null;
-const refresher_ = refresher(load);
-
-function repaint(name) {
-  if (!section || view !== 'health' || nameOf(sub) !== name) return;
-  keepFocus(section, () => render(section, { sub }));
-}
-
-// ---------------------------------------------------------------- small builders
-
-const memo = createMemo();
-const post = (path, body) => api(path, { method: 'POST', body });
-const closeButton = () => h('button', { class: 'btn', type: 'button', on: { click: () => dialog.close() } }, 'Cancel');
-
-function btn(key, label, onClick, { cls = 'btn small', disabled = false, describedBy = null, title = null } = {}) {
-  return keyed(h('button', { class: cls, type: 'button', disabled, title, 'aria-describedby': describedBy, on: { click: onClick } }, label), key);
-}
-
-function errorNote(text, key) {
-  return h('div', { class: 'note red' }, h('span', {}, text), ' ',
-    keyed(h('button', { class: 'link', type: 'button', on: { click: () => refresher_.now() } }, 'Try again'), `retry:${key}`));
-}
-
-const cardHead = (title, ...extra) => h('div', { class: 'card-head' }, h('h3', {}, title), extra.filter(Boolean).length ? h('div', { class: 'row-actions' }, extra) : null);
-
 // ---------------------------------------------------------------- actions
 
 // Rebuild allowlist: the proposal from the last scan (what it adds and removes), then Save with
@@ -130,7 +76,7 @@ async function rebuildDialog(name) {
       const r = await post('/api/allowlist', { project: name, scanId: p.scanId });
       dialog.close();
       toast(r.message || 'Saved.');
-      refresher_.now();
+      reload();
     } catch (e) {
       error.textContent = e.message;
       error.hidden = false;
@@ -148,7 +94,7 @@ async function rebuildDialog(name) {
 }
 
 async function makeFinding(name, c, item) {
-  if (await act(post('/api/findings/propose', { project: name, runId: c.runId, ref: item.ref }))) refresher_.now();
+  if (await act(post('/api/findings/propose', { project: name, runId: c.runId, ref: item.ref }))) reload();
 }
 
 // Decide (a "you decide" candidate): accept it as an issue, keep it for later, or dismiss it
@@ -179,7 +125,7 @@ function decideDialog(name, c, item, { dismissOnly = false } = {}) {
       const r = await post('/api/runs/triage', { id: c.runId, decisions: [{ ref: item.ref, decision, reason: reason.value.trim() }] });
       dialog.close();
       toast(r.message || 'Saved.');
-      refresher_.now();
+      reload();
     } catch (e) {
       error.textContent = e.message;
       error.hidden = false;
@@ -200,32 +146,25 @@ async function saveFun(key, value, label) {
   try {
     await saveSettings({ fun: { [key]: value } });
     toast(`${label} ${value ? 'on' : 'off'}.`);
-    if (key === 'streak') refresher_.now();
+    if (key === 'streak') reload();
   } catch (e) { toast(e.message, true); }
 }
 
 // ---------------------------------------------------------------- cards
 
-// Persistent containers (the tiles, the card grids) per project, patched child by child.
-const blocks = new Map();
-function block(key, cls, nodes) {
-  if (!blocks.has(key)) blocks.set(key, h('div', { class: cls }));
-  return patch(blocks.get(key), nodes);
-}
+const memo = createMemo();
+const block = createBlocks(cls => h('div', { class: cls }));
 
-function header(name, m) {
-  const label = projectLabel(name);
+// The tab's head: what the numbers come from, Rebuild allowlist and Run architecture check.
+function head(name, m) {
   const latest = m && m.latest;
   const c = m && m.candidates && !m.candidates.error ? m.candidates : null;
-  return memo(`head:${name}`, [label, latest ? latest.at : null, c ? [c.at, c.status, c.waiting] : null, !!m], () => {
+  return memo(`head:${name}`, [latest ? latest.at : null, c ? [c.at, c.status, c.waiting] : null, !!m], () => {
     const parts = ['From code probes and git. No tokens.'];
     if (m) parts.push(latest ? `Last scan ${fmtTime(latest.at)}.` : 'No scan yet.');
     if (c && c.at) parts.push(`Last architecture check ${fmtTime(c.at)}${c.status === 'waiting' ? ', waiting for your decisions' : ''}.`);
-    return h('div', { class: 'view-head' },
-      h('div', {},
-        h('p', { class: 'crumb' }, btn('crumb', label, () => go('cockpit', name), { cls: 'link' }), ' / Health'),
-        h('h2', {}, 'Architecture health and wins'),
-        h('p', {}, parts.join(' '))),
+    return h('div', { class: 'tab-head' },
+      h('div', {}, h('h3', {}, 'Architecture health and wins'), h('p', { class: 'muted' }, parts.join(' '))),
       h('div', { class: 'row-actions' },
         btn('rebuild', 'Rebuild allowlist…', () => rebuildDialog(name), { cls: 'btn', disabled: !latest, describedBy: latest ? null : 'hl-rebuild-why' }),
         latest ? null : h('span', { class: 'reason', id: 'hl-rebuild-why' }, 'Needs a scan first.'),
@@ -266,7 +205,7 @@ function tile(name, t) {
       h('div', { class: 'v' }, t.display),
       spark(t.spark, sparkLabel(t)),
       t.note ? h('p', { class: failed ? 'note red small' : 'muted small' }, t.note) : null,
-      t.measures ? h('details', {}, keyed(h('summary', {}, 'What is this?'), `what:${t.id}`), h('p', {}, t.measures)) : null,
+      t.measures ? h('details', {}, h('summary', { dataset: { key: `what:${t.id}` } }, 'What is this?'), h('p', {}, t.measures)) : null,
       h('div', { class: 't-foot' }, h('span', { class: 'muted small' }, n ? `last ${plural(n, t.id === 'knownFailures' ? 'check' : 'scan')}` : 'no data yet'), foot));
   });
 }
@@ -376,13 +315,13 @@ function winsCard(name, m) {
   });
 }
 
-function settingsCard(name, m) {
+function funCard(name, m) {
   const fun = settings.fun || {};
   const st = m.streak || {};
   return memo(`fun:${name}`, [fun, st], () => {
     // short: the name the toast uses ("Streak on.")
     const box = (key, label, short, on) => {
-      const input = keyed(h('input', { type: 'checkbox', checked: !!on, on: { change: e => saveFun(key, e.target.checked, short) } }), `fun:${key}`);
+      const input = h('input', { type: 'checkbox', checked: !!on, dataset: { key: `fun:${key}` }, on: { change: e => saveFun(key, e.target.checked, short) } });
       return h('label', { class: 'check' }, input, label);
     };
     return h('div', { class: 'card' }, cardHead('Settings'),
@@ -418,30 +357,19 @@ function weekCard(name, m) {
   });
 }
 
-// ---------------------------------------------------------------- the view
+// ---------------------------------------------------------------- the tab
 
 function render(el, ctx) {
-  section = el;
-  const name = nameOf(ctx.sub);
-  if (!name) {
-    patch(el, [memo('none', [], () => h('div', {},
-      h('div', { class: 'view-head' }, h('div', {}, h('h2', {}, 'Architecture health and wins'))),
-      h('div', { class: 'card' }, h('div', { class: 'empty' }, h('b', {}, 'No project chosen yet'), 'Open a project\'s cockpit first.'))))]);
-    return;
-  }
-  const s = slot(name);
-  const M = s.metrics;
+  const name = ctx.project.name;
+  const M = slot(name).metrics;
   const m = M && M.data;
-  const head = header(name, m);
   if (!m) {
-    patch(el, [head, memo(`wait:${name}`, [M ? M.error : null, M ? M.status : null], () => h('div', { class: 'card' }, h('div', { class: 'card-body' },
-      !M ? h('p', { class: 'muted' }, 'Loading…')
-        : M.status === 404 ? h('div', { class: 'empty' }, h('b', {}, `No project named ${name}`), M.error)
-          : errorNote(M.error, 'metrics'))))]);
+    patch(el, [head(name, null), memo(`wait:${name}`, [M ? M.error : null, M ? M.status : null], () => h('div', { class: 'card' }, h('div', { class: 'card-body' },
+      !M ? h('p', { class: 'muted' }, 'Loading…') : errorNote(M.error, 'metrics'))))]);
     return;
   }
   patch(el, [
-    head,
+    head(name, m),
     M.error ? memo(`stale:${name}`, [M.error], () => errorNote(`Could not refresh: ${M.error}`, 'metrics')) : null,
     scoreRow(name, m),
     memo('sec:metrics', [], () => h('h3', { class: 'sec' }, 'Metrics')),
@@ -449,19 +377,20 @@ function render(el, ctx) {
     allowlistNote(name, m),
     block(`g1:${name}`, 'grid2 mt-4', [lensesCard(name, m), candidatesCard(name, m)]),
     memo('sec:wins', [], () => h('h3', { class: 'sec' }, 'Wins')),
-    block(`g2:${name}`, 'grid3', [bossCard(name, m), winsCard(name, m), settingsCard(name, m)]),
+    block(`g2:${name}`, 'grid3', [bossCard(name, m), winsCard(name, m), funCard(name, m)]),
     block(`g3:${name}`, 'grid2 mt-4', [achievementsCard(name, m), weekCard(name, m)]),
   ]);
 }
 
+let release = () => {};
+
 export default {
-  id: 'health',
-  label: 'Health and wins',
-  icon: '<path d="M3 12h4l3 7 4-14 3 7h4"/>',
+  id: 'architecture',
+  label: 'Architecture',
   render,
-  onShow: ({ sub: subPath }) => {
-    const name = nameOf(subPath);
-    if (name) refresher_.start(name);
+  onShow(ctx) {
+    release();
+    release = use(ctx.project.name, ['metrics']);
   },
-  onHide: () => refresher_.stop(),
+  onHide() { release(); release = () => {}; },
 };

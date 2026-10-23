@@ -1,11 +1,12 @@
 // Assets: game assets from a project's asset pipeline (projects/<p>/assets/): renders, checks,
 // a 3D view of the model (viewer.js), and the user's verdict. A sprite (asset.json "kind":
 // "sprite", from tools/sprite.mjs) opens its own dialog instead (sprite-dialog.js: an HD-2D
-// diorama and a pixel view). The pipeline's scripts make everything else. The view shows in
-// the nav only when a project has a pipeline.
+// diorama and a pixel view). The pipeline's scripts make everything else. Assets is always in
+// the nav; Inbox images (views/images.js, the image upload) opens from the button at the top.
+// projectAssetsCard() is also the project page's Assets tab (views/project/assets.js).
 import { act, api, fmtTime, h, plural, qs, toast } from '../lib.js';
 import { dialog, openDialog } from '../dialog.js';
-import { refresh, state } from '../store.js';
+import { go, refresh, state } from '../store.js';
 import { createViewer } from '../viewer.js';
 import { spriteDialog } from '../sprite-dialog.js';
 
@@ -34,19 +35,28 @@ function assetCard(project, a) {
         checkBadge(a.final))));
 }
 
+// One project's assets (an entry of state.assets: { project, assets }) as a card of thumbnails.
+export function projectAssetsCard(p) {
+  return h('div', { class: 'card' },
+    h('div', { class: 'card-head' }, h('h3', {}, p.project), h('span', { class: 'muted' }, plural(p.assets.length, 'asset'))),
+    h('div', { class: 'card-body' }, p.assets.length
+      ? h('div', { class: 'asset-grid' }, p.assets.map(a => assetCard(p.project, a)))
+      : h('div', { class: 'empty' }, 'No assets yet: node tools/asset.mjs new <style>/<category>/<Name> ...')));
+}
+
 function render(el) {
   const head = h('div', { class: 'view-head' }, h('div', {}, h('h2', {}, 'Assets'),
-    h('p', {}, 'Game assets from each project\'s asset pipeline: renders, checks, the model in 3D, and your verdict.')));
+    h('p', {}, 'Game assets from each project\'s asset pipeline: renders, checks, the model in 3D, and your verdict.')),
+  h('div', { class: 'row-actions' }, h('button', {
+    class: 'btn', type: 'button', dataset: { key: 'inbox-images' }, title: 'Upload images into the hub inbox, a project or an agent',
+    on: { click: () => go('images') },
+  }, 'Inbox images')));
   if (!state.assets.length) {
     el.replaceChildren(head, h('div', { class: 'card' }, h('div', { class: 'empty' },
       h('b', {}, 'No asset pipeline found'), 'A project shows here when it has tools/asset.mjs (3D) or tools/sprite.mjs (sprites) and an assets/ folder.')));
     return;
   }
-  el.replaceChildren(head, h('div', { class: 'stack' }, state.assets.map(p => h('div', { class: 'card' },
-    h('div', { class: 'card-head' }, h('h3', {}, p.project), h('span', { class: 'muted' }, plural(p.assets.length, 'asset'))),
-    h('div', { class: 'card-body' }, p.assets.length
-      ? h('div', { class: 'asset-grid' }, p.assets.map(a => assetCard(p.project, a)))
-      : h('div', { class: 'empty' }, 'No assets yet: node tools/asset.mjs new <style>/<category>/<Name> ...'))))));
+  el.replaceChildren(head, h('div', { class: 'stack' }, state.assets.map(projectAssetsCard)));
 }
 
 function checkTable(c) {
@@ -153,6 +163,5 @@ export default {
   label: 'Assets',
   icon: '<path d="M12 3 3 7.5v9L12 21l9-4.5v-9z"/><path d="M3 7.5 12 12l9-4.5"/><path d="M12 12v9"/>',
   count: s => s.assets.reduce((n, p) => n + p.assets.length, 0) || '',
-  visible: s => !!s.assets.length,
   render,
 };

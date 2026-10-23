@@ -23,7 +23,7 @@
 // ws-notify:<runId> ("1" or "0"), defaulting to settings.notify.web. The shell's notification
 // check (store.notifyOn) learns the choice through setRunNotify.
 import { api, confirmDialog, copy, fmtAgo, fmtClock, h, keepFocus, keyed, qs, toast } from '../lib.js';
-import { go, livePoll, setRunNotify, settings, singleKeyOk } from '../store.js';
+import { go, goProject, livePoll, setRunNotify, settings, singleKeyOk } from '../store.js';
 import { statusPair } from '../parts/status.js';
 import { bar, setBar } from '../parts/bar.js';
 import { createTimeline, stageList, stageMeta } from '../parts/timeline.js';
@@ -348,7 +348,7 @@ function paintHead(run) {
   const project = run ? run.project : '';
   if (changed('crumb', [project, run && run.pipelineLabel])) {
     el.crumb.replaceChildren(
-      ...(project ? [h('button', { class: 'link', type: 'button', on: { click: () => go('cockpit', project) } }, project), ' / '] : []),
+      ...(project ? [h('button', { class: 'link', type: 'button', on: { click: () => goProject(project, 'tasks') } }, project), ' / '] : []),
       h('button', { class: 'link', type: 'button', on: { click: () => go('runs') } }, 'Runs'),
       run && run.pipelineLabel ? ` / ${run.pipelineLabel}` : ' / Run');
   }

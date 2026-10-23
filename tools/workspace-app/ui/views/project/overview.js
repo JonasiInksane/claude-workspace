@@ -14,7 +14,7 @@
 // the rest comes from the state. Cards are memoised by what they show and patched in place, so a
 // refresh keeps the focus, an open <details> and the text typed into the intent box.
 //
-// The pure helpers (factsBadges, quickRow, aboutFacts, recentRuns) are exported for
+// The pure helpers (factsBadges, quickRow, aboutFacts, mergeRuns, recentRuns) are exported for
 // overview.test.mjs.
 import { act, fmtAgo, fmtDuration, h, launch, plural } from '../../lib.js';
 import { atReviewGate, go, goProject, openLauncher, pipelines, state } from '../../store.js';

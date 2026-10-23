@@ -4,7 +4,8 @@ A small local app for this workspace, opened in its own Edge window: Today (what
 you, what runs, next up, health, inbox, active reports), a page for every project with the tabs
 of its type (a code project: Overview, Tasks, Findings, Changes, Checks, Architecture; see
 "Project pages" below), headless pipeline runs (launcher, live run, review gate and commit; see
-"Runs" below), flows (saved prompts with reference images, run in the hub, a project, any
+"Runs" below) with an Ask panel next to runs, review gates and findings (see "Ask"), flows
+(saved prompts with reference images, run in the hub, a project, any
 project you pick, or one agent; every launch records the flow's version), the Library with a
 button for every skill and workspace tool, the pipelines and the
 settings, project cards that start Claude, per-project agents (create, edit, archive and restore, start
@@ -34,7 +35,9 @@ runs just opens another window.
 | `server.mjs` | Startup: port 4317 (or a free one), sign-in token, one app per workspace, run recovery before it listens, idle shutdown (never while `isBusy()`), stopping the runs on every exit, opens the window; `--data-dir`, `--fake-claude` (tests only) |
 | `app.mjs` | `createApp`: access checks, the page's static files, `/img`, `/asset-file` and `/library-file` (sandboxed), the dispatch to `routes/*.mjs` (`ROUTE_MODULES`), and `ctx.getEngine()` (the run engine, made on first use) |
 | `runs/wiring.mjs` | Builds the run engine: the manager (`runs/manager.mjs`) with the real executor and modules, `claude.exe` from the launcher (or the fake in tests); `stopEngine` for exits |
-| `routes/runs.mjs`, `routes/events.mjs` | Runs over HTTP: pipelines, start and preview, the runs list, one run with its timeline and buttons, review data, diffs, run files; `/api/events` (live update signals) |
+| `routes/runs.mjs`, `routes/events.mjs` | Runs over HTTP: pipelines, start (with an Ask context, see "Ask") and preview, the runs list, one run with its timeline and buttons, review data, diffs, run files; `/api/events` (live update signals) |
+| `runs/context.mjs` | The Ask context: checks the reference a question names against the app's records, records it in `run.json` with the parent, and builds `inputs/context.md` (capped, redacted) when the Explain stage starts |
+| `runs/run-files.mjs` | The run file readers the runs routes and the Ask context share: capped reads, a run's JSON files, redacted text, the diff split into files |
 | `http.mjs` | `HttpError`, `send`/`json`, body readers, cookie and token helpers, `PAGE_CSP`, and the startup scan of `ui/` (`listUiFiles`) |
 | `state.mjs` | `buildState`: everything the page shows (`GET /api/state`), async; git runs as child processes, requests during a build share it. Each project carries its `type` and `tabs` |
 | `project-types.mjs` | The project types, in order: `code` (has a private profile), `assets` (has an asset pipeline), `generic`; each lists its page's tabs. `projectTypeOf()` returns the first that matches |
@@ -59,9 +62,9 @@ runs just opens another window.
 | `ui/lib.js` | `h()` (data always as text; refuses a `style` prop), `api()`, `act()`, `toast()`, `copy()`, formatting helpers (`fmtAgo`, `fmtDuration`, `fmtClock`), `statusBadge`, focus helpers, `announce`, `confirmDialog`, the "not connected" overlay |
 | `ui/store.js` | The shared state (`state`, `view`, `sub`, `currentProject`, `settings`, `pipelines`, run signals), `setState`, `subscribe`, `refresh`, `go()`, the hash helpers (`projectRoute`, `projectSub`, `goProject`, `canonicalProjectSub`; the old `#cockpit/<name>` and `#health/<name>` read as Overview and Architecture), `openLauncher` and the title badge |
 | `ui/dialog.js` | `openDialog` (with an unsaved-changes guard), `closeDialog`, `formDialog` |
-| `ui/parts/*.js` | Shared pieces: the nav, the palette (every project tab is a jump target), the intent box, sparkline, bar, status dot and badge; for the project page `patch.js` (repaint without losing the focus), `project-data.js` (each tab's data, kept fresh), `project-ui.js` (small builders) and `project-actions.js` (buttons several tabs offer) |
-| `ui/views/*.js` | One file per view: `today`, `project` (a project's page, its tabs in `views/project/`), `launcher`, `run`, `review`, `runs`, `flows`, `tools` (Library), `projects`, `assets` (with the Inbox images button), `images` (Inbox images), with their dialogs (`home`, the old dashboard, is no longer a view; `#home` shows Today) |
-| `ui/app.css`, `ui/css/*.css` | Tokens, layout and shared components; styles for one view in `css/<view>.css` (the project page: `project.css`, plus `project-cards.css` for the code tabs' cards and `architecture.css`) |
+| `ui/parts/*.js` | Shared pieces: the nav, the palette (every project tab is a jump target), the intent box, sparkline, bar, status dot and badge, the Ask panel (`ask-panel.js`, see "Ask"); for the project page `patch.js` (repaint without losing the focus), `project-data.js` (each tab's data, kept fresh), `project-ui.js` (small builders) and `project-actions.js` (buttons several tabs offer) |
+| `ui/views/*.js` | One file per view: `today`, `project` (a project's page, its tabs in `views/project/`; Findings has Ask on every card), `launcher`, `run` and `review` (both with Ask in their header), `runs`, `flows`, `tools` (Library), `projects`, `assets` (with the Inbox images button), `images` (Inbox images), with their dialogs (`home`, the old dashboard, is no longer a view; `#home` shows Today) |
+| `ui/app.css`, `ui/css/*.css` | Tokens, layout and shared components; styles for one view in `css/<view>.css` (the project page: `project.css`, plus `project-cards.css` for the code tabs' cards and `architecture.css`; the Ask panel: `ask.css`) |
 | `ui/viewer.js` | The 3D view: a small WebGL2 GLB viewer, no libraries (base colour, metal/roughness and normal maps; studio light and a fake sky; turntable, wireframe). No Draco or meshopt compression, skins or morphs |
 | `ui/sprite-viewer.js` | The sprite views, no libraries: `loadSprite` (the sheet's Aseprite-style JSON, frames by `<anim>_<direction>` tag), an HD-2D diorama (WebGL2: the sprite as a billboard in a small pixel-art scene, sun shadows the sprite casts, a torch, normal-mapped light and glowing pixels, tilt-shift depth of field, bloom, vignette, day/night, a walk-around mode that faces the way it moves) and a pixel view (integer zoom, play/step). A missing direction plays its mirror (west from east), then the nearest one |
 | `ui/sprite-dialog.js` | The Assets view's dialog for a sprite: both sprite views with the animation, direction and lighting controls, the palette, facts, verdict, checks and review images |
@@ -132,6 +135,30 @@ stages are data in `runs/catalog.mjs`; the stage prompts are `pipelines/app/<pip
   replays recorded Claude output (`test/fake-claude.mjs`) instead of starting claude.
   `node tools/workspace-app/test/fixtures/runs/install.mjs <folder>` loads one sample run per
   status into a data folder for `--data-dir`.
+
+## Ask
+
+An assistant next to the active work: Ask, in the header of a run page and a review gate and on
+every card of a project's Findings tab, opens a side panel (`ui/parts/ask-panel.js`). A question
+there starts a read-only Explain run about that run or finding, the answer shows in the panel as
+soon as it is there, and a follow-up keeps the thread.
+
+- The page sends only a reference: `POST /api/runs` with `context: { run }` or
+  `{ finding: { project, id } }`, plus `after` (the previous question) for a follow-up. Only Explain
+  takes a context; a malformed one is a 400, an unknown run or finding a 404, a follow-up while the
+  previous question still runs a 409 (`runs/context.mjs`).
+- `run.json` records `context` (kind, the reference, a title, `after`, and `thread`: the earlier
+  questions' run ids, at most 6) and `parent`: the run asked about (for a finding, its run when it
+  has one) or, for a follow-up, the previous question. The Tasks tab groups the questions with it.
+- When the stage starts, the server builds the context from its own records: for a run its title,
+  status, request, plan summary, gate summary, review, changed files and diff; for a finding its
+  record from the findings store; then the thread's earlier questions and answers. It is capped
+  (diff 12 KB, thread 8 KB, 24 KB in all, the diff cut first), redacted, written to
+  `inputs/context.md` (hashed like every input) and given to Claude as a `<data name="context">` block.
+- The panel follows the question with the live updates and polling: queued, running with its time,
+  answered (path:line references as code), failed with Retry, capped with Resume. It stops listening
+  when it closes (Esc, its close button, or another screen) and keeps each thread and the typed text
+  while the page is open; a link opens the full Explain run.
 
 ## Gates
 
@@ -261,12 +288,16 @@ new, immutable version with its SHA-256. The API is in place; the screens come l
 - The runs routes check every run id and project name by pattern first, read run files only
   from a fixed list of names (a gate log only as the gate's own summary names it, a diff file
   only as the diff names it), redact secrets in everything they send, and cut text at 2 MB.
+- An Ask question carries only a reference to a run or finding (any other key is refused); the
+  context Claude reads is built by the server from its own records, redacted, capped and fenced
+  as data.
 - Processes are stopped only after their program and start time are checked, so a reused
   process id is never hit. At most 4 live update streams are open at once.
 
 Tests: `node tools/run-tests.mjs workspace-app`. Next to each module is its `*.test.mjs`;
 `test/e2e.test.mjs` drives Explain, Review and a Refactor to its commit through the real app
-and engine with the fake claude, on a synthetic repo. A test of a page module (`ui/**/*.js`)
+and engine with the fake claude, on a synthetic repo; `test/ask.e2e.test.mjs` asks about a run,
+follows up and asks about a finding the same way. A test of a page module (`ui/**/*.js`)
 renders it in `test/dom.mjs`, a stand-in DOM with a fake `fetch` (`installDom`, `fakeFetch`).
 
 Screens: `node tools/workspace-app/test/shots.mjs --out <dir> --example --routes project/example/overview,runs --theme both`

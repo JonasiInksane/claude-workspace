@@ -20,7 +20,7 @@ fakeFetch(path => {
   return { ok: true, pipelines: [], routes: [], runs: [] };
 });
 const store = await import('../store.js');
-const { PANEL_ID, startProblem, tabId, tabKeyTarget, default: page } = await import('./project.js');
+const { PANEL_ID, tabId, tabKeyTarget, default: page } = await import('./project.js');
 
 const CODE_TABS = ['overview', 'tasks', 'findings', 'changes', 'checks', 'architecture', 'assets', 'settings'];
 const example = { name: 'example', profileLabel: 'Example', type: { id: 'code', label: 'Code project' }, tabs: CODE_TABS, hasProfile: true,
@@ -50,15 +50,6 @@ test('tabKeyTarget: Left and Right wrap, Home and End go to the ends, other keys
   assert.equal(tabKeyTarget('ArrowRight', -1, 4), -1, 'the focus is not on a tab');
   assert.equal(tabKeyTarget('ArrowRight', 0, 0), -1);
   assert.equal(tabKeyTarget('ArrowRight', 5, 4), -1);
-});
-
-test('startProblem: why Start Claude here is off, in words', () => {
-  assert.equal(startProblem(example, { claude: true }), '');
-  assert.equal(startProblem(example, {}), 'Claude Code was not found.');
-  assert.match(startProblem({ ...example, launchable: false }, { claude: true }), /unusual characters/);
-  assert.equal(startProblem({ ...example, realPath: '' }, { claude: true }), 'Link the checkout first.');
-  assert.match(startProblem(gone, { claude: true }), /linked folder is gone/);
-  assert.equal(startProblem(null), 'Link the checkout first.');
 });
 
 test('the header and the tab bar: name, path, type, and tabs that a screen reader can follow', () => {

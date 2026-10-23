@@ -22,7 +22,7 @@ import { spark } from '../../parts/sparkline.js';
 import { badge, dot } from '../../parts/status.js';
 import { createMemo, patch } from '../../parts/patch.js';
 import { dataOf, liveRunsOf, slot, use } from '../../parts/project-data.js';
-import { badgeEl, btn, cardHead, errorNote, loadingBody, minute, pipeLabel, post, short } from '../../parts/project-ui.js';
+import { badgeEl, btn, cardHead, DATA_NAME_RE, errorNote, loadingBody, minute, pipeLabel, post, short, startProblem } from '../../parts/project-ui.js';
 import { checklistAction, park } from '../../parts/project-actions.js';
 import { skillById, skillDialog } from '../tools.js';
 
@@ -305,18 +305,8 @@ function renderCode(el, name) {
 
 // ---------------------------------------------------------------- asset and plain projects
 
-// Why Claude can't start here now ('' when it can), as the Projects view says it.
-function launchProblem(p) {
-  if (p.linked && !p.realPath) return 'The linked folder is gone. Unlink it in Projects, then link the checkout again.';
-  if (!p.launchable) return 'The folder name has unusual characters; start it from a terminal.';
-  if (!(state.tools && state.tools.claude)) return 'Claude Code was not found on this PC, so sessions can\'t start.';
-  return '';
-}
-
-const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/; // the names GET /api/project accepts
-
 function aboutCard(p) {
-  const askable = NAME_RE.test(p.name);
+  const askable = DATA_NAME_RE.test(p.name);
   const P = slot(p.name).project;
   const d = askable ? dataOf(P) : null;
   const error = askable && P && P.error ? P.error : '';
@@ -331,7 +321,7 @@ function aboutCard(p) {
 }
 
 function startCard(p) {
-  const problem = launchProblem(p);
+  const problem = startProblem(p, state.tools);
   const agents = (p.agents || []).filter(a => a.valid && a.isolated && !a.duplicate);
   const deps = [p.name, problem, p.hasClaudeMd, agents.map(a => a.name), (p.agents || []).length, (p.tabs || []).includes('agents')];
   return memo(`start:${p.name}`, deps, () => {
@@ -380,7 +370,7 @@ export default {
     release();
     const p = ctx.project;
     if (isCode(p)) release = use(p.name, ['project', 'runs', 'metrics']);
-    else release = NAME_RE.test(p.name) ? use(p.name, ['project']) : () => {};
+    else release = DATA_NAME_RE.test(p.name) ? use(p.name, ['project']) : () => {};
   },
   onHide() { release(); release = () => {}; },
 };

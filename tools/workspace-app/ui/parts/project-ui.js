@@ -1,12 +1,27 @@
 // Small builders the project page's tabs share, moved from the cockpit and health views: a button
 // with its own data-key (so keepFocus() finds it again after a card is rebuilt), a card head, the
 // loading body, an error note with Try again, a whole-card state ("No project named x"), badges and
-// check results with their icons, the label of a pipeline, a POST helper and a dialog's Cancel.
+// check results with their icons, the label of a pipeline, a POST helper and a dialog's Cancel;
+// plus two facts about a project the header and the tabs both need: whether the data folder (and
+// so GET /api/project) accepts its name, and why Claude can't start in it now.
 // Everything renders data as text (lib.js h()).
 import { api, h, icon, keyed } from '../lib.js';
 import { dialog } from '../dialog.js';
 import { pipelineDef } from '../store.js';
 import { reload } from './project-data.js';
+
+// The project names the data folder and GET /api/project accept (core/datadir.mjs PROJECT_RE):
+// only such a project can have a profile, and only its git facts can be asked for.
+export const DATA_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+// Why Claude can't start in the project now ('' when it can), shown next to the disabled buttons.
+// `p` is the project's /api/state entry, `tools` state.tools.
+export function startProblem(p, tools = {}) {
+  if (!p || !p.realPath) return p && p.linked ? 'The linked folder is gone. Unlink it in Projects, then link the checkout again.' : 'Link the checkout first.';
+  if (p.launchable === false) return 'The folder name has unusual characters; start it from a terminal.';
+  if (!tools || !tools.claude) return 'Claude Code was not found.';
+  return '';
+}
 
 export const ICONS = {
   branch: '<circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="7" r="2"/><path d="M6 7v10M18 9c0 5-6 4-11 8"/>',

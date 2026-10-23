@@ -24,14 +24,14 @@
 // when what they show changed; the panel belongs to the open tab. Data comes through
 // parts/project-data.js, and every answer for the project on screen repaints it.
 //
-// The pure helpers (tabKeyTarget, startProblem) are exported for project.test.mjs.
+// The pure helper tabKeyTarget is exported for project.test.mjs.
 import { h, icon, keepFocus, keyed, launch, openPlace } from '../lib.js';
 import {
   go, goProject, loadPipelines, projectEntry, projectRoute, refresh, setCurrentProject, state, sub, tabsOf, view,
 } from '../store.js';
 import { createMemo, patch } from '../parts/patch.js';
 import { dataOf, onData, reload, slot, use } from '../parts/project-data.js';
-import { btn, errorNote, ICONS, stateCard } from '../parts/project-ui.js';
+import { btn, errorNote, ICONS, startProblem, stateCard } from '../parts/project-ui.js';
 import { tabLabel, tabModule } from './project/tabs.js';
 
 export const PANEL_ID = 'project-panel';
@@ -49,15 +49,6 @@ export function tabKeyTarget(key, index, count) {
   if (key === 'Home') return 0;
   if (key === 'End') return count - 1;
   return -1;
-}
-
-// Why Claude can't start in the project now ('' when it can); the header shows it next to the
-// disabled button. `p` is the project's /api/state entry, `tools` state.tools.
-export function startProblem(p, tools = {}) {
-  if (!p || !p.realPath) return p && p.linked ? 'The linked folder is gone. Unlink it in Projects, then link the checkout again.' : 'Link the checkout first.';
-  if (p.launchable === false) return 'The folder name has unusual characters; start it from a terminal.';
-  if (!tools || !tools.claude) return 'Claude Code was not found.';
-  return '';
 }
 
 // ---------------------------------------------------------------- state of the page

@@ -1,17 +1,38 @@
 // Tests for the project page's small builders (parts/project-ui.js) in a stand-in DOM
 // (test/dom.mjs): a button with its data-key and the id of its visible reason, a card head
 // without empty actions, an error note whose Try again loads the tab's data again, a state card,
-// badges and results with their classes, pipeline labels and short commit ids.
+// badges and results with their classes, pipeline labels and short commit ids; which names the
+// data folder takes, and why Claude can't start in a project.
 // Run: node tools/run-tests.mjs workspace-app
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { PROJECT_RE } from '../../core/datadir.mjs';
 import { fakeFetch, installDom, settle, textOf } from '../../test/dom.mjs';
 
 const dom = installDom();
 after(() => dom.uninstall());
 const calls = fakeFetch(() => ({ ok: true }));
 const { use } = await import('./project-data.js');
-const { badgeEl, btn, cardHead, errorNote, pipeLabel, resEl, short, stateCard } = await import('./project-ui.js');
+const { badgeEl, btn, cardHead, DATA_NAME_RE, errorNote, pipeLabel, resEl, short, startProblem, stateCard } = await import('./project-ui.js');
+
+test('startProblem: why Claude can not start in a project, in words', () => {
+  const p = { name: 'example', realPath: 'C:\\ws\\projects\\example', linked: false, launchable: true };
+  assert.equal(startProblem(p, { claude: true }), '');
+  assert.equal(startProblem(p, {}), 'Claude Code was not found.');
+  assert.equal(startProblem(p), 'Claude Code was not found.', 'no tools: nothing to start with');
+  assert.match(startProblem({ ...p, launchable: false }, { claude: true }), /unusual characters/, 'checked before Claude itself');
+  assert.equal(startProblem({ ...p, realPath: '' }, { claude: true }), 'Link the checkout first.');
+  assert.match(startProblem({ ...p, linked: true, realPath: '' }, { claude: true }), /linked folder is gone/);
+  assert.equal(startProblem(null), 'Link the checkout first.');
+});
+
+test('DATA_NAME_RE takes the names the data folder takes, and no others', () => {
+  for (const name of ['example', 'sample-art', 'a1', 'x-2-y']) assert.ok(DATA_NAME_RE.test(name) && PROJECT_RE.test(name), name);
+  for (const name of ['Example', 'my app', 'a--b', '-a', 'a-', '', '..', 'a/b', 'café']) {
+    assert.equal(DATA_NAME_RE.test(name), PROJECT_RE.test(name), `${name}: the same answer as core/datadir.mjs`);
+    assert.equal(DATA_NAME_RE.test(name), false, name);
+  }
+});
 
 test('btn: a typed button with its key, its reason and its handler', () => {
   let clicks = 0;

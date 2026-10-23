@@ -11,11 +11,10 @@
 import { copy, h, plural } from '../../lib.js';
 import { createMemo, patch } from '../../parts/patch.js';
 import { dataOf, slot, use } from '../../parts/project-data.js';
-import { btn, cardHead, errorNote, loadingBody } from '../../parts/project-ui.js';
+import { btn, cardHead, DATA_NAME_RE, errorNote, loadingBody } from '../../parts/project-ui.js';
 import { createProfile } from '../../parts/project-actions.js';
 
 const memo = createMemo();
-const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/; // the names the data folder accepts
 
 // ---------------------------------------------------------------- pure helpers (tested)
 
@@ -63,7 +62,7 @@ function codeProfileCard(name, P) {
 
 // An asset or plain project: what a profile would add, and the button that makes one.
 function otherProfileCard(p) {
-  const valid = NAME_RE.test(p.name);
+  const valid = DATA_NAME_RE.test(p.name);
   return memo(`profile-other:${p.name}`, [valid], () => h('div', { class: 'card' },
     cardHead('Profile', h('span', { class: 'muted small' }, 'private: in the data folder, never in the hub')),
     h('div', { class: 'card-body vgrid' },

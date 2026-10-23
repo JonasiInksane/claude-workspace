@@ -143,9 +143,13 @@ export function canonicalProjectSub(subPath, projects = state && state.projects,
   return projectSub(p.name, tab, tab === r.tab ? r.rest : '');
 }
 
-// Shows a view, as a new history entry. Going to the view already shown shows it again.
+// Shows a view, as a new history entry. Going to the view already shown shows it again. A
+// project route is completed first, as main.js will show it: the nav's #project/<name> would
+// otherwise be a new entry next to the #project/<name>/overview on screen, which show() then
+// replaces with that same address, so the first Back would seem to do nothing.
 export function go(id, subPath = '') {
-  const hash = hashFor(id, subPath);
+  const r = upgradeRoute(id, subPath);
+  const hash = hashFor(r.id, r.id === 'project' ? canonicalProjectSub(r.sub) : r.sub);
   if (location.hash === hash) window.dispatchEvent(new HashChangeEvent('hashchange'));
   else location.hash = hash;
 }

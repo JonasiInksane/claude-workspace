@@ -109,7 +109,8 @@ export function questionState(e) {
         : { kind: 'queued', text: 'Queued: waiting for a free Claude slot.', since: Date.parse(run.createdAt || '') || e.at };
     case 'passed': return { kind: 'answered', text: 'Answered.' };
     case 'failed': return { kind: 'failed', text: `Failed: ${why || 'the run failed.'}`, action: 'retry' };
-    case 'capped': return { kind: 'capped', text: `Turn cap reached${why ? `: ${why}` : '.'}`, action: 'resume' };
+    // The reason names the cap (turns, time or the budget backstop) itself.
+    case 'capped': return { kind: 'capped', text: why ? `${why}${/[.!?]$/.test(why) ? '' : '.'}` : 'Stopped at a cap.', action: 'resume' };
     case 'paused-limit': return { kind: 'paused', text: `Paused: usage limit${why ? `. ${why}` : '.'} Resume it once the window has reset.`, action: 'resume' };
     case 'interrupted': return { kind: 'interrupted', text: `Interrupted${why ? `: ${why}` : '.'}`, action: 'retry' };
     case 'cancelled': return { kind: 'cancelled', text: 'Cancelled.' };
@@ -120,7 +121,7 @@ export function questionState(e) {
 // What the polite live region says when a question gets to a new state.
 const LIVE_WORDS = {
   sending: 'Sending your question.', queued: 'Your question is queued.', running: 'Claude is reading the code.', answered: 'The answer is there.',
-  failed: 'The question failed.', capped: 'The question reached its turn cap.', paused: 'The question is paused by the usage limit.',
+  failed: 'The question failed.', capped: 'The question stopped at a cap.', paused: 'The question is paused by the usage limit.',
   interrupted: 'The question was interrupted.', cancelled: 'The question was cancelled.', error: 'The question could not be sent.', gone: 'The question\'s run is gone.',
 };
 

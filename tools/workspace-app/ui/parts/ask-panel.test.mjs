@@ -3,7 +3,8 @@
 // panel in a stand-in DOM (test/dom.mjs) against a scripted server: it opens as a labelled
 // complementary landmark with the focus in the question box, a question posts only a reference,
 // the run is followed through store signals from queued to running to its answer, a follow-up
-// carries the previous question as `after`, a failed question offers Retry, Ask is off while a
+// carries the previous question as `after`, a failed question offers Retry, a capped one says
+// which cap stopped it and why Resume is off, Ask is off while a
 // question runs, Esc closes it and stops listening (no more pulls), opening again brings back the
 // thread and the draft, a finding is asked about by reference, a question that could not be sent
 // can be sent again, and a route change closes the panel. Run: node tools/run-tests.mjs workspace-app
@@ -48,7 +49,7 @@ const states = {
     outputs: { answer: { answer: text, sources: [{ path: 'apps/web/src/features/cart/total.mjs', line: 3, note: 'the call' }], openQuestions: [], suggestedNote: '' } },
   }),
   failed: id => ({ id, status: 'failed', statusReason: 'Claude returned no structured result.', stages: [{ id: 'answer', status: 'failed' }], actions: [A('retry')] }),
-  capped: id => ({ id, status: 'capped', statusReason: 'Turn cap reached', stages: [{ id: 'answer', status: 'capped' }], actions: [A('resume', false, 'No session.')] }),
+  capped: id => ({ id, status: 'capped', statusReason: 'Stopped at the time cap of 15 min.', stages: [{ id: 'answer', status: 'capped' }], actions: [A('resume', false, 'No session.')] }),
 };
 
 const panel = () => dom.document.getElementById('ask-panel');
@@ -103,7 +104,9 @@ test('pure helpers: a question\'s state in words, and the parts an answer shows 
   assert.ok(st({ id: 'q', run: states.running('q') }, 'running', /reading the code/).since < Date.now() - 11_000);
   st({ id: 'q', run: states.passed('q') }, 'answered');
   assert.equal(st({ id: 'q', run: states.failed('q') }, 'failed', /Failed: Claude returned no structured result\./).action, 'retry');
-  assert.equal(st({ id: 'q', run: states.capped('q') }, 'capped', /Turn cap reached: Turn cap reached/).action, 'resume');
+  assert.equal(st({ id: 'q', run: states.capped('q') }, 'capped', /^Stopped at the time cap of 15 min\.$/).action, 'resume');
+  assert.equal(ask.questionState({ id: 'q', run: { status: 'capped', statusReason: 'Turn cap reached', stages: [] } }).text, 'Turn cap reached.');
+  assert.equal(ask.questionState({ id: 'q', run: { status: 'capped', stages: [] } }).text, 'Stopped at a cap.');
   st({ id: 'q', run: { status: 'paused-limit', stages: [] } }, 'paused', /usage limit/);
   st({ id: 'q', run: { status: 'interrupted', statusReason: 'The app closed.', stages: [] } }, 'interrupted', /The app closed/);
   st({ id: 'q', run: { status: 'cancelled', stages: [] } }, 'cancelled');
@@ -237,6 +240,22 @@ test('the panel: a finding is asked about by reference; a question that could no
   assert.equal(card.getAttribute('aria-expanded'), 'true');
   dom.click(card);
   assert.equal(panel().hidden, true, 'the Ask button toggles the panel');
+});
+
+test('the panel: a capped question says which cap stopped it, and why Resume is off when it is', async () => {
+  const opener = ask.askButton(ask.runSubject({ id: 'r-cap', project: 'example', title: 'Explain: a big one' }));
+  dom.document.body.append(opener);
+  dom.click(opener);
+  const id = `q${n + 1}`;
+  scripts.set(id, [states.capped(id)]);
+  type('A big question');
+  dom.click(sendButton());
+  await settle(5);
+  assert.match(textOf(panel()), /A big question Stopped at the time cap of 15 min\. Resume is off: No session\. ?Open the run/);
+  assert.equal(panel().querySelector('[role="status"]').textContent, 'The question stopped at a cap.');
+  assert.equal(sendButton().getAttribute('aria-disabled'), null, 'a capped question does not block the next one');
+  dom.click(panel().querySelector('.ask-close'));
+  assert.equal(dom.document.activeElement, opener);
 });
 
 test('the panel: a route change closes it without moving the focus; a button that is not ready does nothing', async () => {

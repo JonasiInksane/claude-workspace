@@ -253,6 +253,8 @@ test('a launch that fails writes no record; a record that can\'t be written does
   assert.equal(run.status, 200, run.body.error);
   assert.deepEqual([run.body.recorded, ok.calls.length], [false, 1]);
   assert.match(logged.join('\n'), /could not record the run of flow review-anything/);
+  // The answer (the page's toast) says so too.
+  assert.equal(run.body.message, "Started Review anything in example; its version could not be recorded (the app's log says why)");
 });
 
 test('GET /api/flow-runs: the newest runs first, what changed since each, and refusals', async t => {

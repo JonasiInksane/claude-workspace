@@ -102,16 +102,20 @@ export async function recordFlowRun(dataDir, { flow, version = null, target, pro
 }
 
 const str = v => (typeof v === 'string' ? v : '');
+// A launch time the page can show: an ISO timestamp (recordFlowRun writes toISOString()), else ''.
+const isoTime = v => (/^\d{4}-\d\d-\d\dT/.test(str(v)) && !Number.isNaN(Date.parse(v)) ? v : '');
 
 // A version from a record, with only the fields and types flowVersion writes (null when it has
-// none), so a hand-edited or torn line can't break the page that shows it.
+// none), so a hand-edited or torn line can't break the page that shows it. `committed` needs the
+// commit it is committed in.
 function cleanVersion(v) {
   if (!v || typeof v !== 'object' || !HEX64_RE.test(str(v.sha256))) return null;
   const images = (Array.isArray(v.images) ? v.images : [])
     .filter(i => i && typeof i === 'object' && str(i.file) && HEX64_RE.test(str(i.sha256)))
     .map(i => ({ file: i.file, sha256: i.sha256 }));
+  const hubCommit = SHA_RE.test(str(v.hubCommit)) ? v.hubCommit : '';
   return {
-    sha256: v.sha256, hubCommit: SHA_RE.test(str(v.hubCommit)) ? v.hubCommit : '', committed: v.committed === true, images,
+    sha256: v.sha256, hubCommit, committed: v.committed === true && hubCommit !== '', images,
     captions: HEX64_RE.test(str(v.captions)) ? v.captions : '',
   };
 }
@@ -122,7 +126,7 @@ export async function readFlowRuns(dataDir, slug, { limit = RECENT_RUNS } = {}) 
   const { rows } = await readJsonl(flowRunsFile(dataDir));
   const mine = rows.filter(r => r && typeof r === 'object' && !Array.isArray(r) && r.flow === slug);
   return (limit > 0 ? mine.slice(-limit) : []).reverse().map(r => ({
-    at: str(r.at), flow: slug, version: cleanVersion(r.version), target: str(r.target), project: str(r.project),
+    at: isoTime(r.at), flow: slug, version: cleanVersion(r.version), target: str(r.target), project: str(r.project),
     agent: str(r.agent), sessionId: str(r.sessionId),
   }));
 }

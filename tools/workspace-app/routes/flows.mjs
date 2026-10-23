@@ -116,12 +116,14 @@ export function routes({ root, actions, dataDir }) {
       try {
         await recordFlowRun(dataDir, { flow: f.slug, version, target: f.target, project, agent: f.agent, sessionId });
       } catch (e) {
-        // Best effort, like sessions.jsonl: the session started, so the run still counts as started.
+        // Best effort, like sessions.jsonl: the session started, so the run still counts as started;
+        // the message says that its version wasn't recorded.
         recorded = false;
         console.error(`workspace-app: could not record the run of flow ${f.slug}: ${e.message}`);
       }
       const where = isAnyProject(f) ? ` in ${project}` : '';
-      return { ok: true, message: `Started ${f.title || f.slug}${where}`, project, sessionId, recorded };
+      const note = recorded ? '' : "; its version could not be recorded (the app's log says why)";
+      return { ok: true, message: `Started ${f.title || f.slug}${where}${note}`, project, sessionId, recorded };
     },
 
     // The newest launches of one flow (at most 20, newest first), each with `changes`: what is

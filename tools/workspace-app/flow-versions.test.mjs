@@ -143,12 +143,21 @@ test('readFlowRuns keeps the newest 20, skips broken lines and cleans odd values
     version: { sha256: sha('w'), hubCommit: '--evil', committed: 'yes', images: [{ file: 'a.png', sha256: 'nope' }, { file: 'b.png', sha256: sha('b') }, null], captions: 7 },
   })}\n`);
   appendFileSync(flowRunsFile(dataDir), `${JSON.stringify({ flow: 'review', target: 'hub', version: { sha256: 'short' }, sessionId: 'no-version' })}\n`);
-  const [last, odd] = await readFlowRuns(dataDir, 'review');
+  // A time that is no timestamp, and "committed" without a commit to be committed in.
+  appendFileSync(flowRunsFile(dataDir), `${JSON.stringify({
+    at: 'yesterday', flow: 'review', target: 'hub', sessionId: 'no-commit',
+    version: { sha256: sha('c'), hubCommit: 'not-a-sha', committed: true, images: [], captions: '' },
+  })}\n`);
+  const [noCommit, last, odd, newest] = await readFlowRuns(dataDir, 'review');
+  assert.deepEqual([noCommit.at, noCommit.version.hubCommit, noCommit.version.committed], ['', '', false]);
   assert.deepEqual(last, { at: '', flow: 'review', version: null, target: 'hub', project: '', agent: '', sessionId: 'no-version' });
   assert.deepEqual(odd, {
     at: '', flow: 'review', target: 'project', project: '', agent: '', sessionId: 'odd',
     version: { sha256: sha('w'), hubCommit: '', committed: false, images: [{ file: 'b.png', sha256: sha('b') }], captions: '' },
   });
+  // A real launch time stays as written.
+  assert.equal(newest.sessionId, 's24');
+  assert.match(newest.at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
   // A data folder that doesn't exist yet has no runs.
   assert.deepEqual(await readFlowRuns(join(dataDir, 'nope'), 'review'), []);
 });

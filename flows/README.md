@@ -75,9 +75,10 @@ flow, where it ran (target, project, agent), the session id and the version:
 | `images` | each image the run passed (by file name) with the SHA-256 of its bytes |
 | `captions` | SHA-256 of those images' captions (empty when none has one) |
 
-A launch that fails or is refused writes nothing. The editor lists the newest 20 under
-"Recent runs": when, where, the short hash, and "edited since" once the prompt or the images
-changed after that run. Code: `tools/workspace-app/flow-versions.mjs`.
+A launch that fails or is refused writes nothing; when the line itself can't be written, the
+session still starts and the app's message says the version wasn't recorded. The editor lists
+the newest 20 under "Recent runs": when, where, the short hash, and "edited since" once the
+prompt or the images changed after that run. Code: `tools/workspace-app/flow-versions.mjs`.
 
 ## Writing the prompt
 

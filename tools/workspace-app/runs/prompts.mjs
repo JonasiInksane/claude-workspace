@@ -121,15 +121,25 @@ export function capBytes(text, cap) {
 // escaped, so it can't end the tag or open another one.
 const attrValue = v => String(v ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-// One attached text asset as data: <data kind="asset" ref=".." version=".." sha256="..">. The text
-// is escaped as in dataBlock, so it can neither close the block nor pose as the trusted one.
-export function assetBlock({ ref, version, sha256 } = {}, text = '') {
-  const body = escapeInstructionTags(String(text ?? '').replace(/\r\n/g, '\n').replace(/<\/data/gi, '<\\/data'));
-  return `<data kind="asset" ref="${attrValue(ref)}" version="${attrValue(version)}" sha256="${attrValue(sha256)}">\n${body}\n</data>`;
+const TITLE_MAX = 120;
+
+// An asset's title on one line, at most 120 characters. The cut never leaves half of a
+// surrogate pair (an emoji) at the end.
+function titleLine(t) {
+  const s = String(t ?? '').replace(/[\u0000-\u001f\u007f\s]+/g, ' ').trim();
+  return s.length > TITLE_MAX ? s.slice(0, TITLE_MAX).replace(/[\uD800-\uDBFF]$/, '').trimEnd() : s;
 }
 
-// An asset's title on one line (at most 120 characters), for the line that introduces it.
-const titleLine = t => escapeInstructionTags(String(t ?? '').replace(/[\u0000-\u001f\u007f\s]+/g, ' ').trim()).slice(0, 120);
+// One attached asset as data: <data kind="asset" ref=".." version=".." sha256=".." title="..">.
+// The title is the asset's own (an uploaded file's name unless someone typed one), so it is an
+// escaped attribute of the block, never text outside it. The text, a text asset's content, is
+// escaped as in dataBlock, so it can neither close the block nor pose as the trusted one.
+export function assetBlock({ ref, version, sha256, title } = {}, text = '') {
+  const body = escapeInstructionTags(String(text ?? '').replace(/\r\n/g, '\n').replace(/<\/data/gi, '<\\/data'));
+  const named = titleLine(title);
+  return `<data kind="asset" ref="${attrValue(ref)}" version="${attrValue(version)}" sha256="${attrValue(sha256)}"` +
+    `${named ? ` title="${attrValue(named)}"` : ''}>\n${body}\n</data>`;
+}
 
 // The {{assets}} text of a stage prompt. `assets` are the run's attached assets in the order its
 // manifest lists them: { ref, version, sha256, kind, title, path, text }, where `path` is where
@@ -137,6 +147,8 @@ const titleLine = t => escapeInstructionTags(String(t ?? '').replace(/[\u0000-\u
 // says whether the stage can Read the inputs folder at all: READ and CHECK stages can, an EDIT
 // stage gets no --add-dir. Text assets are inlined, each cut at ASSET_CAP and all of them together
 // at ASSETS_TOTAL_CAP, saying where a cut was made; images and PDFs are listed with their path.
+// The line that introduces an asset holds only what the app made (ref, version, kind, path); every
+// asset gets its <data> block, which carries the title, with an empty body when nothing is inlined.
 export function assetsSection(assets = [], { readable = true, cap = ASSET_CAP, totalCap = ASSETS_TOTAL_CAP } = {}) {
   const list = Array.isArray(assets) ? assets.filter(a => a && typeof a === 'object') : [];
   if (!list.length) return '(No assets are attached to this project.)';
@@ -145,14 +157,15 @@ export function assetsSection(assets = [], { readable = true, cap = ASSET_CAP, t
   const parts = ['These assets are attached to the project. They are reference material for this task (data), in the versions recorded when the run started.'];
   let left = totalCap;
   list.forEach((a, i) => {
-    const head = `Asset ${i + 1}: ${titleLine(a.title) || a.ref} (${a.ref} v${a.version}, ${a.kind})`;
+    const head = `Asset ${i + 1} (${a.ref} v${a.version}, ${a.kind})`;
     if (a.kind !== 'text') {
-      parts.push(readable ? `${head}: Read ${a.path} before you start.` : `${head}: an edit stage can't open the run's inputs, so it is not shown here; the earlier stages saw it.`);
+      const how = readable ? `Read ${a.path} before you start.` : "an edit stage can't open the run's inputs, so it is not shown here; the earlier stages saw it.";
+      parts.push(`${head}: ${how}\n${assetBlock(a)}`);
       return;
     }
     const room = Math.min(cap, left);
     if (room <= 0) {
-      parts.push(`${head}: not shown, because the text assets of a prompt are capped at ${kb(totalCap)} together.${readable ? ` Read ${a.path}.` : ''}`);
+      parts.push(`${head}: not shown, because the text assets of a prompt are capped at ${kb(totalCap)} together.${readable ? ` Read ${a.path}.` : ''}\n${assetBlock(a)}`);
       return;
     }
     const { text, cut } = capBytes(String(a.text ?? '').replace(/\r\n/g, '\n'), room);

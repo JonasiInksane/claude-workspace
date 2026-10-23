@@ -1393,11 +1393,11 @@ test('assets: a read stage gets text inline and images by their inputs path; eac
   const run = await h.drive(await runWithAssets(h, 'explain', { what: 'Which colours?' }));
   assert.equal(run.status, 'passed', run.statusReason);
   const prompt = h.claudeCalls('answer')[0].prompt;
-  const block = `<data kind="asset" ref="shared:style-guide" version="2" sha256="${sha256Text(STYLE)}">\n# Style\nUse teal.\n\n</data>`;
+  const block = `<data kind="asset" ref="shared:style-guide" version="2" sha256="${sha256Text(STYLE)}" title="Style guide">\n# Style\nUse teal.\n\n</data>`;
   assert.ok(prompt.includes(`## Attached assets\n\nThese assets are attached to the project.`), 'the section, in the template\'s place');
-  assert.ok(prompt.includes(`Asset 1: Style guide (shared:style-guide v2, text)\n${block}`), prompt);
+  assert.ok(prompt.includes(`Asset 1 (shared:style-guide v2, text)\n${block}`), prompt);
   const png = join(store.runDir(h.data, run), 'inputs', 'assets', 'project-palette@v1.png');
-  assert.ok(prompt.includes(`Asset 2: Palette (example:palette v1, image): Read ${png} before you start.`));
+  assert.ok(prompt.includes(`Asset 2 (example:palette v1, image): Read ${png} before you start.\n<data kind="asset" ref="example:palette" version="1" sha256="${sha256Text(PNG_BYTES)}" title="Palette">`));
   assert.ok(prompt.indexOf('## Attached assets') > prompt.indexOf('<project_instructions source="AGENTS.md'), 'after the project instructions');
   const att = stageOf(run, 'answer').attempts[0];
   assert.equal(att.promptSha256, sha256Text(prompt));
@@ -1415,10 +1415,10 @@ test('assets: an edit stage gets the text inline and is told it can not open the
   for (const stage of ['prove', 'implement']) {
     const p = h.claudeCalls(stage)[0].prompt;
     assert.ok(p.includes('Use teal.'), stage);
-    assert.match(p, /Asset 2: Palette \(example:palette v1, image\): an edit stage can't open the run's inputs, so it is not shown here/, stage);
+    assert.match(p, /Asset 2 \(example:palette v1, image\): an edit stage can't open the run's inputs, so it is not shown here/, stage);
     assert.ok(!p.includes('project-palette@v1.png'), `${stage}: no path it can't read`);
   }
-  assert.match(h.claudeCalls('review')[0].prompt, /Asset 2: Palette \(example:palette v1, image\): Read .*project-palette@v1\.png before you start\./);
+  assert.match(h.claudeCalls('review')[0].prompt, /Asset 2 \(example:palette v1, image\): Read .*project-palette@v1\.png before you start\./);
 });
 
 test('assets: a copy changed or gone since the run started stops the stage before Claude starts', async t => {
@@ -1472,8 +1472,8 @@ test('preview: the first prompt shows the draft\'s attached assets under the nam
     assets: [item(ASSETS[0], join(lib, 'v2.md')), item(ASSETS[1], join(lib, 'v1.png')), { ref: 'shared:gone', pin: null, version: null, missing: true }],
   };
   const p = await h.ex.preview(draft);
-  assert.ok(p.prompt.includes(`<data kind="asset" ref="shared:style-guide" version="2" sha256="${sha256Text(STYLE)}">\n# Style\nUse teal.\n`));
-  assert.ok(p.prompt.includes('Asset 2: Palette (example:palette v1, image): Read <run folder>\\inputs\\assets\\project-palette@v1.png before you start.'));
+  assert.ok(p.prompt.includes(`<data kind="asset" ref="shared:style-guide" version="2" sha256="${sha256Text(STYLE)}" title="Style guide">\n# Style\nUse teal.\n`));
+  assert.ok(p.prompt.includes('Asset 2 (example:palette v1, image): Read <run folder>\\inputs\\assets\\project-palette@v1.png before you start.'));
   assert.ok(!p.prompt.includes('shared:gone'), 'a missing one is left out (the refusal names it)');
   assert.ok(!existsSync(join(h.data, 'runs')), 'a preview writes nothing');
 });

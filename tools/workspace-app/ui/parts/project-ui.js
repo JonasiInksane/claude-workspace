@@ -20,9 +20,12 @@ export const short = sha => String(sha || '').slice(0, 7);
 // The current minute: a memo dependency, so "5 min ago" texts move on while nothing else changes.
 export const minute = () => Math.floor(Date.now() / 60_000);
 
-// A button with its own data-key. `describedBy` names the visible reason of a disabled one.
-export function btn(key, label, onClick, { cls = 'btn small', disabled = false, describedBy = null, title = null } = {}) {
-  return keyed(h('button', { class: cls, type: 'button', disabled, title, 'aria-describedby': describedBy, on: { click: onClick } }, label), key);
+// A button with its own data-key. `describedBy` names the visible reason of a disabled one;
+// `ariaLabel` gives a short label ("Open") the context a screen reader would miss.
+export function btn(key, label, onClick, { cls = 'btn small', disabled = false, describedBy = null, title = null, ariaLabel = null } = {}) {
+  return keyed(h('button', {
+    class: cls, type: 'button', disabled, title, 'aria-label': ariaLabel, 'aria-describedby': describedBy, on: { click: onClick },
+  }, label), key);
 }
 
 export function cardHead(title, ...extra) {

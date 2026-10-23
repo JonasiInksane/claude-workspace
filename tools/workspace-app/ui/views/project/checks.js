@@ -260,7 +260,8 @@ function historyCard(name, s) {
           h('div', { class: 'title' }, `${LEVEL_LABELS[line.level] || line.level || 'Check'} · `, resEl(checkResult(line))),
           h('div', { class: 'sub wrap' }, [countsText(line) || 'no counts recorded', fmtAgo(line.at), fmtDuration(line.durationMs),
             line.treeMode === 'run' ? 'run worktree' : line.treeMode === 'main' ? 'main checkout' : '', line.baseSha ? `base ${short(line.baseSha)}` : ''].filter(Boolean).join(' · '))),
-        line.runId ? btn(`hist:${i}:${line.runId}`, 'Open', () => go('run', line.runId), { title: 'Open the check run' }) : null)))));
+        line.runId ? btn(`hist:${i}:${line.runId}`, 'Open', () => go('run', line.runId),
+          { title: 'Open the check run', ariaLabel: `Open the ${LEVEL_LABELS[line.level] || ''} check run (${fmtAgo(line.at) || 'no date'})`.replace(/\s+/g, ' ') }) : null)))));
   });
 }
 

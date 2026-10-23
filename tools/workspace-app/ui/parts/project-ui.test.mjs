@@ -28,6 +28,8 @@ test('btn: a typed button with its key, its reason and its handler', () => {
   const plain = btn('k2', 'Plain', () => {});
   assert.equal(plain.className, 'btn small');
   assert.equal(plain.getAttribute('aria-describedby'), null, 'no reason: no aria-describedby');
+  assert.equal(plain.getAttribute('aria-label'), null);
+  assert.equal(btn('k3', 'Open', () => {}, { ariaLabel: 'Open the Quick check run' }).getAttribute('aria-label'), 'Open the Quick check run');
 });
 
 test('cardHead leaves out empty actions; stateCard and the badges say everything in words', () => {

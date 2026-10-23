@@ -65,6 +65,7 @@ test('the tab: one row per level with its counts apart, the baseline, and the hi
   assert.equal(history.length, 2);
   assert.match(textOf(history[1]), /Standard · Fail · 0 new · 2 known/);
   assert.match(textOf(history[1]), /1 new failure · 2 pre-existing failures · 0 flaky/);
+  assert.equal(history[0].querySelector('button').getAttribute('aria-label'), 'Open the Quick check run (just now)', 'each Open says which check it opens');
   dom.click(el.querySelector('[data-key="check:quick:261022-100007-check-passed"]'));
   assert.equal(dom.location.hash, '#run/261022-100007-check-passed', 'a result opens its check run');
 });

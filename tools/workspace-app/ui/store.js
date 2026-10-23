@@ -130,11 +130,12 @@ export const tabsOf = p => (p && Array.isArray(p.tabs) && p.tabs.length ? p.tabs
 // The project page's sub-route made whole from the state: the project's own spelling, a tab it
 // has (its first tab when the tab is missing or unknown; the rest goes with an unknown tab), and
 // the current project when the route names none. Before the state is loaded, and for a project
-// the state doesn't list (the page then asks the server about it), the route stays as it is.
+// the state doesn't list (the page then asks the server about it), the route stays as it is (the
+// current project may still change when the state arrives, so it isn't filled in before).
 export function canonicalProjectSub(subPath, projects = state && state.projects, fallback = currentProject) {
   const r = projectRoute(subPath);
   const list = Array.isArray(projects) ? projects : null;
-  if (!list) return projectSub(r.name || fallback || '', r.tab, r.rest);
+  if (!list) return projectSub(r.name, r.tab, r.rest);
   const p = projectEntry(r.name || fallback, list);
   if (!p) return r.name ? projectSub(r.name, r.tab, r.rest) : '';
   const tabs = tabsOf(p);

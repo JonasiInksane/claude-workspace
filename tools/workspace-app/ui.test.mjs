@@ -111,7 +111,7 @@ test('canonicalProjectSub: the state completes a project route (first tab, known
   assert.equal(canonicalProjectSub('', projects, 'gone'), '', 'a current project that is gone gives nothing');
   assert.equal(canonicalProjectSub('', projects, ''), '');
   assert.equal(canonicalProjectSub('example', null, ''), 'example', 'before the state arrives the route stays');
-  assert.equal(canonicalProjectSub('', null, 'example'), 'example');
+  assert.equal(canonicalProjectSub('', null, 'example'), '', 'and the current project waits for the state too (it may be stale)');
   for (const s of ['example', 'notes/checks', 'EXAMPLE', '', 'ghost/x']) {
     const once = canonicalProjectSub(s, projects, 'example');
     assert.equal(canonicalProjectSub(once, projects, 'example'), once, `stable: ${s}`);

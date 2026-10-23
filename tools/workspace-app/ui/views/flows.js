@@ -1,24 +1,38 @@
-// Flows: a tuned prompt plus its reference images, run in the hub, a project or one agent.
-// Cards with Run and Edit; the editor (create, save, images with captions, archive) and the run
-// dialog (the exact prompt, built by the server, with optional notes).
+// Flows: a tuned prompt plus its reference images, run in the hub, a project (a fixed one, or any
+// project, chosen when it runs) or one agent. Cards with Run and Edit; the editor (create, save,
+// images with captions, archive, recent runs) and the run dialog (the exact prompt, built by the
+// server, with optional notes).
 //
 // A flow may ask one question on every run (SPEC 5.8): the editor's "Ask" is the label of the
 // run dialog's text box, and "Required" means a run needs an answer. The run dialog then labels
 // the box with the question, marks it required, shows "Say what you want first." and keeps
 // Start off while it is empty; the server refuses an empty answer too (400), and that refusal
 // shows in the dialog. The view repaints only when the flows or tools changed.
-import { act, api, h, keepFocus, keyed, openPlace, plural, qs, toast } from '../lib.js';
+//
+// A flow for any project (project "*") has a project picker in its run dialog, set to the
+// project open in the app (store.currentProject) when it is one the app can start in; Start
+// stays off until a project is chosen, and the server refuses a run without one too. Every
+// launch is recorded with the flow's version (flow-versions.mjs); the editor lists the newest
+// as "Recent runs", marked "edited since" when the flow is no longer the version that ran.
+import { act, api, fmtAgo, fmtTime, h, keepFocus, keyed, openPlace, plural, qs, toast } from '../lib.js';
 import { clearGuard, closeDialog, dialog, openDialog } from '../dialog.js';
-import { refresh, state } from '../store.js';
+import { currentProject, refresh, state } from '../store.js';
 import { uploadFiles } from './images.js';
 
-// Where a flow runs, as one select value: hub, project:<name> or agent:<project>/<agent>.
-const flowTargetValue = f => (f.target === 'hub' ? 'hub' : f.target === 'project' ? `project:${f.project}` : `agent:${f.project}/${f.agent}`);
-function flowTargetLabel(f) {
+// The `project` of a flow for any project (ANY_PROJECT in tools/lib/flows.mjs).
+const ANY_PROJECT = '*';
+const isAnyProject = f => !!f && f.target === 'project' && f.project === ANY_PROJECT;
+
+// Where a flow runs, as one select value: hub, project:<name> (project:* for any project) or
+// agent:<project>/<agent>. These helpers and the ones below the editor are exported for the
+// view's tests (flows.test.mjs).
+export const flowTargetValue = f => (f.target === 'hub' ? 'hub' : f.target === 'project' ? `project:${f.project}` : `agent:${f.project}/${f.agent}`);
+export function flowTargetLabel(f) {
   if (f.target === 'hub') return 'Hub';
+  if (isAnyProject(f)) return 'Any project';
   return f.target === 'project' ? f.project : `${f.project} · ${f.agent}`;
 }
-function parseTargetValue(v) {
+export function parseTargetValue(v) {
   if (v === 'hub') return { target: 'hub', project: '', agent: '' };
   if (v.startsWith('project:')) return { target: 'project', project: v.slice(8), agent: '' };
   const rest = v.slice(6);
@@ -27,9 +41,11 @@ function parseTargetValue(v) {
 }
 
 function targetSelect(current) {
+  const launchable = state.projects.filter(p => p.launchable);
   const select = h('select', {},
     h('option', { value: 'hub' }, 'Hub: Claude in the workspace'),
-    state.projects.filter(p => p.launchable).map(p => h('optgroup', { label: p.name },
+    launchable.length ? h('option', { value: `project:${ANY_PROJECT}` }, 'Any project (choose when you run it)') : null,
+    launchable.map(p => h('optgroup', { label: p.name },
       h('option', { value: `project:${p.name}` }, `${p.name}: project session`),
       p.agents.filter(a => a.valid && a.isolated && !a.duplicate)
         .map(a => h('option', { value: `agent:${p.name}/${a.name}` }, `${p.name}: ${a.name} (agent, own memory and images)`)))));
@@ -120,13 +136,56 @@ function paint(el) {
   el.replaceChildren(
     h('div', { class: 'view-head' },
       h('div', {}, h('h2', {}, 'Flows'),
-        h('p', {}, 'A tuned prompt plus its reference images. Run starts Claude with both, in the hub, a project or one agent.')),
+        h('p', {}, 'A tuned prompt plus its reference images. Run starts Claude with both, in the hub, a project (or any project you pick) or one agent.')),
       h('button', { class: 'btn primary', on: { click: () => flowDialog('') } }, '+ New flow')),
     state.flows.length
       ? h('div', { class: 'grid2' }, state.flows.map(flowCard))
       : h('div', { class: 'card' }, h('div', { class: 'empty' }, h('b', {}, 'No flows yet'),
         'Make one for work you repeat: a prompt you have tuned, plus the images that go with it.')),
     archived || '');
+}
+
+// Where a recorded run started: Hub, the project, or "project · agent".
+export function runWhere(r) {
+  if (r.target === 'hub') return 'Hub';
+  return r.target === 'agent' ? `${r.project} · ${r.agent}` : r.project || 'a project';
+}
+
+const CHANGE_WORDS = { prompt: 'the prompt', images: 'the images' };
+
+// The version line of a recorded run: `before`, the short hash (shown as code, '' without a
+// version), `after` (the hub commit that version is in, and what changed in the flow since), and
+// `edited` when something did. `changes` comes from GET /api/flow-runs.
+export function runVersionParts(r) {
+  const v = r.version;
+  const edited = (r.changes || []).filter(c => CHANGE_WORDS[c]);
+  const since = edited.length ? ` · since then ${edited.map(c => CHANGE_WORDS[c]).join(' and ')} changed` : '';
+  if (!v) return { before: 'The version was not recorded', hash: '', after: since, edited: edited.length > 0 };
+  const commit = v.committed ? ` · in hub commit ${v.hubCommit.slice(0, 7)}` : ' · not committed in the hub';
+  return { before: 'Version ', hash: v.sha256.slice(0, 8), after: commit + since, edited: edited.length > 0 };
+}
+
+// One recorded launch: when and where, then its version line, and "edited since" when the flow
+// is no longer the version that ran.
+function flowRunRow(r) {
+  const p = runVersionParts(r);
+  const when = r.at ? h('time', { datetime: r.at, title: fmtTime(r.at) }, fmtAgo(r.at)) : 'At an unknown time';
+  return h('li', {},
+    h('div', { class: 'main' },
+      h('div', { class: 'title' }, when, ` · ${runWhere(r)}`),
+      h('div', { class: 'sub wrap' }, p.before, p.hash ? h('code', {}, p.hash) : null, p.after)),
+    p.edited ? h('span', { class: 'badge amber' }, 'edited since') : null);
+}
+
+// The editor's "Recent runs" section (newest first), loaded after the dialog opens.
+function recentRuns(slug) {
+  const box = h('div', { class: 'flow-runs' }, h('p', { class: 'muted small-text' }, 'Loading…'));
+  api(`/api/flow-runs?${qs({ flow: slug })}`).then(r => {
+    box.replaceChildren(r.runs.length
+      ? h('ul', { class: 'list' }, r.runs.map(flowRunRow))
+      : h('p', { class: 'muted small-text' }, 'No runs yet. Each run is listed here with the version of the flow it used.'));
+  }, e => box.replaceChildren(h('p', { class: 'muted small-text' }, `Recent runs could not be read: ${e.message}`)));
+  return h('div', {}, h('div', { class: 'section-label' }, h('span', {}, 'Recent runs')), box);
 }
 
 // Create (slug '') or edit a flow. A new flow reopens in edit mode, where images can be added.
@@ -255,7 +314,7 @@ async function flowDialog(slug) {
   const body = h('div', { class: 'form flow-form' },
     h('div', { class: 'two-col' },
       h('label', {}, 'Title', title),
-      h('label', {}, 'Runs in', h('small', {}, 'An agent starts with its own memory and images.'), target)),
+      h('label', {}, 'Runs in', h('small', {}, 'Any project: you pick one on every run. An agent has its own memory and images.'), target)),
     h('label', {}, 'Description', description),
     askRow,
     launchBox,
@@ -263,7 +322,8 @@ async function flowDialog(slug) {
       h('small', {}, 'Say the goal, why it matters, the scope, what done looks like and the output you want. ' +
         'The images go above it and run notes below it when you run it. Ctrl+S saves.'), prompt),
     error,
-    images);
+    images,
+    slug ? recentRuns(slug) : null);
   body.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); doSave(); }
   });
@@ -294,20 +354,58 @@ function archiveFlowDialog(slug, title) {
   });
 }
 
+// The run dialog's projects for a flow for any project: the ones the app can start in, and the
+// one to preselect, the project open in the app (store.currentProject) when it is one of them.
+export function projectChoices(projects, current) {
+  const choices = (Array.isArray(projects) ? projects : []).filter(p => p && p.launchable).map(p => p.name);
+  return { choices, value: choices.includes(current) ? current : '' };
+}
+
+// Start in the run dialog: off, with the reason as text, while a required question has no
+// answer (`needAnswer`) or a flow for any project has no project yet. `project` is null for a
+// flow with a fixed place (`place`: Hub, the project, project · agent), else the chosen one.
+export function startState({ needAnswer = false, project = null, place = '' } = {}) {
+  const needProject = project !== null && !project;
+  return {
+    disabled: needAnswer || needProject,
+    text: needProject ? 'Start' : `Start in ${project !== null ? project : place}`,
+    reason: needProject && needAnswer ? 'Start is off until you choose a project and answer the question.'
+      : needProject ? 'Start is off until you choose a project.'
+        : needAnswer ? 'Start is off until you answer the question.' : '',
+  };
+}
+
+// The project picker of a flow for any project. Returns { pick, help, choices }.
+function projectPicker() {
+  const { choices, value } = projectChoices(state && state.projects, currentProject);
+  const pick = h('select', { id: 'flowProject', required: true, 'aria-describedby': 'flowProjectHelp' },
+    h('option', { value: '' }, choices.length ? 'Choose a project…' : 'No project can start from the app'),
+    choices.map(name => h('option', { value: name }, name)));
+  pick.value = value;
+  const help = h('small', { id: 'flowProjectHelp' }, choices.length
+    ? 'This flow runs in any project. Claude starts in the one you choose.'
+    : 'Every project folder here has unusual characters in its name; start those from a terminal.');
+  return { pick, help, choices };
+}
+
 // Shows the exact prompt Claude will start with (built by the server), with the run's notes: the
 // answer to the flow's question when it has one (`ask`), required when the flow says so. The
 // flow is read again first (GET /api/flow), because the list in the state doesn't carry the
-// question. Exported for the palette (parts/palette.js), which passes a flow from the state.
+// question. A flow for any project also asks where to run it. Exported for the palette
+// (parts/palette.js), which passes a flow from the state.
 export async function runFlowDialog(f) {
   let ask = '';
   let required = false;
+  let anyProject = isAnyProject(f);
   try {
     const full = await api(`/api/flow?${qs({ slug: f.slug })}`);
     ask = String(full.ask || '').trim();
     required = !!(ask && full.askRequired);
+    anyProject = isAnyProject(full);
   } catch (e) {
     toast(e.message, true); // the run itself is checked again by the server
   }
+  const picker = anyProject ? projectPicker() : null;
   const notes = h('textarea', {
     id: 'flowNotes', maxlength: 2000, required, 'aria-required': required ? 'true' : null,
     'aria-describedby': 'flowNotesHelp flowNotesError',
@@ -320,18 +418,20 @@ export async function runFlowDialog(f) {
   const start = h('button', { class: 'btn primary', type: 'button' }, `Start in ${flowTargetLabel(f)}`);
   const reason = h('span', { class: 'reason push-left', id: 'flowStartReason' });
   let touched = false;
-  // Start is off (with its reason as text) while a required answer is empty; the error and
-  // aria-invalid show once the box was used, not before the first key.
+  // Start (startState): the error and aria-invalid show once the box was used, not before the
+  // first key.
   const sync = () => {
-    const empty = !notes.value.trim();
-    const blocked = required && empty;
-    start.disabled = blocked;
-    reason.textContent = blocked ? 'Start is off until you answer the question.' : '';
-    const invalid = blocked && touched;
+    const needAnswer = required && !notes.value.trim();
+    const s = startState({ needAnswer, project: picker ? picker.pick.value : null, place: flowTargetLabel(f) });
+    start.disabled = s.disabled;
+    start.textContent = s.text;
+    reason.textContent = s.reason;
+    const invalid = needAnswer && touched;
     noteError.hidden = !invalid;
     if (invalid) notes.setAttribute('aria-invalid', 'true');
     else notes.removeAttribute('aria-invalid');
   };
+  if (picker) picker.pick.addEventListener('change', () => { runError.hidden = true; sync(); });
   let timer = 0;
   const preview = async () => {
     try {
@@ -353,7 +453,8 @@ export async function runFlowDialog(f) {
     start.disabled = true;
     runError.hidden = true;
     try {
-      const r = await api('/api/flows/run', { method: 'POST', body: { slug: f.slug, notes: notes.value } });
+      const body = { slug: f.slug, notes: notes.value, ...(picker ? { project: picker.pick.value } : {}) };
+      const r = await api('/api/flows/run', { method: 'POST', body });
       dialog.close();
       toast(r.message || 'Started');
     } catch (e) {
@@ -361,7 +462,7 @@ export async function runFlowDialog(f) {
       runError.textContent = e.message;
       runError.hidden = false;
       sync();
-      if (start.disabled) notes.focus();
+      if (start.disabled) (picker && !picker.pick.value ? picker.pick : notes).focus();
     }
   });
   const label = ask
@@ -370,7 +471,9 @@ export async function runFlowDialog(f) {
       notes, noteError)
     : h('label', { for: 'flowNotes' }, 'Notes for this run',
       h('small', { id: 'flowNotesHelp' }, 'Added below the prompt. Leave empty to run the flow as it is.'), notes, noteError);
+  const where = picker ? h('label', { for: 'flowProject', class: 'flow-project' }, 'Project', picker.help, picker.pick) : null;
   openDialog(`Run: ${f.title || f.slug}`, h('div', { class: 'form' },
+    where,
     label,
     runError,
     h('div', {}, h('div', { class: 'section-label' }, h('span', {}, 'Claude starts with')), settings, pre)), {
@@ -379,7 +482,7 @@ export async function runFlowDialog(f) {
   });
   sync();
   preview();
-  notes.focus();
+  (picker && !picker.pick.value && picker.choices.length ? picker.pick : notes).focus();
 }
 
 export default {

@@ -5,7 +5,8 @@
 .flow-thumbs:empty { display: none; }
 .flow-thumbs img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); background: var(--code-bg); }
 .flow-form .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.prompt-edit { min-height: 30vh; }
+/* .flow-form: .form textarea (app.css) would otherwise win and keep the prompt box at 70px */
+.flow-form .prompt-edit { min-height: 30vh; }
 details.launch { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
 details.launch summary { cursor: pointer; font-weight: 600; font-size: 13px; }
 details.launch[open] summary { margin-bottom: 8px; }
@@ -22,7 +23,15 @@ details.launch[open] summary { margin-bottom: 8px; }
 .ask-required { display: grid; gap: 4px; align-content: end; padding-bottom: 6px; }
 .ask-required small { font-weight: 400; color: var(--muted); font-size: var(--t-md); }
 .ask-required label.check:has(input:disabled) { opacity: .6; cursor: not-allowed; }
+/* The run dialog's project picker (a flow for any project): a select as wide as a name needs */
+.flow-project select { max-width: 380px; }
+/* The editor's "Recent runs": when and where on the first line, the version on the second */
+.flow-runs .list li { padding: 7px 0; align-items: flex-start; }
+.flow-runs .list .title { font-size: var(--t-md); }
+.flow-runs .list .sub code { font-size: var(--t-sm); }
+.flow-runs .badge { margin-top: 2px; }
 
 @media (max-width: 760px) {
   .flow-form .two-col { grid-template-columns: 1fr; }
+  .flow-project select { max-width: none; }
 }

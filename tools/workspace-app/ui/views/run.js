@@ -1,7 +1,8 @@
 // Live run (#run/<id>, SPEC 5.6, mockup #v-run): one pipeline run as it happens.
 //
 //   header      title, status (a dot next to a text badge), branch, base, tree, level and why,
-//               "Notify me when it needs me", Open in terminal (or Back to app) and Cancel run
+//               "Notify me when it needs me", Ask (the Ask panel, parts/ask-panel.js), Open in
+//               terminal (or Back to app) and Cancel run
 //   meters      turns of the Claude stage, time in this stage against its cap, fix rounds, the
 //               usage window (ADDENDUM A12) and the API-equivalent estimate
 //   state       what the status means and its buttons: Retry stage, Resume (+20 turns), Fix
@@ -28,6 +29,7 @@ import { statusPair } from '../parts/status.js';
 import { bar, setBar } from '../parts/bar.js';
 import { createTimeline, stageList, stageMeta } from '../parts/timeline.js';
 import { actButton, actionOf, gateCard, gateKey, setFrom } from '../parts/gatecards.js';
+import { askButton, runSubject } from '../parts/ask-panel.js';
 
 const RUN_ID_RE = /^[0-9a-z-]{1,64}$/;
 const TERMINAL = ['passed', 'failed', 'cancelled', 'committed'];
@@ -275,6 +277,7 @@ function mount(section) {
     meta: h('p', { class: 'run-meta' }),
     notify,
     notifyLabel: h('label', { class: 'check run-notify' }, notify, 'Notify me when it needs me'),
+    ask: askButton(() => runSubject(S.run), { ariaLabel: 'Ask about this run' }),
     take: actButton('Open in terminal', () => runAction('takeover'), { key: 'h-take', iconMarkup: TERM_ICON }),
     back: actButton('Back to app', () => runAction('back', {}, {
       confirm: ['Back to app?', 'Close the terminal session first. Then the app takes the tree back and the next gate runs again.', 'Back to app'],
@@ -294,7 +297,7 @@ function mount(section) {
   root = h('div', { id: 'run-panel', class: 'run-view' },
     h('div', { class: 'view-head' },
       h('div', { class: 'run-headline' }, el.crumb, el.h2, el.meta),
-      h('div', { class: 'row-actions run-head-actions' }, el.notifyLabel, el.take.el, el.back.el, el.cancel.el)),
+      h('div', { class: 'row-actions run-head-actions' }, el.notifyLabel, el.ask, el.take.el, el.back.el, el.cancel.el)),
     el.warnings, el.meters, el.state, el.gate, el.result,
     h('div', { class: 'run-grid' },
       h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Stages'), h('span', { class: 'muted small' }, 'Claude · code · you')), el.stages),
@@ -362,6 +365,7 @@ function paintHead(run) {
     el.meta.hidden = !meta.length;
   }
   el.notifyLabel.hidden = !run || TERMINAL.includes(run.status);
+  el.ask.hidden = !run;
   const inTerminal = !!run && run.status === 'in-terminal';
   const take = actionOf(run, 'takeover');
   const cancel = actionOf(run, 'cancel');

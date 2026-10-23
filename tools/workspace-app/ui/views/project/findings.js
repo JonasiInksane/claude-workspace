@@ -3,11 +3,12 @@
 // four columns (parts/kanban.js), Import findings (a proposal you tick through, applied only with
 // its hash, so a proposal that changed meanwhile is refused), Reconcile (moves findings along what
 // git and the runs show), and the click on a card: Fix an open finding, accept or dismiss a
-// proposed one, open its run, review its branch, or show its record.
+// proposed one, open its run, review its branch, or show its record. Ask on a card opens the Ask
+// panel (parts/ask-panel.js) for a read-only question about that finding.
 //
 // Data: GET /api/findings and the newest runs (project-data.js `findings` and `runs`), plus the
 // waiting and running runs from the store for the board's run tags.
-import { act, fmtTime, h, keepFocus, plural, toast } from '../../lib.js';
+import { act, fmtTime, h, keepFocus, keyed, plural, toast } from '../../lib.js';
 import { dialog, openDialog } from '../../dialog.js';
 import { go, openLauncher } from '../../store.js';
 import { bar } from '../../parts/bar.js';
@@ -16,6 +17,7 @@ import { createMemo, patch } from '../../parts/patch.js';
 import { dataOf, liveRunsOf, reload, slot, use } from '../../parts/project-data.js';
 import { btn, closeButton, errorNote, loadingBody, post } from '../../parts/project-ui.js';
 import { reviewBranch } from '../../parts/project-actions.js';
+import { askButton, findingSubject } from '../../parts/ask-panel.js';
 
 const memo = createMemo();
 const STATUS_WORDS = { proposed: 'Proposed', open: 'Open', 'in-run': 'In run', 'on-branch': 'On branch', done: 'Done', dismissed: 'Dismissed' };
@@ -192,6 +194,7 @@ function auditCard(name, s) {
         runs: new Map(runRows.map(([id, pipeline, status]) => [id, { id, pipeline, status }])),
         expanded: open,
         onCard: (x, col, kind) => findingClick(name, x, kind),
+        cardExtra: x => keyed(askButton(findingSubject(name, x), { cls: 'btn small ghost ask-card', ariaLabel: `Ask about ${x.id}` }), `ask:${x.id}`),
         onToggle: col => {
           const set = new Set(open);
           if (set.has(col)) set.delete(col);

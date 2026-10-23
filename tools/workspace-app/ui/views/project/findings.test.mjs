@@ -1,7 +1,8 @@
 // Tests for the project page's Findings tab (views/project/findings.js, the cockpit's Audit
 // progress card shown full width): status words, and the tab in a stand-in DOM (test/dom.mjs):
 // loading and errors, the empty board, the phase bar, a waiting import, the four columns, a card
-// that starts Fix, and Import findings sending the project's name. Run: node tools/run-tests.mjs workspace-app
+// that starts Fix, Ask next to a card (the Ask panel for that finding), and Import findings sending
+// the project's name. Run: node tools/run-tests.mjs workspace-app
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeFetch, installDom, reply, settle, textOf } from '../../../test/dom.mjs';
@@ -60,6 +61,26 @@ test('the tab: the phase bar, a waiting import, and a card that starts Fix in th
   assert.equal(dom.location.hash, '#launcher/fix', 'an open finding opens Fix');
   assert.equal(store.launchDraft.findingId, 'EX-3');
   assert.equal(store.launchDraft.project, 'example');
+});
+
+test('the tab: Ask next to a card opens the Ask panel for that finding (parts/ask-panel.js)', () => {
+  const el = dom.document.createElement('div');
+  dom.document.body.append(el);
+  findings.render(el, ctx());
+  const askBtn = el.querySelector('[data-key="ask:EX-3"]');
+  assert.ok(askBtn, 'the card has an Ask button');
+  assert.equal(askBtn.getAttribute('aria-label'), 'Ask about EX-3');
+  assert.equal(askBtn.closest('.fcard-item').querySelector('.fcard').dataset.key, 'f:EX-3', 'next to its card, not inside the card button');
+  dom.click(askBtn);
+  const panel = dom.document.getElementById('ask-panel');
+  assert.ok(panel && !panel.hidden);
+  assert.equal(panel.querySelector('.ask-title').textContent, 'Ask about EX-3');
+  assert.equal(panel.querySelector('.ask-chip').textContent, 'EX-3 · Totals in floats');
+  assert.equal(askBtn.getAttribute('aria-expanded'), 'true');
+  dom.key(dom.document.getElementById('ask-input'), 'Escape');
+  assert.equal(panel.hidden, true);
+  assert.equal(dom.document.activeElement, askBtn, 'the focus is back on the card\'s Ask button');
+  el.remove();
 });
 
 test('the tab: Import findings asks the server for this project and shows its refusal', async () => {

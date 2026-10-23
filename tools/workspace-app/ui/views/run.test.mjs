@@ -4,7 +4,8 @@
 // celebration condition, tool rows folded into one line, replay pacing, stage states and meta
 // lines, plan slices, evidence paths, the fence's default note and triage decisions. The view
 // needs a browser; these modules load in Node because nothing in them touches the DOM until
-// they render (the checks table, which does, is loaded only when a Check run shows it).
+// they render (the checks table, which does, is loaded only when a Check run shows it). One test
+// renders the view in the stand-in DOM (test/dom.mjs) for the header's Ask button.
 // Run: node tools/run-tests.mjs workspace-app
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,6 +14,7 @@ import {
   stageMs, stateActions, statusText, turnMeter, turnStage,
 } from './run.js';
 import { foldRows, kindGroup, kindLabel, replayDelay, rowState, stageMeta, stageState } from '../parts/timeline.js';
+import { fakeFetch, installDom, settle } from '../../test/dom.mjs';
 import { actionOf, changedDecisions, decisionsProblem, evidencePaths, fenceNote, gateKey, sliceFiles } from '../parts/gatecards.js';
 
 const A = (action, enabled = true, reason = '', label = action) => ({ action, label, enabled, reason });
@@ -105,6 +107,38 @@ test('run: header facts, the celebration condition and the notify key', () => {
   assert.equal(allGreen({ lastGate: { result: 'green' }, allowances: [{ path: 'a' }] }), false);
   assert.equal(allGreen({ lastGate: { result: 'red' } }), false);
   assert.equal(notifyKey('261022-1-x'), 'ws-notify:261022-1-x');
+});
+
+test('run: Ask in the header shows once the run is loaded and opens the Ask panel for it (parts/ask-panel.js)', async () => {
+  const ID = '261022-100001-explain-passed';
+  const dom = installDom({ hash: `#run/${ID}` });
+  try {
+    fakeFetch(path => (path.startsWith('/api/run?')
+      ? { ok: true, run: { id: ID, project: 'example', pipeline: 'explain', pipelineLabel: 'Explain', title: 'Explain: What does charge do?', status: 'passed',
+        stages: [{ id: 'answer', kind: 'claude', status: 'done', attempts: [] }], actions: [], outputs: {} }, rows: [], next: 0, more: false }
+      : { ok: true, pipelines: [], routes: [] }));
+    const { default: view } = await import('./run.js');
+    const section = dom.document.createElement('section');
+    dom.document.body.append(section);
+    view.render(section, { sub: ID });
+    const askBtn = section.querySelector('.run-head-actions .ask-open-btn');
+    assert.ok(askBtn, 'the header has an Ask button');
+    assert.equal(askBtn.hidden, true, 'hidden until the run is loaded');
+    view.onShow({ sub: ID });
+    await settle(10);
+    assert.equal(askBtn.hidden, false);
+    assert.equal(askBtn.getAttribute('aria-label'), 'Ask about this run');
+    dom.click(askBtn);
+    const panel = dom.document.getElementById('ask-panel');
+    assert.equal(panel.querySelector('.ask-title').textContent, 'Ask about this run');
+    assert.equal(panel.querySelector('.ask-chip').textContent, 'Run · Explain: What does charge do?');
+    assert.equal(askBtn.getAttribute('aria-expanded'), 'true');
+    dom.click(panel.querySelector('.ask-close'));
+    assert.equal(dom.document.activeElement, askBtn, 'the focus goes back to Ask');
+    view.onHide();
+  } finally {
+    dom.uninstall();
+  }
 });
 
 test('timeline: kinds, groups and states are words', () => {

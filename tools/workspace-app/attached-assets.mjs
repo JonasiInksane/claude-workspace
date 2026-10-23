@@ -5,7 +5,7 @@
 //   runs/manager.mjs    a run refuses to start on a problem, copies each file into its inputs/
 //                       (assetInputName) after readVerified checked the bytes, and records them
 //                       in its manifest (runs/manifest.mjs)
-//   launch.mjs          a session in a project may read the assets' folders, gets them listed in
+//   launch.mjs          a session in a project may read (not edit) the assets' folders, gets them listed in
 //                       its system prompt after the rules (assetsSystemText) and records them in
 //                       sessions.jsonl (assetRecords)
 //   routes/flows.mjs    a flow lists them in its prompt after the images (assetLine)
@@ -124,8 +124,9 @@ export function assetLine(item, index, path = item.path) {
 // What a session records of its assets: [{ ref, version, sha256 }].
 export const assetRecords = (items = []) => items.map(i => ({ ref: i.ref, version: i.version, sha256: i.sha256 }));
 
-// The folders that hold the items' files, each once: a session may read them without asking
-// (tools/lib/prompt-file.mjs readDirs). One folder per asset, so it holds that asset's versions only.
+// The folders that hold the items' files, each once: a session may read them without asking but
+// not edit them (tools/lib/prompt-file.mjs readOnlyDirs). One folder per asset, so it holds that
+// asset's versions only.
 export function assetDirs(items = []) {
   return firstOfEach(items.filter(i => i && i.path).map(i => dirname(i.path)), d => (process.platform === 'win32' ? d.toLowerCase() : d));
 }

@@ -355,7 +355,7 @@ test('archiveFlow and restoreFlow move the file and keep the name taken', t => {
 
 test('prompt files carry the prompt and readable folders once, then disappear', () => {
   const file = writePromptFile({ prompt: 'Say "hi"\nnow', readDirs: ['C:\\imgs'] });
-  assert.deepEqual(takePromptFile(file), { prompt: 'Say "hi"\nnow', readDirs: ['C:\\imgs'], launch: {} });
+  assert.deepEqual(takePromptFile(file), { prompt: 'Say "hi"\nnow', readDirs: ['C:\\imgs'], readOnlyDirs: [], launch: {} });
   const launched = writePromptFile({ prompt: 'p', launch: { permissionMode: 'plan', allowedTools: ['Read'] } });
   assert.deepEqual(takePromptFile(launched).launch, { permissionMode: 'plan', allowedTools: ['Read'] });
   const unsafe = writePromptFile({ prompt: 'p', launch: { permissionMode: 'bypassPermissions' } });

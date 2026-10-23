@@ -13,6 +13,7 @@ import {
   archiveAgent, checkAgentName, checkAgentText, checkProject, duplicateNames, listAgents, listArchivedAgents, readFrontmatter,
   resolveClaude, resolveProject, restoreAgent, saveAgentText, sessionSettings, textHash,
 } from './lib/agents.mjs';
+import { editDenyRule } from './lib/prompt-file.mjs';
 
 const toolsDir = dirname(fileURLToPath(import.meta.url));
 const WIN = process.platform === 'win32';
@@ -268,6 +269,14 @@ test('agent-session --prompt-file starts with the prompt and may read the extra 
   assert.deepEqual(JSON.parse(readFileSync(launched.settingsFile, 'utf8')).permissions.allow, ['Read', 'Bash(npm test:*)']);
   writeFileSync(promptFile, JSON.stringify({ prompt: 'x', launch: { permissionMode: 'bypassPermissions' } }));
   assert.match(run('agent-session.mjs', ['demo', 'art', '--print', '--prompt-file', promptFile], root).err, /launch: permission mode/);
+  // Read-only folders (attached assets): readable, with an Edit deny rule each, in a settings file of their own.
+  const asset = join(root, 'inbox', 'attachments', '_assets', 'logo');
+  writeFileSync(promptFile, JSON.stringify({ prompt: 'Use the logo', readDirs: [extra], readOnlyDirs: [asset] }));
+  const readOnly = JSON.parse(run('agent-session.mjs', ['demo', 'art', '--print', '--prompt-file', promptFile], root).out);
+  const { permissions } = JSON.parse(readFileSync(readOnly.settingsFile, 'utf8'));
+  assert.deepEqual(permissions.additionalDirectories.slice(-2), [extra, asset]);
+  assert.deepEqual(permissions.deny, [editDenyRule(asset)]);
+  assert.notEqual(readOnly.settingsFile, plan.settingsFile);
   // A file outside the prompt folder (named by mistake) is read but never deleted.
   const elsewhere = join(root, 'settings.json');
   writeFileSync(elsewhere, JSON.stringify({ permissions: {} }));

@@ -26,8 +26,10 @@
 // Attached assets (attached-assets.mjs): a session in a project also gets the assets its settings
 // attach, resolved to exact versions and checked (an asset, version or file that is gone, or a
 // file that no longer matches its recorded SHA-256, stops the start). Their list follows the
-// rules in --append-system-prompt, and the session may read their folders without asking
-// (readDirs). A flow builds its own prompt and lists its assets there (routes/flows.mjs): it
+// rules in --append-system-prompt, and the session may read their folders without asking but
+// not edit them (readOnlyDirs: an Edit deny rule each, tools/lib/prompt-file.mjs editDenyRule),
+// so a session in acceptEdits or auto mode can't change a version file or asset.json in place.
+// A flow builds its own prompt and lists its assets there (routes/flows.mjs): it
 // passes the resolved `assets`, and the `settings` it resolved them with, and gets their folders
 // but no second list. Its line records `assets` ([{ ref, version, sha256 }]) like every session
 // in a project; hub sessions and takeovers record none.
@@ -155,24 +157,30 @@ export async function sessionAssets(root, project, settings) {
   return items;
 }
 
-// Folder lists joined, each folder once (Windows paths ignore case).
-function joinDirs(...lists) {
-  const seen = new Set();
-  return lists.flat().filter(d => {
-    const k = process.platform === 'win32' ? String(d).toLowerCase() : String(d);
-    if (seen.has(k)) return false;
-    seen.add(k);
+// Windows paths ignore case.
+const dirKey = d => (process.platform === 'win32' ? String(d).toLowerCase() : String(d));
+
+// The folders a session may read without asking: the caller's `readDirs` (a flow's images) and
+// the folders of its assets (`items`), which go to readOnlyDirs only, so they get their Edit deny
+// rule even when the caller listed them too. Each folder once.
+export function sessionDirs(readDirs = [], items = []) {
+  const readOnlyDirs = assetDirs(items);
+  const seen = new Set(readOnlyDirs.map(dirKey));
+  const dirs = readDirs.filter(d => {
+    if (seen.has(dirKey(d))) return false;
+    seen.add(dirKey(d));
     return true;
   });
+  return { readDirs: dirs, readOnlyDirs };
 }
 
 // True when a Claude session can't start with its flags straight on claude's command line, so
 // it starts through a prompt file (claude-prompt.mjs) instead: launchArgs has no flag for a first
 // prompt, the rules (appendSystemPrompt), pre-approved tools (they go into a settings file) or
 // readable folders, and the rules must never go into a PowerShell command anyway.
-export function needsPromptFile({ prompt = '', readDirs = [], launch = {} } = {}) {
+export function needsPromptFile({ prompt = '', readDirs = [], readOnlyDirs = [], launch = {} } = {}) {
   const has = v => (Array.isArray(v) ? v.length > 0 : !!v);
-  return has(prompt) || has(readDirs) || has(launch.appendSystemPrompt) || has(launch.allowedTools);
+  return has(prompt) || has(readDirs) || has(readOnlyDirs) || has(launch.appendSystemPrompt) || has(launch.allowedTools);
 }
 
 // Programs a terminal tab may not start directly: .cmd and .bat need cmd.exe (a shell).
@@ -305,9 +313,9 @@ export function realActions({ root, tools = findTools(), windowStyle, dataDir = 
     // Starts claude in a terminal tab at `dir` and resolves with { sessionId } ('' for -c).
     // With only flags, they go straight on claude's command line (--resume <id> or
     // --session-id <id>, --settings <file>, --permission-mode <m>, ...). With `prompt`, project
-    // rules, pre-approved tools or `readDirs` (folders the session may read without asking),
-    // everything goes through a prompt file (needsPromptFile; tools/lib/prompt-file.mjs explains
-    // why). `kind` and `project` are for sessions.jsonl and the project's settings and assets (see
+    // rules, pre-approved tools, `readDirs` (folders the session may read without asking) or
+    // assets (their folders: read-only, sessionDirs), everything goes through a prompt file
+    // (needsPromptFile; tools/lib/prompt-file.mjs explains why). `kind` and `project` are for sessions.jsonl and the project's settings and assets (see
     // the top of this file); without a kind, a resume counts as a takeover (the only resume the
     // app starts), so it gets the takeover mode check too. `assets` and `settings`: a flow's
     // resolved assets, already listed in its prompt, and the settings it resolved them with.
@@ -326,9 +334,9 @@ export function realActions({ root, tools = findTools(), windowStyle, dataDir = 
       const settings = await settingsFor(k, project, given);
       const a = await assetsFor(project, settings, assets);
       const l = withProjectSettings(s.launch, settings, a.inSystemPrompt);
-      const dirs = joinDirs(readDirs, assetDirs(a.items));
-      const command = needsPromptFile({ prompt, readDirs: dirs, launch: l })
-        ? psCommand(dir, node, [join(appDir, 'claude-prompt.mjs'), writePromptFile({ prompt, readDirs: dirs, launch: l })])
+      const dirs = sessionDirs(readDirs, a.items);
+      const command = needsPromptFile({ prompt, ...dirs, launch: l })
+        ? psCommand(dir, node, [join(appDir, 'claude-prompt.mjs'), writePromptFile({ prompt, ...dirs, launch: l })])
         : psCommand(dir, tools.claude, launchArgs(l));
       await terminal(dir, title, command);
       if (s.id) await recordSession(dataDir, { sessionId: s.id, kind: k, project, title, projectSettings: refOf(settings), assets: a.record });
@@ -386,10 +394,10 @@ export function realActions({ root, tools = findTools(), windowStyle, dataDir = 
       const settings = await settingsFor(k, project, given);
       const a = await assetsFor(project, settings, assets);
       const { sessionId: newId, ...rest } = withProjectSettings(s.launch, settings, a.inSystemPrompt);
-      const dirs = joinDirs(readDirs, assetDirs(a.items));
+      const dirs = sessionDirs(readDirs, a.items);
       const args = [join(toolsDir, 'agent-session.mjs'), project, agent, '--root', root];
       if (newId) args.push('--session-id', newId);
-      if (prompt || Object.keys(rest).length) args.push('--prompt-file', writePromptFile({ prompt, readDirs: dirs, launch: rest }));
+      if (prompt || Object.keys(rest).length) args.push('--prompt-file', writePromptFile({ prompt, ...dirs, launch: rest }));
       await terminal(root, title, psCommand(root, node, args));
       await recordSession(dataDir, { sessionId: s.id, kind: k, project, title, projectSettings: refOf(settings), assets: a.record });
       return { sessionId: s.id };

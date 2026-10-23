@@ -13,7 +13,8 @@
 // Assets: a run gets the flow's own attached assets (its `assets` field) and, in a project, the
 // ones the project's settings attach, resolved to exact versions (attached-assets.mjs). They are
 // listed in the prompt after the images ("Asset 1: <title> (<ref> v<n>, <kind>) at <path>"), and
-// the session may read their folders, as it reads the image folder. An asset, version or file
+// the session may read their folders, as it reads the image folder, but not edit them (launch.mjs
+// sessionDirs). An asset, version or file
 // that is gone refuses the run (400), and so does a file that no longer matches its recorded
 // SHA-256 (409). The preview shows the effective launch: the project's defaults, tools and rules
 // added (launch.mjs withProjectSettings), and the assets with what a run would refuse.
@@ -23,7 +24,7 @@ import {
   parseFlowAssets, readCaptions, restoreFlow, runPrompt, saveFlow, setCaption, skippedFlowImages, SLUG_RE,
 } from '../../lib/flows.mjs';
 import { realProjectDir } from '../../lib/projects.mjs';
-import { assetDirs, assetLine, assetProblems, assetRecords, resolveAssets, verifyFiles } from '../attached-assets.mjs';
+import { assetLine, assetProblems, assetRecords, resolveAssets, verifyFiles } from '../attached-assets.mjs';
 import { allDone } from '../core/git.mjs';
 import { flowVersion, readFlowRuns, recordFlowRun, versionChanges } from '../flow-versions.mjs';
 import { HttpError, readJson } from '../http.mjs';
@@ -169,7 +170,8 @@ export function routes({ root, actions, dataDir }) {
       const dir = f.target === 'project' ? realProjectDir(root, project) : root;
       const { settings, assets } = await runInputs(f, project);
       const prompt = runPrompt(f, images, notes, captions, assets.map((a, i) => assetLine(a, i)));
-      const readDirs = [...(images.length ? [flowImagesDir(root, f.slug)] : []), ...assetDirs(assets)];
+      // The assets' folders are added by launch.mjs from `assets`, read-only (sessionDirs).
+      const readDirs = images.length ? [flowImagesDir(root, f.slug)] : [];
       const title = `Flow: ${f.title || f.slug}`;
       // The version of the files this prompt was built from, taken before the terminal opens.
       const version = await flowVersion(root, f.slug);

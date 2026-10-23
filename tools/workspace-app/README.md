@@ -272,9 +272,12 @@ new, immutable version with its SHA-256. The API is in place; the screens come l
 - Agent and flow files are found by name in their own folders, never by a path from the page.
   Saves check that the file hasn't changed since it was opened (409 otherwise), and an agent's
   name can't change in the editor (its memory folder is named after it).
-- A flow run may read only that flow's image folder (`--settings` with
+- A flow run may read only that flow's image folder and its assets' folders (`--settings` with
   `permissions.additionalDirectories`), and the prompt reaches Claude through a temp file that
-  is deleted as soon as it is read.
+  is deleted as soon as it is read. Every session with attached assets also gets an `Edit` deny
+  rule for each asset's folder, so not even `acceptEdits` or `auto` mode lets Claude's file tools
+  change a version file or `asset.json` (a script that writes files itself still could; the next
+  start then refuses the changed file).
 - A project's rules reach a session only as an argument of a Node spawn (`claude-prompt.mjs`,
   `agent-session.mjs`, which read them from that temp file), never inside a PowerShell command,
   whose quoting Windows PowerShell 5.1 would change. A prompt and rules too long together for one

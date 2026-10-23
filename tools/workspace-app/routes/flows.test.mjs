@@ -352,7 +352,8 @@ test('a run lists the flow\'s and the project\'s assets after the images, may re
     `\n- Asset 3: Palette (example:palette v1, image) at ${paletteFile}\n\nRefactor what I describe.`);
   // The flow's own pin (style guide v1) wins over the project's attachment of the same asset.
   assert.deepEqual(c.assets.map(a => [a.ref, a.version]), [['shared:logo', 1], ['shared:style-guide', 1], ['example:palette', 1]]);
-  assert.deepEqual(c.readDirs, [join(ws.root, 'inbox', 'attachments', '_flows', slug), dirname(logoFile), dirname(styleFile), dirname(paletteFile)]);
+  // The image folder only: launch.mjs adds the assets' folders from `assets`, read-only.
+  assert.deepEqual(c.readDirs, [join(ws.root, 'inbox', 'attachments', '_flows', slug)]);
   assert.equal(c.settings.version, 1, 'the settings the assets came from go along');
   const [line] = ws.records();
   assert.deepEqual(line.assets, [

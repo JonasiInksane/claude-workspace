@@ -14,20 +14,23 @@ import {
   readCaptions, restoreFlow, runPrompt, saveFlow, setCaption, skippedFlowImages, SLUG_RE,
 } from '../../lib/flows.mjs';
 import { realProjectDir } from '../../lib/projects.mjs';
+import { allDone } from '../core/git.mjs';
 import { flowVersion, readFlowRuns, recordFlowRun, versionChanges } from '../flow-versions.mjs';
 import { HttpError, readJson } from '../http.mjs';
 import { findProject, flowOrThrow, launchableOrThrow } from '../lookup.mjs';
 
 // The project a run of the checked flow `f` starts in ('' for the hub). `requested` is the
-// request's project: required for a flow for any project, otherwise only allowed when it names
-// the flow's own project (folder names match without case, like everywhere in the workspace).
+// request's project: required for a flow for any project (a known project, its real spelling),
+// otherwise only allowed when it names the flow's own project (folder names match without case,
+// like everywhere in the workspace). Whether the app may start a terminal there is checked by
+// the caller, for every target.
 export function runProject(root, f, requested) {
   if (requested != null && typeof requested !== 'string') throw new HttpError(400, 'project must be a project name');
   const name = f.title || f.slug;
   const asked = String(requested ?? '').trim();
   if (isAnyProject(f)) {
     if (!asked) throw new HttpError(400, `${name} runs in any project: choose the project to run it in`);
-    return launchableOrThrow(findProject(root, asked));
+    return findProject(root, asked);
   }
   if (!asked) return f.project;
   if (f.target === 'hub') throw new HttpError(400, `${name} runs in the hub, not in ${asked}`);
@@ -97,19 +100,17 @@ export function routes({ root, actions, dataDir }) {
       if (b.preview === true) return { ok: true, prompt, launch, notesError };
       if (notesError) throw new HttpError(400, notesError);
       const project = runProject(root, f, b.project);
+      if (f.target !== 'hub') launchableOrThrow(project);
+      // A linked project starts in its checkout's real folder (404 when the link is broken).
+      const dir = f.target === 'project' ? realProjectDir(root, project) : root;
       const readDirs = images.length ? [flowImagesDir(root, f.slug)] : [];
       const title = `Flow: ${f.title || f.slug}`;
       // The version of the files this prompt was built from, taken before the terminal opens.
       const version = await flowVersion(root, f.slug);
       let started;
-      if (f.target === 'hub') started = await actions.startClaude({ dir: root, title, prompt, readDirs, launch, kind: 'flow' });
-      else if (f.target === 'project') {
-        launchableOrThrow(project);
-        started = await actions.startClaude({ dir: realProjectDir(root, project), title, prompt, readDirs, launch, kind: 'flow', project });
-      } else {
-        launchableOrThrow(f.project);
-        started = await actions.startAgent({ project: f.project, agent: f.agent, title, prompt, readDirs, launch, kind: 'flow' });
-      }
+      if (f.target === 'hub') started = await actions.startClaude({ dir, title, prompt, readDirs, launch, kind: 'flow' });
+      else if (f.target === 'project') started = await actions.startClaude({ dir, title, prompt, readDirs, launch, kind: 'flow', project });
+      else started = await actions.startAgent({ project, agent: f.agent, title, prompt, readDirs, launch, kind: 'flow' });
       const sessionId = started && typeof started.sessionId === 'string' ? started.sessionId : '';
       let recorded = true;
       try {
@@ -129,7 +130,8 @@ export function routes({ root, actions, dataDir }) {
     'GET /api/flow-runs': async (req, res, url) => {
       const slug = String(url.searchParams.get('flow') || '');
       if (!SLUG_RE.test(slug)) throw new HttpError(400, `"${slug.slice(0, 80)}" is not a flow name`);
-      const [current, runs] = await Promise.all([flowVersion(root, slug), readFlowRuns(dataDir, slug)]);
+      // allDone: a failed read still waits for flowVersion's git calls to finish.
+      const [current, runs] = await allDone([flowVersion(root, slug), readFlowRuns(dataDir, slug)]);
       return { ok: true, flow: slug, current, runs: runs.map(r => ({ ...r, changes: versionChanges(r.version, current) })) };
     },
 

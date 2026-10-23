@@ -7,7 +7,7 @@
 // Run: node tools/run-tests.mjs workspace-app
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -215,6 +215,22 @@ test('a fixed project, the hub and an agent refuse another project; their own on
     [hub, 'hub', '', '', 'session-3'],
     [agent, 'agent', 'example', 'artist', 'session-4'],
   ]);
+});
+
+test('a flow for any project starts a linked project in its checkout\'s real folder; a broken link is refused', async t => {
+  const { root, calls, call, records } = setup(t);
+  const checkout = mkdtempSync(join(tmpdir(), 'ws-flow-checkout-'));
+  t.after(() => rmSync(checkout, { recursive: true, force: true }));
+  symlinkSync(checkout, join(root, 'projects', 'linked'), 'junction');
+  const { body: { slug } } = await call('POST /api/flows', anyReview);
+  const r = await call('POST /api/flows/run', { slug, project: 'linked' });
+  assert.equal(r.status, 200, r.body.error);
+  assert.deepEqual([calls[0].dir, calls[0].project], [realpathSync.native(checkout), 'linked']);
+  assert.equal(records()[0].project, 'linked');
+  rmSync(checkout, { recursive: true, force: true });
+  const broken = await call('POST /api/flows/run', { slug, project: 'linked' });
+  assert.equal(broken.status, 404);
+  assert.deepEqual([calls.length, records().length], [1, 1]);
 });
 
 test('a launch that fails writes no record; a record that can\'t be written doesn\'t fail the launch', async t => {

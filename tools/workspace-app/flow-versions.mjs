@@ -44,7 +44,8 @@ async function hubState(root, slug, normalized, timeoutMs) {
   let prefix = '';
   let sha = '';
   try {
-    [prefix = '', sha = ''] = (await git(root, ['rev-parse', '--show-prefix', 'HEAD'], { timeoutMs })).split(/\r?\n/).map(s => s.trim());
+    // Two lines: the prefix ('' at the top, else "hub/"), then the commit.
+    [prefix = '', sha = ''] = (await git(root, ['rev-parse', '--show-prefix', 'HEAD'], { timeoutMs })).split(/\r?\n/);
   } catch {
     return { hubCommit: '', committed: false };
   }
@@ -120,7 +121,7 @@ function cleanVersion(v) {
 export async function readFlowRuns(dataDir, slug, { limit = RECENT_RUNS } = {}) {
   const { rows } = await readJsonl(flowRunsFile(dataDir));
   const mine = rows.filter(r => r && typeof r === 'object' && !Array.isArray(r) && r.flow === slug);
-  return mine.slice(-Math.max(0, limit)).reverse().map(r => ({
+  return (limit > 0 ? mine.slice(-limit) : []).reverse().map(r => ({
     at: str(r.at), flow: slug, version: cleanVersion(r.version), target: str(r.target), project: str(r.project),
     agent: str(r.agent), sessionId: str(r.sessionId),
   }));

@@ -55,9 +55,11 @@ test('committed is false for an edited or a new flow; hubCommit stays the HEAD',
 });
 
 test('a hub inside a bigger repository compares the file at its own path', async t => {
-  const { root, head } = await hubRepo(t, { prefix: 'hub' });
-  const v = await flowVersion(root, 'review');
-  assert.deepEqual([v.hubCommit, v.committed], [head, true]);
+  for (const prefix of ['hub', 'my hub']) {
+    const { root, head } = await hubRepo(t, { prefix });
+    const v = await flowVersion(root, 'review');
+    assert.deepEqual([v.hubCommit, v.committed], [head, true], prefix);
+  }
 });
 
 test('without git: no repository, or one without a commit, gives "" and false', async t => {
@@ -133,6 +135,7 @@ test('readFlowRuns keeps the newest 20, skips broken lines and cleans odd values
   assert.equal(runs.length, RECENT_RUNS);
   assert.deepEqual([runs[0].sessionId, runs[19].sessionId], ['s24', 's5']);
   assert.equal((await readFlowRuns(dataDir, 'review', { limit: 2 })).length, 2);
+  assert.deepEqual(await readFlowRuns(dataDir, 'review', { limit: 0 }), []);
   // A torn line, a line that is no record and hand-edited values.
   appendFileSync(flowRunsFile(dataDir), '{"flow":"review","at":\n[1,2]\n"review"\n');
   appendFileSync(flowRunsFile(dataDir), `${JSON.stringify({

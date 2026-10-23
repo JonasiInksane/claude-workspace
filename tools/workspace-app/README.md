@@ -2,15 +2,19 @@
 
 A small local app for this workspace, opened in its own Edge window: Today (what waits for
 you, what runs, next up, health, inbox, active reports), a page for every project with the tabs
-of its type (a code project: Overview, Tasks, Findings, Changes, Checks, Architecture; see
-"Project pages" below), headless pipeline runs (launcher, live run, review gate and commit; see
-"Runs" below) with an Ask panel next to runs, review gates and findings (see "Ask"), flows
+of its type (a code project: Overview, Tasks, Findings, Changes, Checks, Architecture, Assets,
+Settings; see "Project pages" below), a project's rules and settings as versions (see "Project
+settings"), headless pipeline runs (launcher, live run, review gate and commit, and the exact
+inputs each run started with; see "Runs" below) with an Ask panel next to runs, review gates and
+findings (see "Ask"), flows
 (saved prompts with reference images, run in the hub, a project, any
 project you pick, or one agent; every launch records the flow's version), the Library with a
 button for every skill and workspace tool, the pipelines and the
 settings, project cards that start Claude, per-project agents (create, edit, archive and restore, start
 isolated, view memory), image upload (Inbox images, opened from Assets: drag and drop, Ctrl+V,
-or choose files) into the hub inbox, a chosen agent's image folder or a flow, and an Assets view for projects with an asset
+or choose files) into the hub inbox, a chosen agent's image folder or a flow, and the Assets view:
+the asset library (shared and per-project images, text and PDFs with immutable versions, attached
+to projects and flows; see "Asset library") and the game assets of projects with an asset
 pipeline: 3D models (`projects/game-dev`: renders, check results, a 3D view and your verdict)
 and sprites (`projects/game-dev`, `tools/sprite.mjs`: an HD-2D preview, the pixels, check results and your verdict).
 
@@ -37,6 +41,8 @@ runs just opens another window.
 | `runs/wiring.mjs` | Builds the run engine: the manager (`runs/manager.mjs`) with the real executor and modules, `claude.exe` from the launcher (or the fake in tests); `stopEngine` for exits |
 | `routes/runs.mjs`, `routes/events.mjs` | Runs over HTTP: pipelines, start (with an Ask context, see "Ask") and preview, the runs list, one run with its timeline and buttons, review data, diffs, run files; `/api/events` (live update signals) |
 | `runs/context.mjs` | The Ask context: checks the reference a question names against the app's records, records it in `run.json` with the parent, and builds `inputs/context.md` (capped, redacted) when the Explain stage starts |
+| `runs/manifest.mjs` | A run's input manifest (see "Runs"): stage prompt hashes, profile hash, settings version, attached asset versions, models and efforts, Node and Claude Code versions, hub commit; built once at the start, frozen in `run.json` with its hash |
+| `attached-assets.mjs` | The assets a project's settings or a flow attach, resolved to exact versions and checked against their hashes; the names of a run's copies, the asset list in a session's system prompt and a flow's prompt (titles only as quoted data), the folders a session may read, and the `sessions.jsonl` records |
 | `runs/run-files.mjs` | The run file readers the runs routes and the Ask context share: capped reads, a run's JSON files, redacted text, the diff split into files |
 | `http.mjs` | `HttpError`, `send`/`json`, body readers, cookie and token helpers, `PAGE_CSP`, and the startup scan of `ui/` (`listUiFiles`) |
 | `state.mjs` | `buildState`: everything the page shows (`GET /api/state`), async; git runs as child processes, requests during a build share it. Each project carries its `type` and `tabs` |
@@ -62,7 +68,9 @@ runs just opens another window.
 | `ui/lib.js` | `h()` (data always as text; refuses a `style` prop), `api()`, `act()`, `toast()`, `copy()`, formatting helpers (`fmtAgo`, `fmtDuration`, `fmtClock`), `statusBadge`, focus helpers, `announce`, `confirmDialog`, the "not connected" overlay |
 | `ui/store.js` | The shared state (`state`, `view`, `sub`, `currentProject`, `settings`, `pipelines`, run signals), `setState`, `subscribe`, `refresh`, `go()`, the hash helpers (`projectRoute`, `projectSub`, `goProject`, `canonicalProjectSub`; the old `#cockpit/<name>` and `#health/<name>` read as Overview and Architecture), `openLauncher` and the title badge |
 | `ui/dialog.js` | `openDialog` (with an unsaved-changes guard), `closeDialog`, `formDialog` |
-| `ui/parts/*.js` | Shared pieces: the nav, the palette (every project tab is a jump target), the intent box, sparkline, bar, status dot and badge, the Ask panel (`ask-panel.js`, see "Ask"); for the project page `patch.js` (repaint without losing the focus), `project-data.js` (each tab's data, kept fresh), `project-ui.js` (small builders) and `project-actions.js` (buttons several tabs offer) |
+| `ui/parts/*.js` | Shared pieces: the nav, the palette (every project tab is a jump target), the intent box, sparkline, bar, status dot and badge, the Ask panel (`ask-panel.js`, see "Ask"); the asset library's calls and
+dialogs (`library.js`, `library-ui.js`, `library-dialogs.js`); the Settings tab's form logic
+(`settings-form.js`), line diff (`textdiff.js`) and unsaved-changes guard (`leave-guard.js`); for the project page `patch.js` (repaint without losing the focus), `project-data.js` (each tab's data, kept fresh), `project-ui.js` (small builders) and `project-actions.js` (buttons several tabs offer) |
 | `ui/views/*.js` | One file per view: `today`, `project` (a project's page, its tabs in `views/project/`; Findings has Ask on every card), `launcher`, `run` and `review` (both with Ask in their header), `runs`, `flows`, `tools` (Library), `projects`, `assets` (with the Inbox images button), `images` (Inbox images), with their dialogs (`home`, the old dashboard, is no longer a view; `#home` shows Today) |
 | `ui/app.css`, `ui/css/*.css` | Tokens, layout and shared components; styles for one view in `css/<view>.css` (the project page: `project.css`, plus `project-cards.css` for the code tabs' cards and `architecture.css`; the Ask panel: `ask.css`) |
 | `ui/viewer.js` | The 3D view: a small WebGL2 GLB viewer, no libraries (base colour, metal/roughness and normal maps; studio light and a fake sky; turntable, wireframe). No Draco or meshopt compression, skins or morphs |
@@ -127,6 +135,19 @@ stages are data in `runs/catalog.mjs`; the stage prompts are `pipelines/app/<pip
 - Editing runs work in the run worktree (a second checkout, for example `C:\dev\example-run`,
   set up once), or on a new branch in your checkout (branch mode). One editing run per project
   at a time, at most 2 Claude stages and 1 check at once.
+- Every run records what it started with, in `run.json`: its input manifest (`runs/manifest.mjs`:
+  the SHA-256 of each stage prompt template, of the profile, the project settings version, each
+  attached asset's version and hash, pinned or the latest, the model and effort per Claude stage,
+  the Node and Claude Code versions and the hub commit) and `manifestSha256`. The manifest is
+  written once and never changes; a `run.json` edited by hand shows "does not match its hash" on
+  the run page, can still be stopped, and never goes on: the store refuses to save it as running
+  or waiting again, and take over is refused. The run page's Inputs card lists the manifest.
+- The project's attached assets are copied into the run's `inputs/assets/` when it starts (each
+  copy streamed and checked against the library's hash; a missing or changed file refuses the
+  start). Every stage prompt gets them in its `{{assets}}` section as `<data kind="asset">` blocks:
+  text assets inline (40 KB each, 120 KB together), images and PDFs by their path; an EDIT stage,
+  which can't read `inputs/`, gets only the text ones. A copy that changed since the start stops
+  the stage before Claude starts.
 - The page polls `GET /api/run` and listens to `GET /api/events` for "run X changed" signals.
 - At startup the server recovers what a previous app left behind: a stage that was running is
   stopped and its run marked interrupted (Retry or Resume picks it up); locks of runs that wait
@@ -154,8 +175,10 @@ soon as it is there, and a follow-up keeps the thread.
   has one) or, for a follow-up, the previous question. The Tasks tab groups the questions with it.
 - When the stage starts, the server builds the context from its own records: for a run its title,
   status, request, plan summary, gate summary, review, changed files and diff; for a finding its
-  record from the findings store; then the thread's earlier questions and answers. It is capped
-  (diff 12 KB, thread 8 KB, 24 KB in all, the diff cut first), redacted, written to
+  record from the findings store; then the thread's earlier questions and answers. It is capped at
+  24 KB: the thread gets its room first (8 KB, oldest questions dropped first, so the newest always
+  survive), then the subject (15 KB), then the diff whatever is left (12 KB at most; left out with a
+  note when less than 1 KB would fit). It is redacted, written to
   `inputs/context.md` (hashed like every input) and given to Claude as a `<data name="context">` block.
 - The panel follows the question with the live updates and polling: queued, running with its time,
   answered (path:line references as code), failed with Retry, capped with Resume. It stops listening
@@ -186,6 +209,16 @@ changes nothing writes nothing, and a field it leaves out keeps its value. The r
 `GET /api/project-settings/version?project=<name>&v=<n>` and `POST /api/project-settings`
 (`{ project, basedOn, rules, defaults, allowedTools, assets }`).
 
+The project page's Settings tab (`ui/views/project/settings.js`) edits them: the rules as plain
+text with a live count, the defaults, the pre-approved tools and the attached assets (each
+following its latest version or pinned to one; Attach… picks from the shared assets and the
+project's own). Problems show next to their field while you type, mirrored from the server's
+checks (`ui/parts/settings-form.js`); the server checks every save again. A 409 keeps what you
+typed and offers Reload, Compare and Copy my rules. Leaving the tab or the page with unsaved
+changes asks first (`ui/parts/leave-guard.js`; a refused Back keeps your history). The version
+list shows every saved version; Compare shows the line diff of the rules (`ui/parts/textdiff.js`)
+and the other fields field by field against the current version.
+
 - **Runs:** a run records the current version when it is created (`projectSettings: { version,
   sha256 }` in `run.json`, or null), and every fresh Claude stage gets that version's rules as a
   `<project_instructions source="workspace-rules@v<N>">` block after CLAUDE.md and AGENTS.md. A
@@ -198,6 +231,13 @@ changes nothing writes nothing, and a field it leaves out keeps its value. The r
   `sessions.jsonl` records `projectSettings`. Hub sessions and takeovers (a run's stage, which has
   its run's rules already) get none. A continued or resumed session keeps the system prompt it
   started with until it is compacted (Claude Code 2.1.309, `--system-prompt-snapshot`).
+- **Attached assets:** a run copies them into its inputs and records their versions in its
+  manifest (see "Runs"). A session in the project gets them listed in its system prompt after the
+  rules (ref, version, kind and path; the title only as a quoted string), may read their folders
+  but not edit them (see "Safety"), and records them in `sessions.jsonl` (`assets`). A flow adds
+  its own attached assets to the project's and lists them all in its prompt, after the images,
+  instead of the system prompt. An asset that is gone or whose file changed refuses
+  the start.
 
 ## Data folder
 
@@ -207,15 +247,27 @@ and fences; start from `pipelines/app/profiles/example.json`), `runs/` (one fold
 `run.json`, `timeline.jsonl`, `inputs/`, `stages/`, `gates/`, `final/`, plus `index.jsonl` and
 the project locks), `baselines/`, `checks/`, `findings/`, `metrics/`, `worktrees/`,
 `projects/<project>/settings/` (the project's rules and settings, one `v<N>.json` per version),
-`settings.json`, `sessions.jsonl` and `flow-runs.jsonl` (one line per flow launch, with the
-flow's version). `pipelines/app/README.md` explains the profile. The asset library is not in
+`settings.json`, `sessions.jsonl` (one line per session the app started, with its project
+settings version, attached assets and, for a flow, the flow's version: `flow: { slug, sha256,
+hubCommit, committed }`) and `flow-runs.jsonl` (one line per flow launch, with the flow's
+version, for the flow editor's Recent runs). `pipelines/app/README.md` explains the profile. The asset library is not in
 the data folder: it lives in the private inbox, next to the images (below).
 
 ## Asset library
 
 Files that project settings, flows and runs can attach: shared assets (any project may attach
 them) and a project's own. Images, Markdown/text/JSON and PDF; each upload of new content is a
-new, immutable version with its SHA-256. The API is in place; the screens come later.
+new, immutable version with its SHA-256.
+
+The screens: Assets (`ui/views/assets.js`) shows the library first, with filters by place, kind
+and tag, a search and Show archived; each card previews the asset (a thumbnail, the first lines
+of a text asset as text only, a PDF icon) and opens its details (`ui/parts/library-dialogs.js`):
+every version with Open and Download, a new version by drop, paste or choice, the title,
+description and tags, Archive or Restore. New asset… uploads one asset per file, shared or for a
+project; while an upload runs the dialog stays open. A project's Assets tab
+(`ui/views/project/assets.js`) shows what its settings attach and its own assets, with Attach and
+Detach on each card (saved as a new settings version), and below them the game assets of an
+asset pipeline. Inbox images (the image upload of before) opens from the Assets view.
 
 - Files: `inbox/attachments/_assets/<id>/` (shared) and `inbox/attachments/<project>/_assets/<id>/`
   (the project folder must exist). Each holds `asset.json` and the versions `v1.md`, `v2.md`, ...

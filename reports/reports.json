@@ -145,7 +145,7 @@
       "created": "2026-10-23",
       "updated": "2026-10-23",
       "folder": "reports/2026-10-23_hub-spec-plan",
-      "summary": "Workspace app meets the run-engine half of the spec; gaps are versioned assets, shared flows, per-project rules, run provenance and the tabbed project layout. Plan: 8 hub slices, then Nextjs-Workspace in 12 slices. Two baseline test failures from CRLF fixtures. Waiting on four decisions.",
+      "summary": "Part A built, reviewed and merged on project-model; one real Ask run open; Part B continues on the other PC.",
       "steps": [
         {
           "name": "Report",
@@ -154,6 +154,10 @@
         {
           "name": "Progress",
           "path": "reports/2026-10-23_hub-spec-plan/progress.md"
+        },
+        {
+          "name": "Report v2",
+          "path": "reports/2026-10-23_hub-spec-plan/report-v2.md"
         }
       ]
     }

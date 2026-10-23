@@ -49,7 +49,7 @@ bottom is chronological.
 | A6 | Run input manifest, attached assets into runs, flows and sessions; wave-1 follow-ups | done (merged `eb3f13b`); review state unknown, covered by A-review | `pm/w2b-run-provenance` |
 | A7 | Ask panel | done (merged `f5355af`) | `pm/w2c-ask-panel` |
 | A-review | Independent review of the whole Part A diff, fixes | done: 0 high, 7 medium, ~20 low, all fixed; a review of the fixes found 2 medium + 5 low, fixed in `cf7daf0`..`30a3a4a` | `pm/w3a..w3d` |
-| A-docs | README, flows README, decision note, report revision | todo | |
+| A-docs | README, flows README, decision note, report revision | done | `report-v2.md`, `knowledge/decisions/2026-10-23-project-model.md` |
 
 ### Part B: Nextjs-Workspace (`projects/nextjs-workspace`)
 
@@ -189,3 +189,7 @@ the missing slices (the briefs are in the script file).
   dead `readVerified` removed; stale comments; README notes the settings-save 400 and the SVG
   rule's price (Markdown that starts with markup and shows an inline SVG is refused). Full
   suite: 1,537 tests, 1,536 pass, 0 fail, 1 skipped. Next: A-docs, then one real Ask run.
+- 2026-10-23: A-docs done: workspace-app README (manifest and Inputs card, attached assets in
+  runs, sessions and flows, the Settings tab, the library screens, Ask caps, file table,
+  sessions.jsonl fields), `flows/README.md` (the `assets` field, public refs), decision note
+  `knowledge/decisions/2026-10-23-project-model.md` (indexed), plan revision `report-v2.md`.

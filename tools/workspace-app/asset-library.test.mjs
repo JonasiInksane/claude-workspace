@@ -203,20 +203,38 @@ test('an SVG document is refused whatever comes before its root element; text th
     `<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n<!-- by hand -->\n<svg ${ns}/>`,
     '<svg:svg xmlns:svg="http://www.w3.org/2000/svg"><svg:script>alert(1)</svg:script></svg:svg>',
     `<!--${'x'.repeat(5000)}-->\n<svg ${ns}/>`,
+    // A ">" or "]" inside a quoted literal of the doctype once ended the prolog early, so the
+    // root element was never looked at.
+    '<!DOCTYPE svg SYSTEM "a>b"><svg onload="alert(1)"/>',
+    `<!DOCTYPE svg [<!ENTITY x "]>">]><svg ${ns} onload="alert(1)"/>`,
+    `<?xml version="1.0"?><!DOCTYPE svg PUBLIC "x" "y>z" [<!ENTITY a "]">]>\n<svg onload="alert(1)"/>`,
+    // A prolog longer than the 64 KB once looked at, any prefix, and a root with another name in
+    // the SVG namespace.
+    `<!--${'x'.repeat(70 * 1024)}-->\n<svg ${ns}/>`,
+    '<ä:svg xmlns:ä="http://www.w3.org/2000/svg" onload="alert(1)"/>',
+    '<x:g xmlns:x="http://www.w3.org/2000/svg"><x:script>alert(1)</x:script></x:g>',
+    // Markup with an SVG element in it is refused as well, wherever the element is.
+    '<!doctype html>\n<html><body><svg></svg></body></html>',
   ];
   for (const [i, text] of svgs.entries()) {
     await refused(shared(root, `Svg ${i}`, Buffer.from(text), { originalName: 'logo.txt' }), 415, /SVG is not accepted/);
   }
   const mentions = [
     '# Icons\n\nInline them:\n\n```html\n<svg viewBox="0 0 1 1"></svg>\n```\n',
-    '<!doctype html>\n<html><body><svg></svg></body></html>',
+    'Logo: <svg xmlns="http://www.w3.org/2000/svg"/> (an example, not a document)',
+    '{ "icon": "<svg viewBox=\\"0 0 1 1\\"/>" }',
+    '<!doctype html>\n<html><body><p>No icons here.</p></body></html>',
     '<svgicon/>',
     'svg files are not accepted',
   ];
-  for (const [i, text] of mentions.entries()) assert.equal((await shared(root, `Text ${i}`, Buffer.from(text))).asset.kind, 'text', text);
-  // A prolog that never ends costs no more than reading it once.
+  for (const [i, text] of mentions.entries()) {
+    assert.equal((await shared(root, `Text ${i}`, Buffer.from(text), { originalName: i === 2 ? 'icons.json' : 'notes.md' })).asset.kind, 'text', text);
+  }
+  // A prolog that never ends, or a long run inside a tag, costs no more than reading it once.
   const started = Date.now();
   assert.equal((await shared(root, 'Odd', Buffer.from(`<!doctype ${'[]'.repeat(30000)}`))).asset.kind, 'text');
+  assert.equal((await shared(root, 'Long', Buffer.from(`<${'a'.repeat(2 * 1024 * 1024 - 10)}`))).asset.kind, 'text');
+  assert.equal((await shared(root, 'Many', Buffer.from('<a'.repeat(1024 * 1024 - 8)))).asset.kind, 'text');
   assert.ok(Date.now() - started < 2000, 'the SVG check runs in linear time');
 });
 

@@ -259,7 +259,9 @@ new, immutable version with its SHA-256. The API is in place; the screens come l
 - Asset library uploads are checked by content as well: the bytes decide the kind (PNG, JPEG,
   GIF or WebP, a BMP saved as PNG, at most 25 MB; `.md`, `.txt` or `.json` as valid UTF-8 without
   NUL bytes, at most 2 MB, JSON that parses; a PDF starts with `%PDF-`, at most 25 MB). A file
-  name or a declared kind that disagrees is refused, and SVG never gets in, not even as text.
+  name or a declared kind that disagrees is refused, and SVG never gets in, not even as text: a
+  text that starts with markup (as every SVG document does) is refused when it has an `<svg>`
+  element, with any prefix, or the SVG namespace anywhere in it.
 - `/library-file` serves only a version that the asset's `asset.json` lists, by its own
   `v<n>.<ext>` name inside the asset's folder (a tampered entry or a linked folder is refused),
   with the type that extension stands for (every text kind as `text/plain; charset=utf-8`),

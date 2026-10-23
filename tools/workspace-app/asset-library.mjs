@@ -25,7 +25,8 @@
 //   image  PNG, JPEG, GIF or WebP by its first bytes (detectImageType in uploads.mjs), at most
 //          25 MB; a BMP is stored as PNG (bmp.mjs, as uploads do); never SVG (it can carry scripts)
 //   text   .md, .txt or .json: valid UTF-8 without NUL bytes, at most 2 MB; JSON must parse; an
-//          SVG document is refused here too, whatever its prolog (isSvgDocument)
+//          SVG document is refused here too: any text that starts with markup and has an <svg>
+//          element or the SVG namespace in it (isSvgDocument)
 //   pdf    starts with %PDF-, at most 25 MB
 //
 // Writes: a version file is created exclusively (flag 'wx'), and asset.json goes to a temporary
@@ -79,12 +80,10 @@ const NAMED_KIND = {
   md: 'text', txt: 'text', json: 'text', pdf: 'pdf',
 };
 const KIND_WORDS = { image: 'an image', text: 'a text file', pdf: 'a PDF' };
-// What may come before an XML document's first element: white space, then an XML declaration or
-// another processing instruction, a comment, or a doctype (with or without an internal subset).
-// Sticky, so isSvgDocument can step through them; no part can match in more than one way.
-const PROLOG_PART = /\s*(?:<\?[\s\S]*?\?>|<!--[\s\S]*?-->|<!doctype(?:[^>[]|\[[^\]]*\])*>)/iy;
-// An SVG root element, plain or with a namespace prefix (<svg:svg>).
-const SVG_ROOT = /\s*<(?:[\w.-]+:)?svg[\s/>]/iy;
+// An <svg> element, plain or with any namespace prefix (<svg:svg>, <ä:svg>), and the SVG
+// namespace. Both run in linear time.
+const SVG_ELEMENT = /<(?:[^\s<>/:!?]+:)?svg[\s/>]/i;
+const SVG_NAMESPACE = /http:\/\/www\.w3\.org\/2000\/svg/i;
 const utf8 = new TextDecoder('utf-8', { fatal: true });
 
 const bad = message => new HttpError(400, message);
@@ -286,20 +285,22 @@ function pdfContent(buf) {
   return { kind: 'pdf', ext: 'pdf', type: STORED.pdf.type, data: buf };
 }
 
-// True when a text is an SVG document: its first element, after the prolog (PROLOG_PART), is
-// <svg>. Only the first 64 KB are looked at; both regexes run in linear time.
+// True when a text could be an SVG document: it starts with markup (after a byte order mark and
+// white space, where every XML document starts with "<") and has an <svg> element or names the
+// SVG namespace anywhere in it. The whole text (at most 2 MB) is searched instead of stepping
+// over the prolog, so nothing can hide the root element: not a ">" or "]" inside a quoted
+// literal of a doctype, and not a prolog longer than any limit. Markdown, plain text or JSON
+// that shows an <svg> sample starts with something else and is fine.
 function isSvgDocument(text) {
-  const head = text.slice(0, 64 * 1024);
-  let at = 0;
-  PROLOG_PART.lastIndex = 0;
-  while (PROLOG_PART.exec(head)) at = PROLOG_PART.lastIndex;
-  SVG_ROOT.lastIndex = at;
-  return SVG_ROOT.test(head);
+  if (!text.replace(/^﻿/, '').trimStart().startsWith('<')) return false;
+  return SVG_ELEMENT.test(text) || SVG_NAMESPACE.test(text);
 }
 
 function textContent(buf, text, ext) {
   if (buf.length > LIMITS.textBytes) throw tooLarge('text files can be at most 2 MB');
-  if (isSvgDocument(text)) throw unsupported('SVG is not accepted, not even as text: it can carry scripts');
+  if (isSvgDocument(text)) {
+    throw unsupported('SVG is not accepted, not even as text: it can carry scripts. This text starts with markup and has an <svg> element or the SVG namespace in it');
+  }
   if (ext === 'json') {
     try { JSON.parse(text); } catch (e) { throw unsupported(`this is not valid JSON (${e.message})`); }
   }

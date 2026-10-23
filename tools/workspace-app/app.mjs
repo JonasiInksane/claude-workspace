@@ -47,11 +47,13 @@ import * as findingRoutes from './routes/findings.mjs';
 import * as metricRoutes from './routes/metrics.mjs';
 import * as settingRoutes from './routes/settings.mjs';
 import * as todayRoutes from './routes/today.mjs';
+import * as projectSettingRoutes from './routes/project-settings.mjs';
 
 const appDir = dirname(fileURLToPath(import.meta.url));
 // A new routes/<area>.mjs goes in this list.
 export const ROUTE_MODULES = [stateRoutes, imageRoutes, agentRoutes, assetRoutes, launchRoutes, flowRoutes, toolRoutes, projectRoutes,
-  runRoutes, eventRoutes, cockpitRoutes, checkRoutes, findingRoutes, metricRoutes, settingRoutes, todayRoutes];
+  runRoutes, eventRoutes, cockpitRoutes, checkRoutes, findingRoutes, metricRoutes, settingRoutes, todayRoutes,
+  projectSettingRoutes];
 const ROUTE_KEY = /^(GET|POST) \/api\/[a-z0-9/-]+$/;
 
 // Where the app keeps data that must not go into the (public) workspace repo:

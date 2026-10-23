@@ -53,7 +53,7 @@ test('a plain project: Create from the example makes it a code project; an upper
   await settle(5);
   assert.deepEqual(calls.find(c => c.path === '/api/project/profile-init').body, { project: 'notes' });
   assert.ok(calls.some(c => c.path === '/api/state'), 'the state loads again (the type, and so the tabs, change)');
-  const upper = { ...notes, name: 'Tattoo' };
+  const upper = { ...notes, name: 'BigApp' };
   settings.render(el, ctx(upper));
   assert.equal(el.querySelector('[data-key="st:create"]'), null);
   assert.match(textOf(el), /A profile needs a lowercase folder name/);

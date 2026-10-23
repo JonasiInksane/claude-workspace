@@ -182,7 +182,7 @@ test('state: every project has a type and the tabs of its page (project-types.mj
   assert.equal((await call('POST', '/api/ping')).status, 200);
   const s = (await call('GET', '/api/state')).json;
   const of = name => s.projects.find(p => p.name === name);
-  assert.deepEqual([of('Tattoo').type, of('Tattoo').tabs], [{ id: 'generic', label: 'Plain project' }, ['overview', 'agents', 'assets', 'settings']]);
+  assert.deepEqual([of('we;ird').type, of('we;ird').tabs], [{ id: 'generic', label: 'Plain project' }, ['overview', 'agents', 'assets', 'settings']]);
   assert.deepEqual([of('art-kit').type, of('art-kit').tabs], [{ id: 'assets', label: 'Asset pipeline' }, ['overview', 'assets', 'agents', 'settings']]);
   assert.ok(s.assets.some(a => a.project === 'art-kit'), 'the Assets list and the types read the same pipelines');
   assert.ok(s.projects.every(p => p.type && typeof p.type.id === 'string' && Array.isArray(p.tabs) && p.tabs[0] === 'overview'));

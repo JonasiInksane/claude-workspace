@@ -55,18 +55,20 @@ test('projectTypeOf: a profile makes it code, an asset pipeline assets, everythi
 test('projectTypeOf: bad names, a missing data folder and odd input never make a code project', () => {
   const root = tempDir('ws-types-root-');
   const dataDir = tempDir('ws-types-data-');
-  writeFiles(join(dataDir, 'profiles'), { 'Tattoo.json': {}, '..json': {} });
-  writeFiles(join(root, 'projects'), { 'Tattoo/CLAUDE.md': '# T\n' });
-  assert.equal(projectTypeOf({ root, dataDir, name: 'Tattoo' }).id, 'generic', 'the data folder only holds lowercase names');
+  // On Windows bigapp.json is also BigApp.json: the name check comes first, not the file system.
+  writeFiles(join(dataDir, 'profiles'), { 'bigapp.json': {}, '..json': {} });
+  writeFiles(join(root, 'projects'), { 'BigApp/CLAUDE.md': '# B\n' });
+  assert.equal(projectTypeOf({ root, dataDir, name: 'BigApp' }).id, 'generic', 'the data folder only holds lowercase names');
   assert.equal(projectTypeOf({ root, dataDir, name: '.' }).id, 'generic');
   assert.equal(projectTypeOf({ root, dataDir, name: '../profiles/x' }).id, 'generic');
-  assert.equal(projectTypeOf({ root, name: 'tattoo' }).id, 'generic', 'no data folder: no profile');
+  assert.equal(projectTypeOf({ root, name: 'bigapp' }).id, 'generic', 'no data folder: no profile');
   assert.equal(projectTypeOf().id, 'generic');
   assert.equal(projectTypeOf(null).id, 'generic');
   assert.equal(projectTypeOf('code').id, 'generic');
   assert.equal(hasProfile('', 'app'), false);
   assert.equal(hasProfile(dataDir, null), false);
-  assert.equal(hasProfile(dataDir, 'Tattoo'), false);
+  assert.equal(hasProfile(dataDir, 'BigApp'), false);
+  assert.equal(hasProfile(dataDir, 'bigapp'), true);
 });
 
 test('hasAssetPipeline: a list from the caller is used instead of scanning projects/', () => {

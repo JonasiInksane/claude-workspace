@@ -97,7 +97,7 @@ test('canonicalProjectSub: the state completes a project route (first tab, known
   const projects = [
     { name: 'example', type: { id: 'code' }, tabs: ['overview', 'tasks', 'findings', 'changes', 'checks', 'architecture', 'assets', 'settings'] },
     { name: 'notes', type: { id: 'generic' }, tabs: ['overview', 'agents', 'assets', 'settings'] },
-    { name: 'Tattoo', type: { id: 'generic' } },
+    { name: 'BigApp', type: { id: 'generic' } },
   ];
   assert.equal(canonicalProjectSub('example', projects), 'example/overview', 'no tab: the first tab of its type');
   assert.equal(canonicalProjectSub('example/checks', projects), 'example/checks');
@@ -105,7 +105,7 @@ test('canonicalProjectSub: the state completes a project route (first tab, known
   assert.equal(canonicalProjectSub('notes/checks', projects), 'notes/overview', 'a tab the type has not: the first tab');
   assert.equal(canonicalProjectSub('notes/bogus/x', projects), 'notes/overview', 'the rest goes with an unknown tab');
   assert.equal(canonicalProjectSub('EXAMPLE/checks', projects), 'example/checks', 'names match without case');
-  assert.equal(canonicalProjectSub('tattoo', projects), 'Tattoo/overview', 'no tabs sent: Overview');
+  assert.equal(canonicalProjectSub('bigapp', projects), 'BigApp/overview', 'no tabs sent: Overview');
   assert.equal(canonicalProjectSub('ghost/checks', projects), 'ghost/checks', 'a project the state does not list stays (the page asks the server)');
   assert.equal(canonicalProjectSub('', projects, 'notes'), 'notes/overview', 'no name: the current project');
   assert.equal(canonicalProjectSub('', projects, 'gone'), '', 'a current project that is gone gives nothing');

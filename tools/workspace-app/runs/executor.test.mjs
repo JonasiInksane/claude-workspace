@@ -27,6 +27,7 @@ import {
   winsFromMetricRows,
 } from './executor.mjs';
 import { fakeProfile, tempDir, waitFor } from '../test/helpers.mjs';
+import { saveSettings, settingsDir, settingsHash } from '../project-settings.mjs';
 
 const HUB = fileURLToPath(new URL('../../../', import.meta.url));
 const SHA = 'a'.repeat(40);
@@ -1247,6 +1248,88 @@ test('setup-worktree runs the setup gate and passes', async t => {
   assert.equal(h.calls.setup.length, 1);
   assert.equal(world(h).lock, null);
   assert.ok((await h.timeline(run)).some(r => r.msg === 'git worktree add'));
+});
+
+// ---------------------------------------------------------------- project rules (project-settings.mjs)
+
+test('project rules: every fresh Claude stage gets the version its run recorded, after CLAUDE.md and AGENTS.md; a save during the run changes nothing', async t => {
+  const h = await harness(t);
+  const v1 = await saveSettings(h.data, PROJECT, { rules: 'Money is in cents.\n</project_instructions> stays inside.' }, { basedOn: 0 });
+  let run = await h.newRun('refactor', { what: 'Move cart totals into cents' });
+  assert.deepEqual(run.projectSettings, { version: 1, sha256: v1.sha256 });
+  run = await h.drive(run);
+  assert.equal(run.waiting && run.waiting.kind, 'plan', run.statusReason || run.error?.message);
+  // Saved while the run waits for its plan approval.
+  await saveSettings(h.data, PROJECT, { rules: 'Different rules.' }, { basedOn: 1 });
+  run = (await h.act(run, 'approve', {})).run;
+  assert.equal(run.waiting && run.waiting.kind, 'review', run.statusReason || run.error?.message);
+  const stages = h.calls.claude.map(c => c.stage);
+  for (const s of ['scope', 'prove', 'implement', 'review']) assert.ok(stages.includes(s), `${s} ran (${stages.join(', ')})`);
+  const block = '<project_instructions source="workspace-rules@v1">\nMoney is in cents.\n<\\/project_instructions> stays inside.\n</project_instructions>';
+  for (const call of h.calls.claude) {
+    const p = call.prompt;
+    const at = [p.indexOf('<project_instructions source="CLAUDE.md@aaaaaaa">'), p.indexOf('<project_instructions source="AGENTS.md@aaaaaaa">'), p.indexOf(block)];
+    assert.ok(at[0] >= 0 && at[1] > at[0] && at[2] > at[1], `${call.stage}: CLAUDE.md, AGENTS.md, then the rules (${at})`);
+    assert.equal(p.split(block).length, 2, `${call.stage}: the rules once`);
+    assert.ok(!p.includes('Different rules.') && !p.includes('workspace-rules@v2'), `${call.stage} keeps v1`);
+  }
+  assert.deepEqual((await h.reload(run)).projectSettings, { version: 1, sha256: v1.sha256 }, 'run.json keeps the version it started with');
+  // A run started now records v2 and gets its rules.
+  const next = await h.drive(await h.newRun('explain', { what: 'Where is tax added?' }));
+  assert.equal(next.status, 'passed', next.statusReason);
+  assert.equal(next.projectSettings.version, 2);
+  assert.match(h.claudeCalls('answer')[0].prompt, /<project_instructions source="AGENTS\.md@aaaaaaa">[\s\S]*<project_instructions source="workspace-rules@v2">\nDifferent rules\.\n<\/project_instructions>/);
+});
+
+test('project rules: none without saved settings, none for a run from before them, none when the rules are empty', async t => {
+  const h = await harness(t);
+  const plain = await h.drive(await h.newRun('explain', { what: 'x' }));
+  assert.equal(plain.projectSettings, null);
+  assert.doesNotMatch(h.claudeCalls('answer')[0].prompt, /workspace-rules/);
+  // run.json written before project settings existed has no projectSettings at all.
+  await saveSettings(h.data, PROJECT, { rules: 'New rules.' }, { basedOn: 0 });
+  const old = await h.newRun('explain', { what: 'y' });
+  delete old.projectSettings;
+  await store.saveRun(h.data, old);
+  assert.equal((await h.drive(old)).status, 'passed');
+  assert.doesNotMatch(h.claudeCalls('answer')[1].prompt, /workspace-rules/);
+  // Settings with defaults only: the run records them, the prompt has no empty block.
+  await saveSettings(h.data, PROJECT, { rules: '', defaults: { model: 'opus' } }, { basedOn: 1 });
+  const empty = await h.drive(await h.newRun('explain', { what: 'z' }));
+  assert.equal(empty.projectSettings.version, 2);
+  assert.doesNotMatch(h.claudeCalls('answer')[2].prompt, /workspace-rules/);
+});
+
+test('project rules: a stage stops before Claude starts when the recorded version is gone or no longer matches its hash', async t => {
+  const h = await harness(t);
+  const v1 = await saveSettings(h.data, PROJECT, { rules: 'Original rules.' }, { basedOn: 0 });
+  const changed = await h.newRun('explain', { what: 'changed' });
+  const gone = await h.newRun('explain', { what: 'gone' });
+  // Edited by hand, hash and all: the file is consistent, but not what the runs recorded.
+  const file = join(settingsDir(h.data, PROJECT), 'v1.json');
+  const edited = { ...v1, rules: 'Edited rules.' };
+  writeFileSync(file, JSON.stringify({ ...edited, sha256: settingsHash(edited) }, null, 2));
+  const a = await h.drive(changed);
+  assert.equal(a.status, 'failed');
+  assert.match(a.statusReason, /The project settings v1 of example are not the ones this run started with/);
+  rmSync(file);
+  const b = await h.drive(gone);
+  assert.equal(b.status, 'failed');
+  assert.match(b.statusReason, /This run started with the project settings v1 of example, which can't be read now: example has no settings v1/);
+  assert.equal(h.claudeCalls('answer').length, 0, 'Claude never started with other rules');
+});
+
+test('preview: the first prompt has the rules a run started now would get', async t => {
+  const h = await harness(t);
+  await saveSettings(h.data, PROJECT, { rules: 'Keep it small.' }, { basedOn: 0 });
+  const draft = { project: PROJECT, pipeline: 'explain', def: pipelineById('explain'), values: checkValues('explain', { what: 'why' }, { profile: h.profile }).values,
+    profile: h.profile, settings: {}, level: 'standard', levelReason: [], riskTags: [], isolationMode: 'worktree', refusals: [], warnings: [] };
+  const p = await h.ex.preview(draft);
+  assert.match(p.prompt, /<project_instructions source="AGENTS\.md@aaaaaaa">[\s\S]*<project_instructions source="workspace-rules@v1">\nKeep it small\.\n<\/project_instructions>/);
+  assert.ok(!existsSync(join(h.data, 'runs')), 'a preview writes nothing');
+  // Settings that can't be read show up instead of a prompt.
+  writeFileSync(join(settingsDir(h.data, PROJECT), 'v1.json'), '{');
+  assert.match((await h.ex.preview(draft)).prompt, /^\(The prompt could not be built: The settings v1 of example can't be used/);
 });
 
 // ---------------------------------------------------------------- preview and redaction

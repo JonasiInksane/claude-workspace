@@ -3,19 +3,30 @@
 // The workspace app writes the file; tools/workspace-app/claude-prompt.mjs or
 // tools/agent-session.mjs --prompt-file reads it, deletes it, and passes the prompt to claude as
 // an argument from Node. Why not on the command line: Windows PowerShell 5.1 mangles double
-// quotes inside arguments it passes to programs, and a prompt can contain anything.
+// quotes inside arguments it passes to programs, and a prompt can contain anything. A project's
+// rules (appendSystemPrompt) can too, so a session with rules always starts through this file,
+// even one without a first prompt.
 //
 // File content (JSON):
 //   { "prompt": "...", "readDirs": ["C:\\abs\\folder"], "launch": { ... } }
-// readDirs are folders outside the session's working folder that it may read without asking
-// (for example a flow's reference images); they go into the session's --settings.
+// The prompt may be empty only when the launch sets something: the session then starts without a
+// first prompt. readDirs are folders outside the session's working folder that it may read
+// without asking (for example a flow's reference images); they go into the session's --settings.
 // launch (optional): { permissionMode, model, effort, allowedTools: [rule, ...], sessionId,
-// resume, settingsFile }. permissionMode, model and effort become --permission-mode, --model and
-// --effort; allowedTools goes into the settings' permissions.allow (--allowedTools takes every
-// following argument, so it would swallow the prompt). sessionId becomes --session-id (a new
-// session with a known id, so the app can find it again), resume becomes --resume (an existing
-// session) and settingsFile becomes --settings; with readDirs or allowedTools as well, that file
-// is merged with them into one settings file (promptSessionArgs), since claude reads one.
+// resume, continueLast, settingsFile, appendSystemPrompt }. permissionMode, model and effort
+// become --permission-mode, --model and --effort; allowedTools goes into the settings'
+// permissions.allow (--allowedTools takes every following argument, so it would swallow the
+// prompt). sessionId becomes --session-id (a new session with a known id, so the app can find it
+// again), resume becomes --resume (an existing session), continueLast becomes -c (the folder's
+// last session) and settingsFile becomes --settings; with readDirs or allowedTools as well, that
+// file is merged with them into one settings file (promptSessionArgs), since claude reads one.
+// appendSystemPrompt (at most 20,000 characters) becomes --append-system-prompt <text>. It is
+// never part of launchArgs: that text only goes on a command line Node spawns
+// (promptSessionArgs here, agent-session.mjs), never into a PowerShell command.
+//
+// Windows refuses a command line of 32,767 characters or more (spawn fails with ENAMETOOLONG), so
+// writePromptFile refuses a prompt and system prompt text that would not fit together once quoted
+// (COMMAND_TEXT_BUDGET).
 import { mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -33,8 +44,29 @@ export const MODEL_RE = /^[A-Za-z0-9][\w.:\-[\]]{0,79}$/;
 // A permission rule: Read, mcp__server__tool, Bash(npm test:*), WebFetch(domain:example.com).
 export const TOOL_RULE_RE = /^[A-Za-z][\w-]*(\([^()\r\n"]{1,200}\))?$/;
 export const MAX_TOOL_RULES = 20;
+// --append-system-prompt text: a project's rules (workspace-app/project-settings.mjs).
+export const MAX_APPEND_SYSTEM_PROMPT = 20000;
+// What the prompt and the system prompt text may take together, quoted as Node quotes them, of a
+// Windows command line (which must stay under 32,767 characters); the rest is room for claude's
+// path, the flags and the settings file.
+export const COMMAND_TEXT_BUDGET = 30000;
 
 export const promptDir = () => join(tmpdir(), 'claude-workspace', 'prompts');
+
+// How many characters `arg` takes on a Windows command line as Node (libuv's quote_cmd_arg)
+// writes it: as it is without spaces, tabs or quotes; otherwise in quotes, with a backslash
+// before every '"' and every backslash doubled that comes right before a '"' or the end.
+export function quotedLength(arg) {
+  const s = String(arg);
+  if (!s) return 2;
+  if (!/[ \t"]/.test(s)) return s.length;
+  let n = s.length + 2;
+  let beforeQuote = true; // the closing quote
+  for (let i = s.length - 1; i >= 0; i--) {
+    if (s[i] === '"') { n += 1; beforeQuote = true; } else if (s[i] === '\\') { if (beforeQuote) n += 1; } else beforeQuote = false;
+  }
+  return n;
+}
 
 // Splits "Read, Grep Bash(git log *)" into rules: commas, spaces and newlines separate rules,
 // except inside parentheses.
@@ -84,6 +116,19 @@ export function checkLaunch(input = {}) {
   }
   // claude refuses --session-id together with --resume (unless it forks the session).
   if (launch.sessionId && launch.resume) return { error: 'start a new session (sessionId) or resume one (resume), not both', launch };
+  const cont = input && input.continueLast;
+  if (cont !== undefined && cont !== null && cont !== false) {
+    if (cont !== true) return { error: 'continueLast must be true or false', launch };
+    if (launch.sessionId || launch.resume) return { error: 'continue the last session or name one, not both', launch };
+    launch.continueLast = true;
+  }
+  const extra = input && input.appendSystemPrompt;
+  if (extra !== undefined && extra !== null && extra !== '') {
+    if (typeof extra !== 'string') return { error: 'appendSystemPrompt must be text', launch };
+    if (extra.length > MAX_APPEND_SYSTEM_PROMPT) return { error: `appendSystemPrompt is longer than ${MAX_APPEND_SYSTEM_PROMPT} characters`, launch };
+    if (extra.includes('\0')) return { error: 'appendSystemPrompt has a NUL character, which no program can take as an argument', launch };
+    if (extra.trim()) launch.appendSystemPrompt = extra;
+  }
   if (s('settingsFile')) {
     const f = s('settingsFile');
     const absolute = WIN ? /^[A-Za-z]:[\\/]/.test(f) : isAbsolute(f);
@@ -98,10 +143,13 @@ function isFile(p) {
   try { return statSync(p).isFile(); } catch { return false; }
 }
 
-// The claude flags for a checked launch (allowedTools is not a flag; see above), in this order:
-// --resume or --session-id, --permission-mode, --model, --effort, --settings.
+// The claude flags for a checked launch, in this order: -c, --resume or --session-id,
+// --permission-mode, --model, --effort, --settings. allowedTools is not a flag (see above), and
+// appendSystemPrompt is left out on purpose: its text may only go on a command line that Node
+// spawns (promptSessionArgs, agent-session.mjs), never into a PowerShell command.
 export function launchArgs(launch = {}) {
   const args = [];
+  if (launch.continueLast) args.push('-c');
   if (launch.resume) args.push('--resume', launch.resume);
   if (launch.sessionId) args.push('--session-id', launch.sessionId);
   if (launch.permissionMode) args.push('--permission-mode', launch.permissionMode);
@@ -133,9 +181,10 @@ export function mergeSettings(...layers) {
 // allowedTools (permissions.allow) need a settings file, `settings` is its JSON text and
 // `settingsPath` where the caller writes it (in args after --settings); the launch's
 // settingsFile, when there is one, is merged in: its own values win and its arrays add up.
-// Otherwise settings is null and a settingsFile is passed as it is. The prompt comes last.
-export function promptSessionArgs({ prompt, readDirs = [], launch = {} }) {
-  const { settingsFile, ...flags } = launch;
+// Otherwise settings is null and a settingsFile is passed as it is. --append-system-prompt and
+// its text follow; the prompt, when there is one, comes last.
+export function promptSessionArgs({ prompt = '', readDirs = [], launch = {} }) {
+  const { settingsFile, appendSystemPrompt, ...flags } = launch;
   const args = launchArgs(flags);
   const permissions = {};
   if (readDirs.length) permissions.additionalDirectories = readDirs;
@@ -154,11 +203,30 @@ export function promptSessionArgs({ prompt, readDirs = [], launch = {} }) {
     settingsPath = join(promptDir(), `read-dirs-${createHash('sha1').update(settings).digest('hex').slice(0, 12)}.json`);
     args.push('--settings', settingsPath);
   } else if (settingsFile) args.push('--settings', settingsFile);
-  args.push(...promptArgs(prompt));
+  if (appendSystemPrompt) args.push('--append-system-prompt', appendSystemPrompt);
+  if (prompt) args.push(...promptArgs(prompt));
   return { args, settings, settingsPath };
 }
 
-export function writePromptFile({ prompt, readDirs = [], launch = {} }) {
+// True when a launch sets anything (a prompt file without a prompt needs that).
+const setsSomething = launch => Object.values(launch || {}).some(v => v !== undefined && v !== null && v !== '' && v !== false &&
+  !(Array.isArray(v) && !v.length));
+
+// The problem with handing this prompt and launch to claude on one Windows command line, or ''.
+export function commandTextProblem(prompt, launch = {}) {
+  const text = typeof prompt === 'string' && prompt.trim() ? prompt : '';
+  const extra = launch && typeof launch.appendSystemPrompt === 'string' ? launch.appendSystemPrompt : '';
+  const used = (text ? quotedLength(text) : 0) + (extra ? quotedLength(extra) : 0);
+  if (used <= COMMAND_TEXT_BUDGET) return '';
+  return `the prompt and the project rules are too long for one Windows command line: ${used} characters once quoted, ` +
+    `at most ${COMMAND_TEXT_BUDGET}. Shorten the prompt or the project rules`;
+}
+
+// Writes the file and returns its path. Throws, before writing, when the prompt and the rules
+// would not fit on one Windows command line (commandTextProblem).
+export function writePromptFile({ prompt = '', readDirs = [], launch = {} }) {
+  const problem = commandTextProblem(prompt, launch);
+  if (problem) throw new Error(problem);
   mkdirSync(promptDir(), { recursive: true });
   const file = join(promptDir(), `${randomUUID()}.json`);
   writeFileSync(file, JSON.stringify({ prompt, readDirs, launch }), 'utf8');
@@ -167,16 +235,18 @@ export function writePromptFile({ prompt, readDirs = [], launch = {} }) {
 
 // Reads the file and, when it is valid and in promptDir(), deletes it (a prompt is used once;
 // a file named by mistake, such as a settings file, is never deleted). Throws with a plain
-// message when it is missing or malformed.
+// message when it is missing or malformed. An empty prompt comes back as '' (no first prompt),
+// which is valid only when the launch sets something.
 export function takePromptFile(file) {
   let data;
   try { data = JSON.parse(readFileSync(file, 'utf8')); } catch (e) { throw new Error(`could not read the prompt file: ${e.message}`); }
-  const prompt = data && typeof data.prompt === 'string' ? data.prompt : '';
-  if (!prompt.trim()) throw new Error('the prompt is empty');
-  const readDirs = Array.isArray(data.readDirs) ? data.readDirs : [];
+  const given = data && typeof data.prompt === 'string' ? data.prompt : '';
+  const prompt = given.trim() ? given : '';
+  const readDirs = data && Array.isArray(data.readDirs) ? data.readDirs : [];
   if (!readDirs.every(d => typeof d === 'string' && isAbsolute(d))) throw new Error('readDirs must be absolute folder paths');
-  const { error, launch } = checkLaunch(data.launch || {});
+  const { error, launch } = checkLaunch((data && data.launch) || {});
   if (error) throw new Error(`launch: ${error}`);
+  if (!prompt && !setsSomething(launch)) throw new Error('the prompt is empty');
   const rel = relative(promptDir(), resolve(file));
   if (rel && !rel.startsWith('..') && !isAbsolute(rel)) {
     try { unlinkSync(file); } catch { /* already gone */ }

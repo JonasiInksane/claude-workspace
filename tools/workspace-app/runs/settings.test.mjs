@@ -34,6 +34,7 @@ const PRIVATE_DENIES = [
   'Read(//c/Data/claude-workspace/findings/**)', 'Read(//c/Data/claude-workspace/metrics/**)',
   'Read(//c/Data/claude-workspace/wins/**)', 'Read(//c/Data/claude-workspace/reports/**)',
   'Read(//c/Data/claude-workspace/checks/**)', 'Read(//c/Data/claude-workspace/worktrees/**)',
+  'Read(//c/Data/claude-workspace/projects/**)',
   'Read(//c/Data/claude-workspace/settings.json)', 'Read(//c/Data/claude-workspace/sessions.jsonl)',
 ];
 const PROFILE_SECRET_DENIES = [

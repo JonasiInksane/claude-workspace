@@ -6,7 +6,9 @@
 // prompt. Values that come from files, Claude or the user go in <data> blocks (dataBlock), which
 // never instruct Claude. CLAUDE.md and AGENTS.md go in <project_instructions> blocks, read at
 // the run's base commit with git, because `claude --restricted` does not load them itself
-// (spike A5): those blocks are the project's own guidance and do instruct.
+// (spike A5): those blocks are the project's own guidance and do instruct. The project's rules
+// from the app (project-settings.mjs, the settings version the run recorded) follow them as one
+// more block, source="workspace-rules@v<N>".
 // Templates are generic: project names, paths and rules all arrive through variables, because
 // the hub repo is public.
 import { readFile, stat } from 'node:fs/promises';
@@ -78,11 +80,18 @@ export function renderPrompt(tpl, vars = {}) {
   });
 }
 
+// "<project_instructions" and "</project_instructions" in text that goes inside a block, escaped,
+// so the text can neither close the block it is in nor open one that looks trusted (ADDENDUM A5).
+// dataBlock, instructionsBlock and the workspace rules (project-settings.mjs rulesBlock) use it.
+export function escapeInstructionTags(text) {
+  return String(text == null ? '' : text).replace(/<(\/?)(project_instructions)/gi, '<\\$1$2');
+}
+
 // Text that is data, never instructions. "</data" inside it is escaped so it can't close the
 // block early, and "<project_instructions" so it can't pose as the trusted block (ADDENDUM A5).
 export function dataBlock(name, text) {
   const n = String(name || 'data').toLowerCase().replace(/[^a-z0-9._-]/g, '-').slice(0, 60) || 'data';
-  const body = String(text == null ? '' : text).replace(/<\/data/gi, '<\\/data').replace(/<(\/?)project_instructions/gi, '<\\$1project_instructions');
+  const body = escapeInstructionTags(String(text == null ? '' : text).replace(/<\/data/gi, '<\\/data'));
   return `<data name="${n}">\n${body}\n</data>`;
 }
 
@@ -106,7 +115,7 @@ export function capBytes(text, cap) {
 // the block says so and tells Claude to Read the file for the rest.
 export function instructionsBlock(file, sha, text, cap = INSTRUCTIONS_CAP) {
   const { text: body, cut } = capBytes(String(text || '').replace(/\r\n/g, '\n'), cap);
-  const safe = body.replace(/<\/project_instructions/gi, '<\\/project_instructions');
+  const safe = escapeInstructionTags(body);
   const note = cut ? `\n\n(This copy is cut at ${Math.round(cap / 1024)} KB. Read ${file} for the rest.)` : '';
   return `<project_instructions source="${file}@${String(sha || '').slice(0, 7)}">\n${safe}${note}\n</project_instructions>`;
 }
@@ -115,7 +124,14 @@ export function instructionsBlock(file, sha, text, cap = INSTRUCTIONS_CAP) {
 // <project_instructions> blocks. `git.fileAt(dir, sha, path)` returns the text, or null when the
 // file isn't there. When it throws, the file may well exist: the stage is told it could not be
 // read and to Read it itself, never that the project has none (A5).
-export async function projectInstructions({ git, dir, sha, files = INSTRUCTION_FILES, cap = INSTRUCTIONS_CAP }) {
+// `extra`: finished blocks that come after the files' blocks, such as the workspace rules of the
+// run's settings version (project-settings.mjs rulesBlock); empty ones are left out.
+export async function projectInstructions({ git, dir, sha, files = INSTRUCTION_FILES, cap = INSTRUCTIONS_CAP, extra = [] }) {
+  const after = (Array.isArray(extra) ? extra : [extra]).filter(b => typeof b === 'string' && b.trim());
+  return [await fileInstructions({ git, dir, sha, files, cap }), ...after].join('\n\n');
+}
+
+async function fileInstructions({ git, dir, sha, files, cap }) {
   const blocks = [];
   for (const file of files) {
     let text = null;

@@ -274,3 +274,27 @@ test('agent-session --prompt-file starts with the prompt and may read the extra 
   assert.match(run('agent-session.mjs', ['demo', 'art', '--print', '--prompt-file', elsewhere], root).err, /prompt is empty/);
   assert.ok(existsSync(elsewhere));
 });
+
+test('agent-session --prompt-file passes the project rules as one argument of its own spawn, also without a prompt', t => {
+  const root = fixture(t);
+  assert.equal(run('new-agent.mjs', ['demo', 'art'], root).code, 0);
+  const id = '8c1e0a52-3b6d-4f0e-9a1b-2c3d4e5f6a7b';
+  const promptFile = join(root, 'claude-workspace', 'prompts', 'p.json');
+  mkdirSync(dirname(promptFile), { recursive: true });
+  // What PowerShell 5.1 would mangle: quotes, $( ), backticks and line breaks; and a leading dash.
+  const rules = '- Money is in cents.\n- Say "no" to floats; $(calc) and `x` stay text.';
+  writeFileSync(promptFile, JSON.stringify({ prompt: '', launch: { effort: 'low', appendSystemPrompt: rules } }));
+  const r = run('agent-session.mjs', ['demo', 'art', '--print', '--prompt-file', promptFile, '--session-id', id], root);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(JSON.parse(r.out).args.slice(4), ['--effort', 'low', '--session-id', id, '--append-system-prompt', rules], 'no prompt at the end');
+  assert.ok(!existsSync(promptFile), 'the prompt file is used once');
+  // With a first prompt, the rules come right before it.
+  writeFileSync(promptFile, JSON.stringify({ prompt: 'Draw the hero', launch: { appendSystemPrompt: rules } }));
+  const withPrompt = run('agent-session.mjs', ['demo', 'art', '--print', '--prompt-file', promptFile], root);
+  assert.deepEqual(JSON.parse(withPrompt.out).args.slice(4), ['--append-system-prompt', rules, 'Draw the hero']);
+  // -c has no place in an agent session, and an empty file is still refused.
+  writeFileSync(promptFile, JSON.stringify({ prompt: 'x', launch: { continueLast: true } }));
+  assert.match(run('agent-session.mjs', ['demo', 'art', '--print', '--prompt-file', promptFile], root).err, /can't continue the last session/);
+  writeFileSync(promptFile, JSON.stringify({ prompt: '', launch: {} }));
+  assert.match(run('agent-session.mjs', ['demo', 'art', '--print', '--prompt-file', promptFile], root).err, /prompt is empty/);
+});

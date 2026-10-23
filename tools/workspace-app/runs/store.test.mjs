@@ -10,6 +10,7 @@ import {
   RUN_ID_RE, MSG_MAX, newRunId, freeRunId, runDir, runPath, stageFolder, gateFolder, tmpFolder, createRun, loadRun, findRun,
   scanRuns, saveRun, indexLine, listRuns, compactIndex, appendTimeline, readTimeline, writeInput, verifyInputs, isTerminal,
 } from './store.mjs';
+import { saveSettings, settingsDir } from '../project-settings.mjs';
 
 function temp(t) {
   const dir = mkdtempSync(join(tmpdir(), 'ws-store-'));
@@ -101,10 +102,11 @@ test('createRun makes the run folder with its subfolders, the full run.json and 
   for (const f of ['inputs', 'stages', 'gates', 'final', 'tmp']) assert.ok(statSync(join(dir, f)).isDirectory(), f);
   const onDisk = JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8'));
   for (const key of ['version', 'id', 'project', 'pipeline', 'parent', 'title', 'values', 'level', 'levelReason', 'reviewEffort', 'createdAt',
-    'updatedAt', 'endedAt', 'status', 'statusReason', 'current', 'waiting', 'isolation', 'base', 'branch', 'commit', 'versions', 'lockHeld', 'plan',
-    'allowances', 'pins', 'redTests', 'inputsHashes', 'fixRounds', 'gatedTree', 'stages', 'takeover', 'error']) {
+    'updatedAt', 'endedAt', 'status', 'statusReason', 'current', 'waiting', 'isolation', 'base', 'branch', 'commit', 'versions', 'projectSettings',
+    'lockHeld', 'plan', 'allowances', 'pins', 'redTests', 'inputsHashes', 'fixRounds', 'gatedTree', 'stages', 'takeover', 'error']) {
     assert.ok(key in onDisk, `run.json has ${key}`);
   }
+  assert.equal(onDisk.projectSettings, null, 'no project settings saved: none recorded');
   assert.equal(onDisk.status, 'running');
   assert.equal(onDisk.createdAt, '2026-10-22T10:42:12.000Z');
   assert.deepEqual(onDisk.current, { stage: 'preflight', index: 0, attempt: 1, round: 1 });
@@ -134,6 +136,36 @@ test('createRun keeps the given fields, skips done stages for `current`, and ref
   await assert.rejects(createRun(dataDir, { project: 'example', pipeline: 'Bad Id' }), /not a valid pipeline id/);
   await assert.rejects(createRun(dataDir, { project: 'example', pipeline: 'explain', status: 'exploded' }), /not a run status/);
   await assert.rejects(createRun(dataDir, { project: 'example', pipeline: 'explain', stages: [{ id: 'x', kind: 'gate', status: 'odd' }] }), /not a stage status/);
+});
+
+test('createRun records the project settings version once; a later save changes no run', async t => {
+  const dataDir = temp(t);
+  const v1 = await saveSettings(dataDir, 'example', { rules: 'Money is in cents.' }, { basedOn: 0 });
+  const a = await createRun(dataDir, { project: 'example', pipeline: 'explain', id: 'r-a' });
+  assert.deepEqual(a.projectSettings, { version: 1, sha256: v1.sha256 });
+  const v2 = await saveSettings(dataDir, 'example', { rules: 'Money is in cents. Always.' }, { basedOn: 1 });
+  const b = await createRun(dataDir, { project: 'example', pipeline: 'explain', id: 'r-b' });
+  assert.deepEqual(b.projectSettings, { version: 2, sha256: v2.sha256 });
+  assert.deepEqual((await loadRun(dataDir, 'example', 'r-a')).projectSettings, { version: 1, sha256: v1.sha256 }, 'r-a keeps v1');
+  // Another project's settings are its own.
+  assert.equal((await createRun(dataDir, { project: 'other', pipeline: 'explain', id: 'r-c' })).projectSettings, null);
+  // Given in init (an engine caller that knows better): kept as given, null too.
+  assert.deepEqual((await createRun(dataDir, { project: 'example', pipeline: 'explain', id: 'r-d', projectSettings: { version: 1, sha256: v1.sha256 } })).projectSettings,
+    { version: 1, sha256: v1.sha256 });
+  assert.equal((await createRun(dataDir, { project: 'example', pipeline: 'explain', id: 'r-e', projectSettings: null })).projectSettings, null);
+  for (const bad of [{ version: 0, sha256: v1.sha256 }, { version: 1 }, 'v1', { version: 1, sha256: 'short' }]) {
+    await assert.rejects(createRun(dataDir, { project: 'example', pipeline: 'explain', id: 'r-bad', projectSettings: bad }), /projectSettings must be null or/);
+  }
+  assert.ok(!existsSync(join(dataDir, 'runs', 'example', 'r-bad')), 'a refused start leaves no run folder');
+});
+
+test('createRun refuses to start when the current settings can not be read, and leaves nothing behind', async t => {
+  const dataDir = temp(t);
+  await saveSettings(dataDir, 'example', { rules: 'One' }, { basedOn: 0 });
+  writeFileSync(join(settingsDir(dataDir, 'example'), 'v1.json'), '{ damaged');
+  await assert.rejects(createRun(dataDir, { project: 'example', pipeline: 'explain', id: 'r-1' }), /The settings v1 of example can't be used/);
+  assert.ok(!existsSync(join(dataDir, 'runs', 'example', 'r-1')));
+  assert.deepEqual(indexRows(dataDir), []);
 });
 
 test('createRun picks a free id when the same request comes twice in one second', async t => {

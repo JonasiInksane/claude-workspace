@@ -30,9 +30,10 @@ export const HOOK_TIMEOUT_SEC = 10;
 export const TG_CHECK_ALLOW = 'Bash(tg-check *)';
 export const SECRET_GLOBS = Object.freeze(['**/.env*', '**/.npmrc', '**/.sentryclirc']);
 export const SECRET_NAMES = Object.freeze(['.env', '.npmrc', '.sentryclirc']);
-// Data-folder files a stage never needs to read (2.2).
+// Data-folder files a stage never needs to read (2.2). projects/** holds every project's settings
+// versions (project-settings.mjs); a stage gets its own run's rules in its prompt.
 export const PRIVATE_READS = Object.freeze(['profiles/**', 'baselines/**', 'findings/**', 'metrics/**', 'wins/**',
-  'reports/**', 'checks/**', 'worktrees/**', 'settings.json', 'sessions.jsonl']);
+  'reports/**', 'checks/**', 'worktrees/**', 'projects/**', 'settings.json', 'sessions.jsonl']);
 // Files --restricted acceptEdits may still change (spike E9); EDIT stages get denies for them.
 export const PROTECTED_IN_TREE = Object.freeze(['CLAUDE.md', 'AGENTS.md', '.github/**', '.gitignore']);
 // The gates run tsc, eslint, prettier and tsx from the tree's node_modules ({pkg:} in the

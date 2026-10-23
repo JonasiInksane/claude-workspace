@@ -200,6 +200,38 @@ test('createRun records the manifest with its hash, frozen: a later save keeps i
   assert.deepEqual((await loadRun(dataDir, 'example', 'r-m')).manifest, MANIFEST, 'run.json still has the first one');
 });
 
+test('a run whose run.json was edited by hand loads, can be stopped with the edit kept, and is never saved as running', async t => {
+  const dataDir = temp(t);
+  const created = await createRun(dataDir, { project: 'example', pipeline: 'refactor', id: 'r-h', manifest: MANIFEST });
+  const file = join(runDir(dataDir, created), 'run.json');
+  const edited = JSON.parse(readFileSync(file, 'utf8'));
+  edited.manifest.models.scope = 'haiku';
+  writeFileSync(file, JSON.stringify(edited));
+
+  const run = await loadRun(dataDir, 'example', 'r-h');
+  assert.equal(run.manifest.models.scope, 'haiku', 'loaded as it is, so the run page can show the mismatch');
+  assert.notEqual(manifestHash(run.manifest), run.manifestSha256);
+  // Going on with it is refused, before anything is written.
+  run.stages = [{ id: 'scope', n: 0, kind: 'claude', status: 'running', attempts: [] }];
+  await assert.rejects(saveRun(dataDir, run), /The input manifest of run r-h changed/);
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).stages.length, 0);
+  // Stopping it is saved, with the manifest and hash run.json holds.
+  run.stages[0].status = 'interrupted';
+  run.status = 'interrupted';
+  run.lockHeld = false;
+  await saveRun(dataDir, run);
+  const back = await loadRun(dataDir, 'example', 'r-h');
+  assert.deepEqual([back.status, back.stages[0].status, back.manifest, back.manifestSha256],
+    ['interrupted', 'interrupted', edited.manifest, manifestHash(MANIFEST)], 'the edit stays visible');
+  back.status = 'cancelled';
+  await saveRun(dataDir, back);
+  assert.equal((await loadRun(dataDir, 'example', 'r-h')).status, 'cancelled');
+  // The app can't change it further, not even on a stopped run.
+  await assert.rejects(saveRun(dataDir, { ...back, manifest: { ...edited.manifest, models: { scope: 'sonnet' } } }), /changed after the run was created/);
+  await assert.rejects(saveRun(dataDir, { ...back, manifest: null }), /changed after the run was created/);
+  assert.deepEqual((await loadRun(dataDir, 'example', 'r-h')).manifest, edited.manifest);
+});
+
 test('createRun without a manifest records null, and refuses one of the wrong shape before making anything', async t => {
   const dataDir = temp(t);
   const plain = await createRun(dataDir, { project: 'example', pipeline: 'explain', id: 'r-plain' });

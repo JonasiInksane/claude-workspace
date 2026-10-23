@@ -895,13 +895,20 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
       }
     }
 
+    // One run that can't be saved (a run.json edited by hand) must not stop the recovery of the
+    // others: its error is reported, and it still counts as interrupted below, so its lock is kept
+    // and its orphans are looked for.
     for (const run of wasRunning) {
       const name = runningStageName(run);
       const msg = `The app restarted while ${name} ran.`;
       markInterrupted(run, msg, at);
-      await store.saveRun(dataDir, run, { now });
-      await store.appendTimeline(dataDir, run, [{ kind: 'status', stage: name === 'a stage' ? null : name, msg }], { now, redact: deps.redact });
-      report.interrupted.push(run.id);
+      try {
+        await store.saveRun(dataDir, run, { now });
+        report.interrupted.push(run.id);
+        await store.appendTimeline(dataDir, run, [{ kind: 'status', stage: name === 'a stage' ? null : name, msg }], { now, redact: deps.redact });
+      } catch (err) {
+        report.errors.push(`Run ${run.id} could not be marked interrupted: ${err.message}`);
+      }
     }
 
     const byId = new Map(runs.map(r => [r.id, r]));
@@ -936,7 +943,12 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
         report.errors.push(r.reason);
       }
       const holds = report.adopted.some(a => a.runId === run.id);
-      if (run.lockHeld && !holds) { run.lockHeld = false; await store.saveRun(dataDir, run, { now }); }
+      if (run.lockHeld && !holds) {
+        run.lockHeld = false;
+        try { await store.saveRun(dataDir, run, { now }); } catch (err) {
+          report.errors.push(`Run ${run.id} still says it holds the lock of ${run.project}: ${err.message}`);
+        }
+      }
     }
 
     const busyTrees = runs.filter(r => r.status === 'in-terminal' && r.isolation && r.isolation.tree).map(r => r.isolation.tree);

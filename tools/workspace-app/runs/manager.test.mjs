@@ -861,6 +861,67 @@ test('recover with a failed process lookup kills nothing, still marks runs inter
   assert.ok(rep.errors.some(e => /Could not check which app owns 1 run/.test(e)));
 });
 
+// A manifest in the shape runs/manifest.mjs builds.
+const SEED_MANIFEST = {
+  version: 1, stagePrompts: [{ stage: 'scope', file: 'pipelines/app/refactor/scope.md', sha256: 'a'.repeat(64) }],
+  profile: { sha256: 'b'.repeat(64) }, projectSettings: null, assets: [], models: { scope: 'opus' }, efforts: { scope: 'high' },
+  versions: { node: '24.11.1', claudeCode: null }, hub: { commit: 'd'.repeat(40), pipelinesClean: true },
+};
+
+test('recover over a run.json edited by hand: the run is interrupted with the edit kept, and the other runs are still recovered', async t => {
+  const { mgr, dataDir, proc } = setup(t, { alive: { 501: { image: 'claude.exe', startedAt: 111 } } });
+  const owner = DEAD_APP;
+  // alpha is scanned first: its run's manifest was edited while the run was running.
+  const T = await seedRun(dataDir, { project: 'alpha', pipeline: 'refactor', id: 'r-t', owner, lockHeld: true, manifest: SEED_MANIFEST,
+    stages: [{ id: 'preflight', kind: 'gate', status: 'done' }, { id: 'scope', kind: 'claude' }, { id: 'plan', kind: 'human' }] }, r => {
+    r.stages[1].status = 'running';
+    r.stages[1].attempts = [{ k: 1, folder: 'stages/01-scope', proc: { pid: 501, image: 'claude.exe', startedAt: 111 } }];
+    r.current = { stage: 'scope', index: 1, attempt: 1, round: 1 };
+  });
+  await deadLock(dataDir, 'alpha', 'r-t');
+  const file = join(store.runDir(dataDir, T), 'run.json');
+  const edited = JSON.parse(readFileSync(file, 'utf8'));
+  edited.manifest.models.scope = 'haiku';
+  writeFileSync(file, JSON.stringify(edited));
+  // beta: a plain run that was running. gamma and delta: run.json edited so that no save is accepted.
+  await seedRun(dataDir, { project: 'beta', pipeline: 'explain', id: 'r-u', owner, stages: [{ id: 'answer', kind: 'claude' }] }, r => {
+    r.stages[0].status = 'running';
+  });
+  await deadLock(dataDir, 'beta', 'r-u');
+  const W = await seedRun(dataDir, { project: 'delta', pipeline: 'explain', id: 'r-w', owner, lockHeld: true, stages: [{ id: 'answer', kind: 'claude' }] }, r => {
+    r.stages[0].status = 'running';
+  });
+  await deadLock(dataDir, 'delta', 'r-w');
+  const V = await seedRun(dataDir, { project: 'gamma', pipeline: 'refactor', id: 'r-v', owner, status: 'parked', lockHeld: true });
+  for (const run of [W, V]) {
+    const f = join(store.runDir(dataDir, run), 'run.json');
+    const doc = JSON.parse(readFileSync(f, 'utf8'));
+    doc.stages.push({ id: 'extra', n: 9, kind: 'gate', status: 'odd' });
+    writeFileSync(f, JSON.stringify(doc));
+  }
+
+  const rep = await mgr.recover();
+
+  assert.deepEqual(rep.interrupted, ['r-t', 'r-u']);
+  assert.deepEqual(rep.killed.map(k => k.pid), [501]);
+  assert.ok(!(501 in proc.procs));
+  const t1 = await loadRun(dataDir, 'r-t');
+  assert.deepEqual([t1.status, t1.stages[1].status, t1.statusReason], ['interrupted', 'interrupted', 'The app restarted while scope ran.']);
+  assert.equal(t1.manifest.models.scope, 'haiku', 'the edit stays');
+  assert.notEqual(manifestHash(t1.manifest), t1.manifestSha256, 'so the run page still shows manifestOk: false');
+  assert.equal((await loadRun(dataDir, 'r-u')).status, 'interrupted');
+  const adopted = rep.adopted.map(x => `${x.project}:${x.runId}`).sort();
+  assert.deepEqual(adopted, ['alpha:r-t', 'beta:r-u', 'delta:r-w'], 'r-w could not be saved, so its lock is kept');
+  assert.ok(rep.errors.some(e => /^Run r-w could not be marked interrupted: "odd" is not a stage status/.test(e)), rep.errors.join('\n'));
+  assert.ok(rep.errors.some(e => /^Run r-v still says it holds the lock of gamma: "odd" is not a stage status/.test(e)), rep.errors.join('\n'));
+
+  // Cancel works on it: the lock is given back and the edit still shows.
+  const r = await mgr.cancel('r-t');
+  assert.equal(r.run.status, 'cancelled');
+  assert.equal(lockOf(dataDir, 'alpha'), null);
+  assert.equal((await loadRun(dataDir, 'r-t')).manifest.models.scope, 'haiku');
+});
+
 test('recover on an empty data folder reports nothing to do', async t => {
   const { mgr } = setup(t);
   assert.deepEqual(await mgr.recover(), { interrupted: [], killed: [], adopted: [], released: [], orphans: [], skipped: [], errors: [] });

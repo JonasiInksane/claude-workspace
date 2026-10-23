@@ -21,13 +21,15 @@
 //   that version, so a save during the run changes nothing in it.
 // - A run started by the manager gets its input manifest (runs/manifest.mjs) at creation, with
 //   manifestSha256, the hash of its canonical JSON. It is frozen: the object is read-only in
-//   memory, and a save whose manifest no longer matches that hash is refused. Runs from before
-//   manifests, and runs created without one, have manifest null.
+//   memory, and a save whose manifest no longer matches that hash is refused. A run whose run.json
+//   was edited by hand is still loaded (its page shows the mismatch) and can be stopped, but never
+//   saved as running again. Runs from before manifests, and runs created without one, have
+//   manifest null.
 // Ids and names are checked by regex before any path is joined, so ".." can never reach out.
 import { appendFile, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
-import { appendJsonl, PROJECT_RE, readJson, readJsonl, renameRetry, sha256Text, writeJsonAtomic } from '../core/datadir.mjs';
+import { appendJsonl, canonicalJson, PROJECT_RE, readJson, readJsonl, renameRetry, sha256Text, writeJsonAtomic } from '../core/datadir.mjs';
 import { currentSettings, isSettingsRef, settingsRef } from '../project-settings.mjs';
 import { ASSET_INPUT_DIR, ASSET_INPUT_RE } from '../attached-assets.mjs';
 import { manifestHash, manifestProblem } from './manifest.mjs';
@@ -228,15 +230,29 @@ function frozenManifest(manifest) {
   return { manifest: deepFreeze(copy), manifestSha256: manifestHash(copy) };
 }
 
-// Throws when a run's manifest no longer matches the hash it was created with (or one of the two
-// is gone): a manifest never changes.
-function checkManifestKept(run) {
+// Whether a run still has the manifest it was created with: none and no hash, or a manifest whose
+// hash is manifestSha256.
+function manifestKept(run) {
   const has = run.manifest !== undefined && run.manifest !== null;
   const hash = run.manifestSha256 ?? null;
-  if (!has && hash === null) return;
-  if (!has || hash === null || manifestHash(run.manifest) !== hash) {
-    throw new Error(`The input manifest of run ${run.id} changed after the run was created; a run's manifest never changes.`);
+  if (!has && hash === null) return true;
+  return has && hash !== null && manifestHash(run.manifest) === hash;
+}
+
+const manifestText = run => canonicalJson([run.manifest ?? null, run.manifestSha256 ?? null]);
+
+// Throws when a run's manifest no longer matches the hash it was created with (or one of the two
+// is gone): a manifest never changes. One exception, so the engine can still stop such a run
+// (recovery, cancel, a stage that failed): run.json was edited by hand, and this save leaves the
+// run stopped (any status but running) and writes back exactly the manifest and hash run.json
+// holds now. The edit stays for the run page to show (manifestOk: false), and the run can't go on.
+async function checkManifestKept(file, run) {
+  if (manifestKept(run)) return;
+  if (run.status !== 'running') {
+    const found = await serial(file, () => readJson(file, null)).catch(() => null);
+    if (found && typeof found === 'object' && manifestText(found) === manifestText(run)) return;
   }
+  throw new Error(`The input manifest of run ${run.id} changed after the run was created; a run's manifest never changes.`);
 }
 
 function checkStatuses(run) {
@@ -422,17 +438,18 @@ function indexIfChanged(dataDir, run, at) {
 
 // Writes run.json (atomically, one write at a time per run) and appends an index line when the
 // status, stage or waiting kind changed. Sets updatedAt, and endedAt while the status is
-// terminal. Refuses a run whose manifest no longer matches its manifestSha256. Returns the run.
+// terminal. Refuses a run whose manifest no longer matches its manifestSha256, unless run.json
+// already holds that manifest and the save stops the run (checkManifestKept). Returns the run.
 export async function saveRun(dataDir, run, { now = Date.now } = {}) {
   checkProject(run?.project);
   checkRunId(run.id);
   checkStatuses(run);
-  checkManifestKept(run);
+  const file = join(runDir(dataDir, run), 'run.json');
+  await checkManifestKept(file, run);
   const at = iso(now());
   run.version = run.version || 1;
   run.updatedAt = at;
   run.endedAt = isTerminal(run.status) ? run.endedAt || at : null;
-  const file = join(runDir(dataDir, run), 'run.json');
   await serial(file, () => writeJsonAtomic(file, run));
   await indexIfChanged(dataDir, run, at);
   return run;

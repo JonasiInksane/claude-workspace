@@ -1203,7 +1203,7 @@ export async function runCli(argv, { log = console.log, env = process.env } = {}
   const r = await loadProfile(args.dataDir ? resolve(args.dataDir) : defaultDataDir(env), args.project);
   log(`Profile: ${r.path}`);
   if (!r.exists) {
-    log('There is no profile there. Use "Create from the example" in the cockpit, or copy one from your other PC.');
+    log('There is no profile there. Use "Create from the example" on the project\'s Settings tab in the app, or copy one from your other PC.');
     return 1;
   }
   for (const e of r.errors) log(`  error: ${e}`);

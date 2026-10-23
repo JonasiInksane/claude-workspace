@@ -243,7 +243,9 @@ test('role head: a planted failure is new, a known one stays known, a flaky one 
   const last = await lastPerLevel(h.dataDir, 'example');
   assert.equal(last.quick.result, 'fail');
   assert.equal(last.quick.runId, 'r-head');
-  assert.deepEqual(last.quick.counts, { new: 2, known: 2, flaky: 1 });
+  // The test totals are what the API tests' TAP counted at the first run (the new, the flaky and
+  // the known failure; the charge test passed); the type errors are in new and known only.
+  assert.deepEqual(last.quick.counts, { new: 2, known: 2, flaky: 1, pass: 1, fail: 3, skip: 0, notRun: 0 });
   assert.equal(JSON.parse(readFileSync(join(h.dataDir, 'runs', 'example', '261022-100000-check-test', 'gates', '02-checks', 'summary.json'), 'utf8')).chip, s.chip);
   assert.equal(await loadCandidate(h.dataDir, 'example', s.baselineKey), null);
 });
@@ -664,7 +666,7 @@ test('the CLI explains bad arguments, a missing profile and an unknown level', a
   const empty = tempDir('wp4-cli-', t);
   const missing = await cliMain(['--project', 'example', '--level', 'quick', '--data-dir', empty, '--tree', empty]);
   assert.equal(missing.code, 1);
-  assert.match(missing.text, /there is no profile for example/);
+  assert.match(missing.text, /there is no profile for example in .*\. Create one from the example on the project's Settings tab\./);
   const dataDir = cliSetup(t);
   const level = await cliMain(['--project', 'example', '--level', 'huge', '--data-dir', dataDir, '--tree', empty]);
   assert.match(level.text, /unknown level "huge"\. Levels: quick, standard, paranoid\./);
@@ -709,7 +711,7 @@ test('summaryText lists rows, new failures and the candidate', () => {
     '  fail    G1  Types: API                           1 new (1.5 s)',
     'New failures:',
     '  src/a.mjs::TS1::x',
-    'A baseline candidate was written (3 -> 2 known); accept it in the cockpit.',
+    "A baseline candidate was written (3 -> 2 known); accept it on the project's Checks tab.",
     'Logs: C:\\gate',
     '',
   ].join('\n'));

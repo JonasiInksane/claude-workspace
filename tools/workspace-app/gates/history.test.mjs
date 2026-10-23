@@ -24,10 +24,42 @@ test('historyLine keeps the fields of spec 2.10', () => {
   const line = historyLine(summary('standard', 'pass'), { runId: '261022-100000-check-my-work' });
   assert.deepEqual(line, {
     at: '2026-10-22T10:10:00.000Z', runId: '261022-100000-check-my-work', level: 'standard', treeMode: 'run', baseSha: 'a'.repeat(40),
-    node: '24.11.1', result: 'pass', chip: '0 new · 2 known', durationMs: 600000, counts: { new: 0, known: 2, flaky: 0 },
+    node: '24.11.1', result: 'pass', chip: '0 new · 2 known', durationMs: 600000, counts: { new: 0, known: 2, flaky: 0, notRun: 1 },
   });
   assert.equal(historyLine({}).chip, '');
   assert.deepEqual(historyLine({}).counts, { new: 0, known: 0, flaky: 0 });
+});
+
+test('historyLine sums the passed, failed and skipped tests of the test commands, plus the checks not run', () => {
+  const checks = [
+    { id: 'g0', group: 'G0', status: 'pass' },
+    { id: 'test:api', status: 'fail', counts: { pass: 40, fail: 3, skip: 1, todo: 1 } },
+    { id: 'types:api', status: 'pass' },
+    { id: 'test:web', status: 'pass', counts: { pass: 12, fail: 0, skip: 0, todo: 0 } },
+    { id: 'lint', status: 'skip' },
+  ];
+  const line = historyLine(summary('standard', 'fail', { checks, counts: { new: 1, known: 2, flaky: 0, canShrink: 0, notRun: 1 } }));
+  assert.deepEqual(line.counts, { new: 1, known: 2, flaky: 0, pass: 52, fail: 3, skip: 2, notRun: 1 }, 'a todo test counts as skipped');
+  // No test command ran: no test totals rather than zeros. A summary without notRun gives none.
+  const types = historyLine(summary('quick', 'pass', { checks: [{ id: 'types:api', status: 'pass' }], counts: { new: 0, known: 0, flaky: 0 } }));
+  assert.deepEqual(types.counts, { new: 0, known: 0, flaky: 0 });
+  // An odd number on a row counts as nothing instead of breaking the sum.
+  const odd = historyLine(summary('quick', 'pass', { checks: [{ counts: { pass: '3', fail: -1, skip: Number.NaN } }, { counts: { pass: 2 } }] }));
+  assert.deepEqual([odd.counts.pass, odd.counts.fail, odd.counts.skip], [2, 0, 0]);
+});
+
+test('a line written before the test totals reads back as it was, with no zeros added', async t => {
+  const dir = tempDir('wp4-hist-', t);
+  const file = historyFile(dir, 'example');
+  mkdirSync(dirname(file), { recursive: true });
+  const old = { at: '2026-10-20T10:00:00.000Z', level: 'quick', result: 'pass', runId: 'old', counts: { new: 0, known: 2, flaky: 0 } };
+  appendFileSync(file, `${JSON.stringify(old)}\n`);
+  const checks = [{ id: 'test:api', counts: { pass: 5, fail: 0, skip: 0, todo: 0 } }];
+  await appendHistory(dir, 'example', historyLine(summary('standard', 'pass', { checks }), { runId: 'new' }));
+  const last = await lastPerLevel(dir, 'example');
+  assert.deepEqual(last.quick.counts, { new: 0, known: 2, flaky: 0 });
+  assert.deepEqual(last.standard.counts, { new: 0, known: 2, flaky: 0, pass: 5, fail: 0, skip: 0, notRun: 1 });
+  assert.deepEqual((await readHistory(dir, 'example')).map(r => r.runId), ['new', 'old']);
 });
 
 test('appendHistory writes one JSON line per call', async t => {

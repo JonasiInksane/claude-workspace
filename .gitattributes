@@ -4,6 +4,9 @@
 # Shell scripts must keep LF or bash fails on them.
 *.sh text eol=lf
 
+# Test fixtures are byte-exact records (run files are hashed); never convert their line endings.
+tools/workspace-app/test/fixtures/** -text
+
 # Windows scripts keep CRLF.
 *.ps1 text eol=crlf
 *.cmd text eol=crlf

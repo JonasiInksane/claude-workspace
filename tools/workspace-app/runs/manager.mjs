@@ -32,6 +32,14 @@
 // interrupts are dropped, so a dying stage can't overwrite "interrupted". An action you clicked
 // just before (Commit, Retry, a cancel) is not interrupted: shutdown waits for it, and its saves
 // land, so run.json agrees with what it did to git and the lock.
+//
+// Inputs (plan row A6): a start reads the project's current settings once and resolves the assets
+// they attach (attached-assets.mjs). Settings that can't be read, or an asset, version or file
+// that is gone, refuse the start; so does a file whose bytes no longer match the SHA-256 the
+// library recorded. An archived asset is used anyway, with a timeline note. The run is created
+// with that settings version and its input manifest (runs/manifest.mjs), and each asset is copied
+// into inputs/assets/ through the store, one file at a time as a stream, kept only when its bytes
+// still have the recorded SHA-256, so verifyInputs covers exactly the checked bytes.
 import { basename, join, resolve } from 'node:path';
 import { HttpError } from '../http.mjs';
 import { PROJECT_RE, readJson } from '../core/datadir.mjs';
@@ -40,11 +48,14 @@ import { loadSettings } from '../core/settings.mjs';
 import { loadProfile, riskTags as profileRiskTags } from '../profile/profile.mjs';
 import { trustState } from '../profile/trust.mjs';
 import * as realFindings from '../findings/store.mjs';
+import { currentSettings, settingsRef } from '../project-settings.mjs';
+import * as realAttached from '../attached-assets.mjs';
 import * as realCatalog from './catalog.mjs';
 import * as realActions from './actions.mjs';
 import * as realStore from './store.mjs';
 import * as realLocks from './locks.mjs';
 import { createSignalHub } from './events.mjs';
+import { buildManifest } from './manifest.mjs';
 
 export const DEFAULT_LIMITS = { claude: 2, checks: 1 };
 // Runs that keep the project lock through a restart: they wait for you or can be resumed.
@@ -175,6 +186,11 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
   const profileFor = deps.profileFor || (project => loadProfile(dataDir, project));
   const riskTags = deps.riskTags || profileRiskTags;
   const getSettings = deps.getSettings || (() => loadSettings(dataDir));
+  // The project's current settings (project-settings.mjs) and its attached assets.
+  const projectSettingsFor = deps.projectSettingsFor || (project => currentSettings(dataDir, project));
+  const attached = deps.attached || realAttached;
+  const makeManifest = deps.buildManifest || buildManifest;
+  const hubRoot = deps.hubRoot || root;
   const lim = { ...DEFAULT_LIMITS, ...limits };
   for (const fn of ['checkValues', 'computeLevel', 'requestPaths', 'needsLock', 'runTitle']) {
     if (typeof catalog[fn] !== 'function') throw new Error(`createManager: the catalog has no ${fn}().`);
@@ -361,16 +377,37 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
     try { r = await profileFor(project); } catch (err) {
       return { profile: null, problem: `The profile for ${project} could not be read: ${err.message}` };
     }
-    const missing = `${project} has no profile yet. Create one from the example in the project cockpit.`;
+    const missing = `${project} has no profile yet. Create one from the example on the project's Settings tab.`;
     if (r && typeof r === 'object' && 'exists' in r && 'profile' in r) {
       if (!r.exists) return { profile: null, problem: missing };
       const n = (r.errors || []).length;
       if (r.valid === false || n) {
-        return { profile: null, problem: `The profile for ${project} has ${n || 'some'} problem${n === 1 ? '' : 's'}; fix ${n === 1 ? 'it' : 'them'} in the cockpit setup first.` };
+        const them = n === 1 ? 'it' : 'them';
+        return { profile: null, problem: `The profile for ${project} has ${n || 'some'} problem${n === 1 ? '' : 's'}; fix ${them} first (the project's Settings tab lists ${them}).` };
       }
       return { profile: r.profile, problem: '' };
     }
     return r ? { profile: r, problem: '' } : { profile: null, problem: missing };
+  }
+
+  // The project's current settings and the assets they attach, resolved: { settings, ref, assets,
+  // problems, notes }. `problems` refuse a start (settings that can't be read, an asset, version
+  // or file that is gone); `notes` go into the timeline (an archived asset is used anyway).
+  async function projectInputs(project) {
+    const none = { settings: null, ref: null, assets: [], problems: [], notes: [] };
+    let settings;
+    try { settings = await projectSettingsFor(project); } catch (err) {
+      return { ...none, problems: [`The project settings of ${project} can't be read, so no run can start: ${err.message}`] };
+    }
+    let assets;
+    try { assets = await attached.resolveAssets(root, project, (settings && settings.assets) || []); } catch (err) {
+      return { ...none, settings, ref: settingsRef(settings), problems: [`The assets attached to ${project} can't be resolved: ${err.message}`] };
+    }
+    const gone = attached.assetProblems(assets);
+    return {
+      settings, ref: settingsRef(settings), assets, notes: attached.archivedNotes(assets),
+      problems: gone.length ? [`The assets attached to ${project} can't be used: ${gone.join('; ')}. Fix them in the project's settings.`] : [],
+    };
   }
 
   async function getFindings(project, def) {
@@ -424,13 +461,14 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
     }
   }
 
-  // Checks a request ({ project, pipeline, values }) and works out everything a run would get.
+  // Checks a request ({ project, pipeline, values }) and works out everything a run would get,
+  // the project's settings version and attached assets included.
   async function draftFor(req, internal = {}) {
     const project = String((req && req.project) ?? '');
     if (!PROJECT_RE.test(project)) throw new HttpError(400, `"${project.slice(0, 40)}" is not a project name.`);
     const def = pipelineDef(req.pipeline);
     const rawValues = isPlainObject(req.values) ? req.values : {};
-    const [settings, prof, findings] = await Promise.all([getSettings(), getProfile(project), getFindings(project, def)]);
+    const [settings, prof, findings, inputs] = await Promise.all([getSettings(), getProfile(project), getFindings(project, def), projectInputs(project)]);
     let checked;
     try {
       checked = (await catalog.checkValues(def, rawValues, { project, profile: prof.profile, settings, findings, dataDir, root })) || {};
@@ -449,13 +487,14 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
       project, pipeline: def.id, def, values, error, title: error ? def.label : catalog.runTitle(def, values),
       level, levelReason: reasons || [], riskTags: risk.tags || [], findingId: (finding && values[finding.key]) || null,
       isolationMode, treeMode: defaultTreeMode(need, isolationMode), profile: prof.profile, settings,
-      parent: internal.parent ?? null, refusals: [], warnings: [],
+      parent: internal.parent ?? null, refusals: [], warnings: [...inputs.notes],
+      projectSettings: inputs.settings, projectSettingsRef: inputs.ref, assets: inputs.assets, assetNotes: inputs.notes,
     };
     const extra = await executorPreview(draft);
     if (extra.treeMode === 'main' || extra.treeMode === 'run') draft.treeMode = extra.treeMode;
     draft.lock = !!catalog.needsLock(def, draft.treeMode);
     draft.isolation = { mode: need === 'none' ? 'none' : isolationMode, treeMode: draft.treeMode, tree: null, mainDir: null };
-    draft.refusals = strings(extra.refusals);
+    draft.refusals = [...strings(extra.refusals), ...inputs.problems];
     draft.extra = extra;
     return draft;
   }
@@ -525,9 +564,52 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
     }
   }
 
-  // Starts a run: checks the values, refuses (400) on a problem or a refusal, takes the lock for
-  // editing runs and run-worktree checks (409 when busy), creates the run, marks its finding
-  // in-run and schedules the executor. Resolves to { runId, run }.
+  // The input manifest of the run a draft would create (runs/manifest.mjs), for the assets whose
+  // checked bytes the run gets. A template that can't be read is a 500: the run could not build
+  // that stage's prompt either.
+  async function manifestFor(draft, items, versions) {
+    try {
+      return await makeManifest({
+        root: hubRoot, def: draft.def, profile: draft.profile, settings: draft.settings,
+        run: { pipeline: draft.pipeline, level: draft.level, riskTags: draft.riskTags, values: draft.values, parent: draft.parent },
+        projectSettings: draft.projectSettingsRef, assets: items, versions, hub: deps.hubState,
+      });
+    } catch (err) {
+      throw new HttpError(500, `The run's input manifest could not be made, so nothing started: ${err.message}`);
+    }
+  }
+
+  // Copies the checked asset files into the new run's inputs/assets/ through the store, one at a
+  // time and as a stream (copyInput), so at most part of one file is in memory. The store hashes
+  // each copy as it writes it and keeps it only with the SHA-256 the library recorded, the one the
+  // manifest lists, and verifyInputs covers it from then on. A copy that fails, or a file that
+  // changed since the check, ends the run as failed, with the lock given back, and the start
+  // reports it.
+  async function copyAssets(run, draft, items) {
+    try {
+      for (const item of items) {
+        await store.copyInput(dataDir, run, attached.assetInputName(item), item.path, { sha256: item.sha256, now })
+          .catch(err => { throw new Error(`${item.ref} v${item.version}: ${err.message}`); });
+      }
+    } catch (err) {
+      const message = `The attached assets could not be copied into the run, so it stopped: ${err.message}`;
+      Object.assign(run, { status: 'failed', statusReason: message, error: { message, at: iso(now()) }, lockHeld: false });
+      await store.saveRun(dataDir, run, { now });
+      if (draft.lock) await locks.release(dataDir, draft.project, run.id).catch(() => {});
+      await note(run, 'error', message);
+      throw new HttpError(500, message);
+    }
+    if (items.length) {
+      await note(run, 'info', `Copied ${items.length} attached asset${items.length === 1 ? '' : 's'} into inputs/assets: ${items.map(i => `${i.ref} v${i.version}`).join(', ')}.`);
+    }
+    for (const text of draft.assetNotes || []) await note(run, 'info', text);
+  }
+
+  // Starts a run: checks the values, refuses (400) on a problem or a refusal, and (409) when an
+  // attached asset's file no longer matches its recorded hash, takes the lock for editing runs
+  // and run-worktree checks (409 when busy), creates the run with its input manifest, copies the
+  // attached assets into its inputs/, marks its finding in-run and schedules the executor.
+  // Resolves to { runId, run }.
   // `internal` is for engine callers only (routes never pass it): { parent, skip: [stage ids],
   // extra: { more run.json fields } }.
   function start(req = {}, internal = {}) {
@@ -541,6 +623,12 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
       const busy = draft.lock ? await lockBusy(draft) : '';
       if (busy) throw new HttpError(409, busy);
       if (draft.refusals.length) throw new HttpError(400, draft.refusals.join(' '));
+      // Every file is hashed here, as a stream and keeping no bytes, so a changed one refuses the
+      // start before anything exists; copyAssets checks the bytes again as it copies them.
+      const problems = await attached.verifyFiles(draft.assets);
+      if (problems.length) throw new HttpError(409, `The assets attached to ${draft.project} can't be used: ${problems.join('; ')}. Upload the file again as a new version, or attach another version.`);
+      const versions = { node: process.versions.node, claudeCode: deps.claudeVersion || null };
+      const manifest = await manifestFor(draft, draft.assets, versions);
       const slugText = draft.values.what || draft.findingId || draft.title.replace(/^[^:]*:\s*/, '');
       const id = await store.freeRunId(dataDir, draft.project, draft.pipeline, slugText, new Date(now()));
       if (draft.lock) await takeLock(draft, id);
@@ -551,7 +639,7 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
           ...(isPlainObject(internal.extra) ? internal.extra : {}),
           id, project: draft.project, pipeline: draft.pipeline, parent: draft.parent, title: draft.title, values: draft.values,
           level: draft.level, levelReason: draft.levelReason, riskTags: draft.riskTags, isolation: draft.isolation,
-          versions: { node: process.versions.node, claudeCode: deps.claudeVersion || null },
+          versions, projectSettings: draft.projectSettingsRef, manifest,
           lockHeld: draft.lock, findingId: draft.findingId, owner: holder,
           stages: draft.def.stages.map((s, n) => ({ id: s.id, n, kind: s.kind, status: skip.has(s.id) ? 'skipped' : 'pending' })),
         }, { now });
@@ -560,6 +648,7 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
         throw err;
       }
       await note(run, 'status', `Started: ${run.title}`);
+      await copyAssets(run, draft, draft.assets);
       if (draft.findingId) await markFinding(run, draft.findingId);
       schedule(run.id);
       return { runId: run.id, run };
@@ -815,13 +904,20 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
       }
     }
 
+    // One run that can't be saved (a run.json edited by hand) must not stop the recovery of the
+    // others: its error is reported, and it still counts as interrupted below, so its lock is kept
+    // and its orphans are looked for.
     for (const run of wasRunning) {
       const name = runningStageName(run);
       const msg = `The app restarted while ${name} ran.`;
       markInterrupted(run, msg, at);
-      await store.saveRun(dataDir, run, { now });
-      await store.appendTimeline(dataDir, run, [{ kind: 'status', stage: name === 'a stage' ? null : name, msg }], { now, redact: deps.redact });
-      report.interrupted.push(run.id);
+      try {
+        await store.saveRun(dataDir, run, { now });
+        report.interrupted.push(run.id);
+        await store.appendTimeline(dataDir, run, [{ kind: 'status', stage: name === 'a stage' ? null : name, msg }], { now, redact: deps.redact });
+      } catch (err) {
+        report.errors.push(`Run ${run.id} could not be marked interrupted: ${err.message}`);
+      }
     }
 
     const byId = new Map(runs.map(r => [r.id, r]));
@@ -856,7 +952,12 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
         report.errors.push(r.reason);
       }
       const holds = report.adopted.some(a => a.runId === run.id);
-      if (run.lockHeld && !holds) { run.lockHeld = false; await store.saveRun(dataDir, run, { now }); }
+      if (run.lockHeld && !holds) {
+        run.lockHeld = false;
+        try { await store.saveRun(dataDir, run, { now }); } catch (err) {
+          report.errors.push(`Run ${run.id} still says it holds the lock of ${run.project}: ${err.message}`);
+        }
+      }
     }
 
     const busyTrees = runs.filter(r => r.status === 'in-terminal' && r.isolation && r.isolation.tree).map(r => r.isolation.tree);

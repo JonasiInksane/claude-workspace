@@ -1,8 +1,9 @@
 // The palette (SPEC 5.9; mockup #palette): Ctrl+K or "Start something" opens it. Type to
-// filter screens, "New run: <pipeline>" per profiled project, runs (waiting ones first, at most
-// 20), flows, skills and workspace tools, and the keyboard shortcuts sheet. Arrow keys move,
-// Enter picks, Esc closes. With no match, Enter routes the typed text with the server's rules
-// (store.routeIntent) and opens the launcher with it.
+// filter screens (every tab of every project's page among them, "example > Findings"), "New run:
+// <pipeline>" per profiled project, runs (waiting ones first, at most 20), flows, skills and
+// workspace tools, and the keyboard shortcuts sheet. Arrow keys move, Enter picks, Esc closes.
+// With no match, Enter routes the typed text with the server's rules (store.routeIntent) and
+// opens the launcher with it. screenItems() is pure, for palette.test.mjs.
 //
 // Markup: <dialog id="palette"> in index.html holds the field and the list. The list is a
 // listbox whose options carry aria-selected; the focus stays in the field (a combobox with
@@ -10,10 +11,12 @@
 import { $, h, statusBadge } from '../lib.js';
 import { openDialog } from '../dialog.js';
 import {
-  atReviewGate, currentProject, go, loadPipelines, openLauncher, pipelines, profiledProjects, refresh, routeIntent, runs, settings, state,
+  atReviewGate, currentProject, go, loadPipelines, openLauncher, pipelines, profiledProjects, projectSub, refresh, routeIntent, runs, settings,
+  state, tabsOf,
 } from '../store.js';
 import { runCommand, skillDialog } from '../views/tools.js';
 import { runFlowDialog } from '../views/flows.js';
+import { tabLabel } from '../views/project/tabs.js';
 
 const MAX_RUNS = 20;
 let dlg = null;
@@ -23,22 +26,25 @@ let shown = []; // the items on screen, in order
 let selected = 0;
 let returnFocus = null;
 
+// The screens to jump to, as { label, route, sub }: the global ones in the nav's order, every tab
+// of every project's page ("example > Findings"), then Library and Inbox images. `label(id)` names
+// a tab (views/project/tabs.js tabLabel).
+export function screenItems(s, label = tabLabel) {
+  const out = [{ label: 'Today', route: 'today', sub: '' }, { label: 'Projects', route: 'projects', sub: '' }];
+  for (const p of s && Array.isArray(s.projects) ? s.projects : []) {
+    if (!p || !p.name) continue;
+    for (const tab of tabsOf(p)) out.push({ label: `${p.name} > ${label(tab)}`, route: 'project', sub: projectSub(p.name, tab) });
+  }
+  for (const [text, route] of [['Assets', 'assets'], ['Flows', 'flows'], ['Runs', 'runs'], ['Library', 'library'], ['Inbox images', 'images']]) {
+    out.push({ label: text, route, sub: '' });
+  }
+  return out;
+}
+
 // Every item: { label, group, run }. Built when the palette opens, so it reflects the state.
 function allItems() {
   const s = state;
-  const out = [];
-  const screen = (label, route, sub = '') => out.push({ label, group: 'Screen', run: () => go(route, sub) });
-  screen('Today', 'today');
-  for (const p of profiledProjects()) {
-    screen(`${p.name} cockpit`, 'cockpit', p.name);
-    screen(`${p.name}: health and wins`, 'health', p.name);
-  }
-  screen('Runs', 'runs');
-  screen('Projects', 'projects');
-  screen('Flows', 'flows');
-  screen('Library', 'library');
-  screen('Images', 'images');
-  if (s && Array.isArray(s.assets) && s.assets.length) screen('Assets', 'assets');
+  const out = screenItems(s).map(x => ({ label: x.label, group: 'Screen', run: () => go(x.route, x.sub) }));
 
   for (const p of profiledProjects()) {
     for (const def of pipelines.list) {
@@ -186,9 +192,14 @@ const SHORTCUTS = [
   ['Anywhere', [
     ['Ctrl K', 'Open or close this palette (Start something)'],
     ['g then t', 'Today'],
-    ['g then p', 'The current project\'s cockpit'],
+    ['g then p', 'The current project\'s page'],
+    ['g then a', 'Assets'],
+    ['g then f', 'Flows'],
     ['g then r', 'Runs'],
     ['Esc', 'Close a dialog or the palette'],
+  ]],
+  ['Project page (focus on the tabs)', [
+    ['Left / Right', 'Previous / next tab'], ['Home / End', 'First / last tab'], ['Enter or Space', 'Open the focused tab'],
   ]],
   ['Launcher', [['Ctrl Enter', 'Start the run, once the preview has loaded']]],
   ['Live run (single keys, focus inside the run)', [

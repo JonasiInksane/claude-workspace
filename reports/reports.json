@@ -135,6 +135,31 @@
           "path": "reports/2026-10-22_workspace-app-control-plan/report-v2.md"
         }
       ]
+    },
+    {
+      "id": "2026-10-23_hub-spec-plan",
+      "title": "Hub spec: gap analysis and build plan",
+      "project": null,
+      "type": "plan",
+      "status": "active",
+      "created": "2026-10-23",
+      "updated": "2026-10-23",
+      "folder": "reports/2026-10-23_hub-spec-plan",
+      "summary": "Part A built, reviewed and merged on project-model; one real Ask run open; Part B continues on the other PC.",
+      "steps": [
+        {
+          "name": "Report",
+          "path": "reports/2026-10-23_hub-spec-plan/report.md"
+        },
+        {
+          "name": "Progress",
+          "path": "reports/2026-10-23_hub-spec-plan/progress.md"
+        },
+        {
+          "name": "Report v2",
+          "path": "reports/2026-10-23_hub-spec-plan/report-v2.md"
+        }
+      ]
     }
   ]
 }

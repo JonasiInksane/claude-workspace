@@ -10,6 +10,8 @@
 // is the only file this module writes, and fun/fun.mjs saveHandoff never overwrites an earlier
 // note (it adds -2, -3, ...). The inbox is git-ignored, so the note never reaches the public repo.
 // "The focus project" (Today so far, Next up first) is the profiled project with the latest run.
+// Action hrefs open the project's page at the tab that shows the thing (#project/<name>/checks
+// for a smaller baseline, /findings for an import, /architecture for health and decisions).
 import { readdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { scanInbox } from '../../lib/inbox.mjs';
@@ -77,7 +79,7 @@ function runWaitingRow(r, projects) {
   const where = labelOf(projects, r.project);
   if (r.status === 'waiting') {
     const [what, badge] = GATES[r.waiting] || ['next gate', 'Needs you'];
-    const href = r.waiting === 'review' || r.waiting === 'commit' ? `#review/${r.id}` : r.waiting === 'decide' ? `#health/${r.project}` : `#run/${r.id}`;
+    const href = r.waiting === 'review' || r.waiting === 'commit' ? `#review/${r.id}` : r.waiting === 'decide' ? `#project/${r.project}/architecture` : `#run/${r.id}`;
     return {
       kind: 'run', project: r.project, runId: r.id, title: r.title || r.id, status: r.status, waiting: r.waiting || null, since: r.at || null,
       sub: `${pipelineLabel(r.pipeline)} · ${where} · waiting at the ${what}`, badge, action: { label: 'Open', href },
@@ -100,7 +102,7 @@ async function projectWaiting(ctx, pr) {
     out.push({
       kind: 'baseline', project: pr.name, key: b.key, title: `Smaller baseline available: ${s.from} → ${s.to} known failures`,
       sub: `${pr.label} · ${plural(s.leaving.length, 'known failure')} now pass · nothing changes until you accept it`, since: s.madeAt,
-      badge: 'Accept?', action: { label: 'Review difference', href: `#cockpit/${pr.name}` },
+      badge: 'Accept?', action: { label: 'Review difference', href: `#project/${pr.name}/checks` },
     });
   }
   const pending = await loadPendingImport(ctx.dataDir, pr.name).catch(() => null);
@@ -109,7 +111,7 @@ async function projectWaiting(ctx, pr) {
     out.push({
       kind: 'import', project: pr.name, title: 'Findings import waiting for you',
       sub: `${pr.label} · ${plural(counts.changed || 0, 'change')} proposed · nothing is written until you apply it`, since: pending.createdAt || null,
-      badge: 'Apply?', action: { label: 'Open', href: `#cockpit/${pr.name}` },
+      badge: 'Apply?', action: { label: 'Open', href: `#project/${pr.name}/findings` },
     });
   }
   return out;
@@ -171,7 +173,7 @@ async function healthOf(ctx, pr) {
     project: pr.name, label: pr.label, linked: pr.present, valid: pr.info.valid, score: scoreTrend(metrics),
     knownFailures: kf ? { value: kf.value, new: hist[0] && hist[0].counts ? hist[0].counts.new ?? null : null, level: kf.level } : null,
     lastCheck: hist[0] || null, lastScanAt: last ? last.at : null, node: { active, pin, matches: pin ? pin === active : null },
-    action: { label: 'Open health', href: `#health/${pr.name}` },
+    action: { label: 'Open Architecture', href: `#project/${pr.name}/architecture` },
   };
 }
 

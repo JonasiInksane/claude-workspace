@@ -12,9 +12,12 @@ start the same work again with one click. Make and run them in the workspace app
 A flow runs in one of three places (its `target`):
 
 - `hub`: Claude in the workspace root.
-- `project`: Claude in `projects/<project>`.
+- `project`: Claude in `projects/<project>`, or, with `project: "*"`, in any project: the run
+  dialog asks which one, starting with the project open in the app. Such a flow is valid while
+  at least one project exists, and the app checks the project you pick when you run it.
 - `agent`: one project agent, isolated, with its own memory and image folders
-  (`tools/agent-session.mjs`). It needs `memory: project` in its agent file.
+  (`tools/agent-session.mjs`). It needs `memory: project` in its agent file. An agent belongs
+  to one project, so an agent flow always names its project.
 
 A run starts Claude in a new terminal. Its first prompt is, in this order:
 
@@ -58,6 +61,25 @@ Optional, per flow ("Ask" and "Required" in the editor).
 `askRequired: true` needs an `ask`. The Tattoogenda flows (`tattoogenda-*.md`) each ask one
 required question, for example "What do you want to refactor?", and start in plan mode.
 
+## Which version ran
+
+A flow changes over time, so every launch records the version it used: one line in
+`%LOCALAPPDATA%\claude-workspace\flow-runs.jsonl` (private, never in git) with the time, the
+flow, where it ran (target, project, agent), the session id and the version:
+
+| Field | What it is |
+|---|---|
+| `sha256` | SHA-256 of the flow file, with CRLF read as LF, so a CRLF and an LF checkout of the same flow get the same hash |
+| `hubCommit` | the hub's HEAD at launch (empty without git) |
+| `committed` | `true` when the file's text (CRLF as LF) is the same as in that commit, so the commit alone shows the prompt that ran |
+| `images` | each image the run passed (by file name) with the SHA-256 of its bytes |
+| `captions` | SHA-256 of those images' captions (empty when none has one) |
+
+A launch that fails or is refused writes nothing; when the line itself can't be written, the
+session still starts and the app's message says the version wasn't recorded. The editor lists
+the newest 20 under "Recent runs": when, where, the short hash, and "edited since" once the
+prompt or the images changed after that run. Code: `tools/workspace-app/flow-versions.mjs`.
+
 ## Writing the prompt
 
 Write a brief, not a list of commands: the goal, why it matters, the scope, what "done" looks
@@ -85,10 +107,20 @@ It is for the player character, so it must read clearly at 32x32.
 Done when `npm run sprites` builds without warnings and the sheet is in assets/player/.
 ```
 
-Values are JSON strings (valid YAML), so quotes, colons and `#` are safe. You can edit the file
-by hand; the app checks the target when it lists the flow and refuses to run one whose project
-or agent is gone. Archiving moves the file to `_archived/` and keeps the images, so Restore
-brings the flow back whole.
+Values are JSON strings (valid YAML), so quotes, colons and `#` are safe; a flow for any
+project has `target: project` and `project: "*"` (quoted: a bare `*` is not a plain YAML value).
+You can edit the file by hand; the app checks the target when it lists the flow and refuses to
+run one whose project or agent is gone.
+
+`assets` (optional) attaches assets from the workspace app's asset library, at most 20, as one
+string: `assets: "shared:style-guide, game-dev:palette@2"`. A ref is `shared:<id>` or
+`<project>:<id>`, with `@<n>` to pin a version (without it, a run takes the latest). A hub flow
+and a flow for any project attach shared assets only; a project or agent flow also its project's
+own. The flow editor writes this field for you. Note: `flows/` is committed to the hub
+repository, which is public, so the refs are public too: a project's name and each asset's id,
+which is made from its title. The assets' files stay in `inbox/attachments/` and are not
+committed. Archiving moves the file to `_archived/` and keeps the
+images, so Restore brings the flow back whole.
 
 Code: `tools/lib/flows.mjs`. Why it works this way:
 [the decision](../knowledge/decisions/2026-10-21-flows.md).

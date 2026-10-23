@@ -21,6 +21,18 @@
 // and exactly the gated files (R17); a failed editing run saves final/stopped.patch, resets the
 // tree and gives the lock back.
 //
+// Project rules: a run records the project's settings version when it is created (runs/store.mjs,
+// project-settings.mjs). Every fresh Claude stage gets the rules of exactly that version after
+// CLAUDE.md and AGENTS.md; a version that is gone or no longer matches its recorded hash stops
+// the stage instead of running with other rules. A resumed stage already has them in its session.
+//
+// Inputs (plan row A6): a run's manifest (runs/manifest.mjs) lists the attached assets the manager
+// copied into inputs/assets/. Every fresh Claude stage gets them as {{assets}}: text inline as
+// <data kind="asset"> blocks, images and PDFs by path (prompts.mjs assetsSection), each copy
+// checked against the manifest's SHA-256 first, so a copy that is gone or changed stops the stage.
+// Each attempt records the SHA-256 of the template it used and of the prompt it sent; a template
+// that changed since the run started is used as it is now, with a timeline note.
+//
 // Every dependency is injected (createExecutor(deps)), so tests run with fakes; defaultDeps()
 // loads the real modules for the wiring and the integration test.
 import { createHash, randomUUID } from 'node:crypto';
@@ -28,9 +40,13 @@ import { mkdir, readFile, stat } from 'node:fs/promises';
 import { writeJsonAtomic, writeTextAtomic } from '../core/datadir.mjs';
 import { basename, extname, join, posix, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as projectSettingsModule from '../project-settings.mjs';
+import { assetInputName } from '../attached-assets.mjs';
 import * as catalogModule from './catalog.mjs';
 import * as promptsModule from './prompts.mjs';
 import { allowedActions, currentIndex, isUnpinnableEnd, lastSessionId, takeoverStageIndex } from './actions.mjs';
+import { contextBlock } from './context.mjs';
+import { manifestHash } from './manifest.mjs';
 
 // The three headless permission profiles; runs/argv.mjs owns the table (deps.argv wins).
 export const HEADLESS = {
@@ -348,8 +364,10 @@ export function buildHypothesisPlan(diagnosis, payload = {}, { mustTickFor = () 
 //   profileLib.workspaceOf, slots {claude, checks}, register, unregister, signals, proc, clock, redact,
 //   redactDeep, trustFor(run) or trustState(path), startClaude (or launcher.startClaude), startRun,
 //   schedule, claudeCommand, nodePath, gitBash, timing (claude-stage test override), argv.
+//   prompts, catalog and projectSettings (project-settings.mjs: getSettingsVersion,
+//   currentSettings) default to the real modules.
 export function createExecutor(deps = {}) {
-  const d = { prompts: promptsModule, catalog: catalogModule, ...deps };
+  const d = { prompts: promptsModule, catalog: catalogModule, projectSettings: projectSettingsModule, ...deps };
   if (!d.dataDir) throw new Error('The executor needs deps.dataDir (the private data folder).');
   if (!d.hubRoot) throw new Error('The executor needs deps.hubRoot (the workspace root).');
   if (!d.store) throw new Error('The executor needs deps.store (runs/store.mjs).');
@@ -1335,6 +1353,7 @@ export function createExecutor(deps = {}) {
   // EDIT stages have no --add-dir, so their inputs are written into the prompt. With `preview`
   // nothing is written.
   async function buildVars(run, s, { profile, cwd, edit, preview = false }) {
+    const rules = await rulesFor(run); // first: settings that can't be used stop the stage before any input is written
     const inputsDir = preview ? '<run folder>\\inputs' : join(runDir(run), 'inputs');
     const out = run.outputs || {};
     const v = run.values || {};
@@ -1360,6 +1379,8 @@ export function createExecutor(deps = {}) {
     vars.request = await block('request', 'request.md', await requestText(run, profile, { edit }));
     const { error, ...shown } = v;
     vars.values = await block('values', 'values.json', JSON.stringify(shown, null, 2));
+    // An Ask question (runs/context.mjs): what it is about, as inputs/context.md (hashed) and a data block.
+    if (run.context) vars.context = await contextBlock(dataDir, run, { write: (name, text) => input(run, name, text), preview, redact });
     if (run.plan) {
       const { output, ...plan } = run.plan;
       vars.plan = await block('plan', 'plan.json', JSON.stringify({ ...plan, summary: (output || {}).summary || '' }, null, 2));
@@ -1398,9 +1419,77 @@ export function createExecutor(deps = {}) {
       if (v.screenshot) await copyScreenshot(run, v.screenshot);
     }
     vars.projectInstructions = preview && !run.base
-      ? '(CLAUDE.md and AGENTS.md from the base commit go here when the run starts.)'
-      : await d.prompts.projectInstructions({ git: d.git, dir: cwd, sha: run.base.sha });
+      ? ['(CLAUDE.md and AGENTS.md from the base commit go here when the run starts.)', rules].filter(Boolean).join('\n\n')
+      : await d.prompts.projectInstructions({ git: d.git, dir: cwd, sha: run.base.sha, extra: [rules] });
+    vars.assets = preview ? await previewAssets(run, { edit, inputsDir }) : await assetsFor(run, { edit });
     return vars;
+  }
+
+  const ASSET_COPY_RE = /^inputs\/assets\/[^/\\]+$/;
+
+  // The {{assets}} text of a fresh stage: the attached assets the run's manifest lists, read from
+  // the run's own copies in inputs/assets/. Each copy must still have the manifest's SHA-256;
+  // one that is gone or changed throws, so the stage stops before Claude starts instead of running
+  // with other content. A run from before manifests has no assets.
+  async function assetsFor(run, { edit }) {
+    const m = run.manifest;
+    if (!m) return '(This run started before the app recorded attached assets, so it has none.)';
+    const list = [];
+    for (const a of asList(m.assets)) {
+      const rel = String(a.file || '');
+      if (!ASSET_COPY_RE.test(rel)) throw new Error(`The run's manifest names ${rel.slice(0, 120)} for ${a.ref}, which is not a copy in inputs/assets.`);
+      const path = join(runDir(run), ...rel.split('/'));
+      let bytes;
+      try { bytes = await readFile(path); } catch (e) {
+        throw new Error(`The run's copy of ${a.ref} v${a.version} (${rel}) can't be read (${e.code || e.message}), so the stage did not start.`);
+      }
+      if (sha256Text(bytes) !== a.sha256) throw new Error(`The run's copy of ${a.ref} v${a.version} (${rel}) changed after the run started, so the stage did not start.`);
+      list.push({ ...a, path, text: a.kind === 'text' ? bytes.toString('utf8') : undefined });
+    }
+    return d.prompts.assetsSection(list, { readable: !edit });
+  }
+
+  // The {{assets}} text of the launcher's preview: the draft's resolved assets (the manager puts
+  // them on the preview run), read from the library, under the names their copies will have.
+  // Missing ones are left out; the preview's refusals name them.
+  async function previewAssets(run, { edit, inputsDir }) {
+    const list = [];
+    for (const item of asList(run.previewAssets)) {
+      if (!item || item.missing) continue;
+      let text;
+      if (item.kind === 'text') { try { text = await readFile(item.path, 'utf8'); } catch { text = ''; } }
+      list.push({ ...item, path: `${inputsDir}\\${assetInputName(item).split('/').join('\\')}`, text });
+    }
+    return d.prompts.assetsSection(list, { readable: !edit });
+  }
+
+  // The SHA-256 of a stage's template, and whether it differs from the one the run's manifest
+  // recorded. A changed template is used as it is now; the timeline says so.
+  async function templateCheck(run, s, text) {
+    const sha256 = sha256Text(String(text));
+    const recorded = asList(run.manifest && run.manifest.stagePrompts).find(p => p && p.stage === s.id);
+    const changed = !!recorded && recorded.sha256 !== sha256;
+    if (changed) {
+      await row(run, 'info', `${recorded.file} changed since this run started (recorded ${recorded.sha256.slice(0, 8)}, now ${sha256.slice(0, 8)}); ${s.label} uses the file as it is now.`);
+    }
+    return { sha256, changed };
+  }
+
+  // The rules of the settings version the run recorded (run.projectSettings), as a
+  // <project_instructions> block, or '' (no settings, no rules, or a run from before settings).
+  // Throws when that version is gone or no longer matches its hash: the run must not go on with
+  // other rules than the ones it started with.
+  async function rulesFor(run) {
+    const ref = run.projectSettings;
+    if (!ref) return '';
+    let settings;
+    try { settings = await dep('projectSettings.getSettingsVersion')(dataDir, run.project, ref.version); } catch (e) {
+      throw new Error(`This run started with the project settings v${ref.version} of ${run.project}, which can't be read now: ${e.message}`);
+    }
+    if (settings.sha256 !== ref.sha256) {
+      throw new Error(`The project settings v${ref.version} of ${run.project} are not the ones this run started with (their hash changed).`);
+    }
+    return projectSettingsModule.rulesBlock(settings);
   }
 
   // Copies an inbox image into inputs/ through the store, so it is hashed like every input.
@@ -1472,6 +1561,7 @@ export function createExecutor(deps = {}) {
     const edit = s.profile === 'EDIT';
     let prompt;
     let resumeSessionId;
+    let template = null;
     if (next.mode === 'resume') {
       resumeSessionId = lastSessionId(run, i);
       if (!resumeSessionId) throw new Error(`${s.label} has no session to resume.`);
@@ -1483,17 +1573,21 @@ export function createExecutor(deps = {}) {
     } else {
       const vars = await buildVars(run, s, { profile, cwd, edit });
       const { pipeline, stage } = promptName(s);
-      prompt = d.prompts.renderPrompt(await d.prompts.loadPrompt(d.hubRoot, pipeline, stage), vars);
+      const text = await d.prompts.loadPrompt(d.hubRoot, pipeline, stage);
+      template = await templateCheck(run, s, text);
+      prompt = d.prompts.renderPrompt(text, vars);
     }
     delete st.next;
-    const result = await attempt(run, i, s, { ctx, cwd, prompt, resumeSessionId, bonusTurns: next.bonusTurns || 0, why: next.reason || 'fresh', sig });
+    const result = await attempt(run, i, s, { ctx, cwd, prompt, template, resumeSessionId, bonusTurns: next.bonusTurns || 0, why: next.reason || 'fresh', sig });
     if (!result) return { stop: true };
     return afterClaude(run, i, s, result, ctx, sig);
   }
 
   // One attempt of a Claude stage (a new folder stages/NN-id[-aK]). Returns the stageResult, or
-  // null when the run is being cancelled or the app is closing.
-  async function attempt(run, i, s, { ctx, cwd, prompt, resumeSessionId, bonusTurns, why, sig }) {
+  // null when the run is being cancelled or the app is closing. The attempt records the SHA-256 of
+  // the prompt it sends (promptSha256) and, for a fresh one, of its template (templateSha256, with
+  // templateChanged when it differs from the run's manifest).
+  async function attempt(run, i, s, { ctx, cwd, prompt, template = null, resumeSessionId, bonusTurns, why, sig }) {
     const st = run.stages[i];
     const { profile, mainDir, settings } = ctx;
     let release;
@@ -1535,7 +1629,8 @@ export function createExecutor(deps = {}) {
       };
       const env = dep('claudeStage.claudeEnv')({ shimDir: s.profile === 'READ' ? '' : binDir, gitBash: d.gitBash || '', tmpDir });
       const rec = { k, folder, sessionId, name: spec.name, startedAt: iso(), model: model.model, effort: model.effort, profile: s.profile, mode: hp.mode,
-        maxTurns: caps.maxTurns, cwd, why };
+        maxTurns: caps.maxTurns, cwd, why, promptSha256: sha256Text(prompt) };
+      if (template) Object.assign(rec, { templateSha256: template.sha256 }, template.changed ? { templateChanged: true } : {});
       st.attempts.push(rec);
       Object.assign(st, { status: 'running', startedAt: st.startedAt || rec.startedAt });
       delete st.endedAt;
@@ -1925,6 +2020,11 @@ export function createExecutor(deps = {}) {
     },
 
     async takeover(run, p) {
+      // A run whose run.json was edited by hand can be stopped but never goes on (runs/store.mjs),
+      // so it opens no terminal either.
+      if (run.manifest && manifestHash(run.manifest) !== run.manifestSha256) {
+        httpFail(409, "This run's input manifest was edited after it started, so it can't be taken over. Start a new run.");
+      }
       const idx = takeoverStageIndex(run, p);
       const s = p.stages[idx];
       const st = run.stages[idx];
@@ -2204,7 +2304,7 @@ export function createExecutor(deps = {}) {
     if (need === 'tree' && mode === 'worktree') {
       const ws = await optStatus(profile, mainDir);
       out.treeMode = 'run';
-      if (!ws || ws.state !== 'ready') out.refusals.push(`This run needs the run worktree: ${(ws && ws.text) || 'it is not set up yet.'} Set it up in the cockpit first.`);
+      if (!ws || ws.state !== 'ready') out.refusals.push(`This run needs the run worktree: ${(ws && ws.text) || 'it is not set up yet.'} Set it up from the project's Overview first.`);
       out.where = `the ${(ws && ws.name) || 'run'} worktree${ws && ws.state === 'ready' ? ` (idle at ${sha7(ws.head)})` : ''}, on a new branch ${prefix}${mmdd}-…`;
     } else if (need === 'tree') {
       out.treeMode = 'main';
@@ -2232,7 +2332,7 @@ export function createExecutor(deps = {}) {
       out.where = 'read-only in the main checkout, no lock needed';
     }
     const pseudo = { id: 'preview', project: draft.project, pipeline: p.id, values: draft.values || {}, level: draft.level, riskTags: draft.riskTags || [],
-      levelReason: draft.levelReason || [], outputs: {}, pins: [], redTests: [], stages: [] };
+      levelReason: draft.levelReason || [], outputs: {}, pins: [], redTests: [], stages: [], previewAssets: asList(draft.assets) };
     const ui = d.catalog.pipelineForUi(p.id, { profile, settings: draft.settings || {}, run: pseudo });
     if (ui) out.stages = ui.stages;
     // The first Claude stage's prompt, when it always runs (a conditional stage like the
@@ -2242,6 +2342,10 @@ export function createExecutor(deps = {}) {
       try {
         const base = need === 'tree' ? await revParse(mainDir, profile.git.integrationBranch) : await revParse(mainDir, 'HEAD');
         pseudo.base = { sha: base };
+        // The settings a run started now would record: the version the manager's draft read (its
+        // assets come from it too), or the current one for a caller without it.
+        pseudo.projectSettings = 'projectSettingsRef' in draft ? draft.projectSettingsRef
+          : projectSettingsModule.settingsRef(await dep('projectSettings.currentSettings')(dataDir, draft.project));
         const vars = await buildVars(pseudo, first, { profile, cwd: mainDir, edit: first.profile === 'EDIT', preview: true });
         const { pipeline, stage } = promptName(first);
         out.prompt = d.prompts.renderPrompt(await d.prompts.loadPrompt(d.hubRoot, pipeline, stage), vars);

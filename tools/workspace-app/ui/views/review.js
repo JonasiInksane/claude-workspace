@@ -4,7 +4,8 @@
 // From here: Approve and commit… (the commit dialog, parts/commit-dialog.js), Send back with the
 // ticked findings (the `fix` action: Implement resumes with them, at most two rounds), Open in
 // terminal (take over), Stop, keep patch, and under More: send back with a note, park, save as
-// report. There is no push or merge button anywhere.
+// report. There is no push or merge button anywhere. Ask, in the header, opens the Ask panel
+// (parts/ask-panel.js) for a read-only question about this run.
 //
 // Data: GET /api/run (the run with its buttons and their reasons; polled lightly, and at once on
 // a live signal for this run), GET /api/run-review (verdict, findings, notProven, proof, checks,
@@ -18,11 +19,12 @@
 // shell win: a key right after g is left to them.
 import { act, api, confirmDialog, fmtClock, h, icon, keepFocus, keyed, plural, qs, toast } from '../lib.js';
 import { formDialog } from '../dialog.js';
-import { go, livePoll, openLauncher, settings, singleKeyOk, waitingKind } from '../store.js';
+import { go, goProject, livePoll, openLauncher, settings, singleKeyOk, waitingKind } from '../store.js';
 import { statusPair } from '../parts/status.js';
 import { checksChip, checksTable } from '../parts/checks-table.js';
 import { diffSummary, diffView, fileChips, isCut, lineIndex, parseDiff, SHOW_LINES } from '../parts/diff.js';
 import { isCommitDialogOpen, openCommitDialog, syncCommitDialog } from '../parts/commit-dialog.js';
+import { askButton, runSubject } from '../parts/ask-panel.js';
 
 const RUN_ID_RE = /^[0-9a-z-]{1,64}$/;
 const TERM_ICON = '<path d="m6 9 3 3-3 3"/><path d="M12 15h6"/><rect x="2" y="4" width="20" height="16" rx="2"/>';
@@ -230,10 +232,12 @@ function head() {
     : `A read-only reviewer${model ? ` (${model})` : ''} looked at the diff.`;
   return h('div', { class: 'view-head' }, h('div', {},
     h('p', { class: 'crumb' },
+      run && run.project ? [h('button', { class: 'link', type: 'button', title: 'The project\'s Changes tab', on: { click: () => goProject(run.project, 'changes') } }, run.project), ' / '] : null,
       run ? runLink(run.title || 'Run') : h('button', { class: 'link', type: 'button', on: { click: () => go('runs') } }, 'Runs'),
       ' / Review gate'),
     h('h2', {}, 'Review gate', verdictBadge(), run && !atGate() ? statusPair(run.status) : null),
-    run ? h('p', {}, who) : null));
+    run ? h('p', {}, who) : null),
+  run ? keyed(askButton(runSubject(run, { review: true }), { ariaLabel: 'Ask about this review gate' }), 'ask') : null);
 }
 
 // The state of the run in a line or two above the action bar.

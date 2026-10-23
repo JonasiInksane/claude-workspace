@@ -1,4 +1,6 @@
-/* Health and wins (UI-COCKPIT, views/health.js; mockup #v-health). Linked after app.css in index.html; narrow-screen rules for this view go here too.
+/* A code project's Architecture tab (views/project/architecture.js), which was the Health and wins
+   screen (UI-COCKPIT; mockup #v-health). Linked after app.css in index.html; narrow-screen rules
+   for this tab go here too.
    .tile is also the gallery tile in app.css (Images, Flows), so the metric tiles are scoped as
    .tiles .tile and undo what they don't share. A tile's trend colour always sits next to its
    trend in words (Better, Same, Worse). */
@@ -26,7 +28,7 @@
 .hl-allow { display: flex; gap: 6px; flex-wrap: wrap; align-items: baseline; }
 
 /* ---------- Lenses and candidates */
-#view-health .ctable .note { margin-top: 4px; }
+#view-project .ctable .note { margin-top: 4px; }
 .hl-cand li { align-items: flex-start; }
 .hl-cand li > .badge { margin-top: 2px; }
 .hl-cand .sub.mono { overflow-wrap: anywhere; }
@@ -36,7 +38,7 @@ fieldset.hl-choices { border: 1px solid var(--border); border-radius: 8px; paddi
 fieldset.hl-choices legend { font-weight: 600; font-size: var(--t-md); padding: 0 4px; }
 
 /* ---------- Wins */
-#view-health .list .title.wrap { white-space: normal; overflow-wrap: anywhere; }
+#view-project .list .title.wrap { white-space: normal; overflow-wrap: anywhere; }
 .ach { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
 .ach li { border: 1px dashed var(--border); border-radius: 10px; padding: 8px 10px; font-size: var(--t-md); }
 .ach li b { display: block; }

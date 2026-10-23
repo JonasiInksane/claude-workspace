@@ -5,13 +5,22 @@
 // real process is started or stopped.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { ADOPT_STATUSES, DEFAULT_LIMITS, createManager, createSlot, defaultTreeMode } from './manager.mjs';
 import * as store from './store.mjs';
 import * as locks from './locks.mjs';
+import * as realCatalog from './catalog.mjs';
+import { manifestHash, profileHash, templateHash } from './manifest.mjs';
+import { loadPrompt } from './prompts.mjs';
 import { matchRecord } from '../core/proc.mjs';
+import { addVersion, createAsset, setArchived } from '../asset-library.mjs';
+import * as realAttached from '../attached-assets.mjs';
+import { saveSettings, settingsDir } from '../project-settings.mjs';
+
+const HUB = fileURLToPath(new URL('../../../', import.meta.url));
 
 const HOLDER = { pid: 4242, image: 'node.exe', startedAt: 1_000_000 };
 const DEAD_APP = { pid: 999, image: 'node.exe', startedAt: 900_000 };
@@ -342,11 +351,15 @@ test('start refuses bad requests with 400 and creates nothing', async t => {
   assert.deepEqual(await store.listRuns(dataDir), []);
 });
 
-test('a project without a profile is refused with the cockpit hint', async t => {
+test('a project without a profile, or with a broken one, is refused with a pointer to its Settings tab', async t => {
   const { mgr } = setup(t, { profile: null });
   const [code, msg] = await status(mgr.start({ project: 'example', pipeline: 'explain', values: { what: 'x' } }));
   assert.equal(code, 400);
-  assert.match(msg, /example has no profile yet\. Create one from the example in the project cockpit/);
+  assert.match(msg, /example has no profile yet\. Create one from the example on the project's Settings tab\./);
+  assert.doesNotMatch(msg, /cockpit/, 'no screen of that name any more');
+  const broken = setup(t, { deps: { profileFor: async () => ({ exists: true, valid: false, profile: null, errors: ['commands.test is missing', 'x'], warnings: [] }) } });
+  const [, two] = await status(broken.mgr.start({ project: 'example', pipeline: 'explain', values: { what: 'x' } }));
+  assert.equal(two, "The profile for example has 2 problems; fix them first (the project's Settings tab lists them).");
 });
 
 test('preview shows what a start would create, with value problems in `error` rather than thrown', async t => {
@@ -849,6 +862,67 @@ test('recover with a failed process lookup kills nothing, still marks runs inter
   assert.ok(rep.errors.some(e => /Could not check which app owns 1 run/.test(e)));
 });
 
+// A manifest in the shape runs/manifest.mjs builds.
+const SEED_MANIFEST = {
+  version: 1, stagePrompts: [{ stage: 'scope', file: 'pipelines/app/refactor/scope.md', sha256: 'a'.repeat(64) }],
+  profile: { sha256: 'b'.repeat(64) }, projectSettings: null, assets: [], models: { scope: 'opus' }, efforts: { scope: 'high' },
+  versions: { node: '24.11.1', claudeCode: null }, hub: { commit: 'd'.repeat(40), pipelinesClean: true },
+};
+
+test('recover over a run.json edited by hand: the run is interrupted with the edit kept, and the other runs are still recovered', async t => {
+  const { mgr, dataDir, proc } = setup(t, { alive: { 501: { image: 'claude.exe', startedAt: 111 } } });
+  const owner = DEAD_APP;
+  // alpha is scanned first: its run's manifest was edited while the run was running.
+  const T = await seedRun(dataDir, { project: 'alpha', pipeline: 'refactor', id: 'r-t', owner, lockHeld: true, manifest: SEED_MANIFEST,
+    stages: [{ id: 'preflight', kind: 'gate', status: 'done' }, { id: 'scope', kind: 'claude' }, { id: 'plan', kind: 'human' }] }, r => {
+    r.stages[1].status = 'running';
+    r.stages[1].attempts = [{ k: 1, folder: 'stages/01-scope', proc: { pid: 501, image: 'claude.exe', startedAt: 111 } }];
+    r.current = { stage: 'scope', index: 1, attempt: 1, round: 1 };
+  });
+  await deadLock(dataDir, 'alpha', 'r-t');
+  const file = join(store.runDir(dataDir, T), 'run.json');
+  const edited = JSON.parse(readFileSync(file, 'utf8'));
+  edited.manifest.models.scope = 'haiku';
+  writeFileSync(file, JSON.stringify(edited));
+  // beta: a plain run that was running. gamma and delta: run.json edited so that no save is accepted.
+  await seedRun(dataDir, { project: 'beta', pipeline: 'explain', id: 'r-u', owner, stages: [{ id: 'answer', kind: 'claude' }] }, r => {
+    r.stages[0].status = 'running';
+  });
+  await deadLock(dataDir, 'beta', 'r-u');
+  const W = await seedRun(dataDir, { project: 'delta', pipeline: 'explain', id: 'r-w', owner, lockHeld: true, stages: [{ id: 'answer', kind: 'claude' }] }, r => {
+    r.stages[0].status = 'running';
+  });
+  await deadLock(dataDir, 'delta', 'r-w');
+  const V = await seedRun(dataDir, { project: 'gamma', pipeline: 'refactor', id: 'r-v', owner, status: 'parked', lockHeld: true });
+  for (const run of [W, V]) {
+    const f = join(store.runDir(dataDir, run), 'run.json');
+    const doc = JSON.parse(readFileSync(f, 'utf8'));
+    doc.stages.push({ id: 'extra', n: 9, kind: 'gate', status: 'odd' });
+    writeFileSync(f, JSON.stringify(doc));
+  }
+
+  const rep = await mgr.recover();
+
+  assert.deepEqual(rep.interrupted, ['r-t', 'r-u']);
+  assert.deepEqual(rep.killed.map(k => k.pid), [501]);
+  assert.ok(!(501 in proc.procs));
+  const t1 = await loadRun(dataDir, 'r-t');
+  assert.deepEqual([t1.status, t1.stages[1].status, t1.statusReason], ['interrupted', 'interrupted', 'The app restarted while scope ran.']);
+  assert.equal(t1.manifest.models.scope, 'haiku', 'the edit stays');
+  assert.notEqual(manifestHash(t1.manifest), t1.manifestSha256, 'so the run page still shows manifestOk: false');
+  assert.equal((await loadRun(dataDir, 'r-u')).status, 'interrupted');
+  const adopted = rep.adopted.map(x => `${x.project}:${x.runId}`).sort();
+  assert.deepEqual(adopted, ['alpha:r-t', 'beta:r-u', 'delta:r-w'], 'r-w could not be saved, so its lock is kept');
+  assert.ok(rep.errors.some(e => /^Run r-w could not be marked interrupted: "odd" is not a stage status/.test(e)), rep.errors.join('\n'));
+  assert.ok(rep.errors.some(e => /^Run r-v still says it holds the lock of gamma: "odd" is not a stage status/.test(e)), rep.errors.join('\n'));
+
+  // Cancel works on it: the lock is given back and the edit still shows.
+  const r = await mgr.cancel('r-t');
+  assert.equal(r.run.status, 'cancelled');
+  assert.equal(lockOf(dataDir, 'alpha'), null);
+  assert.equal((await loadRun(dataDir, 'r-t')).manifest.models.scope, 'haiku');
+});
+
 test('recover on an empty data folder reports nothing to do', async t => {
   const { mgr } = setup(t);
   assert.deepEqual(await mgr.recover(), { interrupted: [], killed: [], adopted: [], released: [], orphans: [], skipped: [], errors: [] });
@@ -949,4 +1023,136 @@ test('shutdown reports a click that did not finish in time and leaves its run al
 test('shutdown with nothing running is quick and reports nothing', async t => {
   const { mgr } = setup(t);
   assert.deepEqual(await mgr.shutdown({ settleMs: 10 }), { killed: [], failed: [], interrupted: [], errors: [] });
+});
+
+// ---------- the input manifest and attached assets (plan row A6)
+
+const PNG = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000000', 'hex');
+const HUB_STATE = { commit: 'a'.repeat(40), pipelinesClean: true };
+
+// A workspace with pipelines/app and projects/example, a shared text asset with two versions and
+// a project image, and a manager on the real catalog (Explain: one Claude stage, answer).
+async function assetWorld(t, { settings = null, deps = {} } = {}) {
+  const root = temp(t);
+  cpSync(join(HUB, 'pipelines', 'app'), join(root, 'pipelines', 'app'), { recursive: true });
+  mkdirSync(join(root, 'projects', 'example'), { recursive: true });
+  const style = await createAsset(root, { scope: 'shared', title: 'Style guide', originalName: 'style.md' }, Buffer.from('# Style\nUse teal.\n'));
+  await addVersion(root, style.ref, Buffer.from('# Style v2\nUse navy.\n'), { originalName: 'style.md', expectVersions: 1 });
+  await createAsset(root, { scope: 'project', project: 'example', title: 'Palette', originalName: 'palette.png' }, PNG);
+  const dataDir = temp(t);
+  const saved = await saveSettings(dataDir, 'example', settings || {
+    rules: 'Money is in cents.', assets: [{ ref: 'shared:style-guide', pin: 1 }, { ref: 'example:palette', pin: null }],
+  }, { basedOn: 0 });
+  const log = [];
+  const mgr = createManager({
+    root, dataDir, clock: { now: () => Date.parse('2026-10-22T10:00:00.000Z') },
+    deps: {
+      store, locks, proc: fakeProc(log), catalog: realCatalog, actions: fakeActions, holder: HOLDER,
+      profileFor: async () => ({ exists: true, profile: PROFILE, errors: [], warnings: [] }), getSettings: async () => ({ isolation: {} }),
+      riskTags: () => ({ tags: [], hits: [] }), trustFor: async () => true, hubState: async () => HUB_STATE,
+      createExecutor: engine => makeExecutor({ ...engine, testLog: log }, {}),
+      ...deps,
+    },
+  });
+  t.after(async () => { await mgr.shutdown({ settleMs: 50 }).catch(() => {}); await mgr.settled().catch(() => {}); });
+  return { root, dataDir, mgr, saved };
+}
+const EXPLAIN = { project: 'example', pipeline: 'explain', values: { what: 'How is tax added?' } };
+
+test('start writes the input manifest, frozen, and copies the attached assets into inputs/assets', async t => {
+  const { root, dataDir, mgr, saved } = await assetWorld(t);
+  const { runId } = await mgr.start(EXPLAIN);
+  await mgr.settled();
+  const run = await store.findRun(dataDir, runId);
+  assert.equal(run.status, 'passed', 'the executor saved the run with its manifest unchanged');
+  const m = run.manifest;
+  assert.equal(run.manifestSha256, manifestHash(m));
+  assert.deepEqual(m.stagePrompts, [{ stage: 'answer', file: 'pipelines/app/explain/answer.md', sha256: templateHash(await loadPrompt(root, 'explain', 'answer')) }]);
+  assert.deepEqual(m.profile, { sha256: profileHash(PROFILE) });
+  assert.deepEqual([m.projectSettings, run.projectSettings], [{ version: 1, sha256: saved.sha256 }, { version: 1, sha256: saved.sha256 }], 'the same version as the run');
+  assert.deepEqual(m.assets.map(a => [a.ref, a.pin, a.version, a.kind, a.title, a.file]), [
+    ['shared:style-guide', 1, 1, 'text', 'Style guide', 'inputs/assets/shared-style-guide@v1.md'],
+    ['example:palette', null, 1, 'image', 'Palette', 'inputs/assets/project-palette@v1.png'],
+  ]);
+  assert.deepEqual([m.models, m.efforts], [{ answer: 'sonnet' }, { answer: 'high' }]);
+  assert.deepEqual(m.versions, { node: process.versions.node, claudeCode: null });
+  assert.deepEqual(m.hub, HUB_STATE);
+  // The copies, hashed through the store, the pinned version and not the latest.
+  const inputs = join(store.runDir(dataDir, run), 'inputs', 'assets');
+  assert.equal(readFileSync(join(inputs, 'shared-style-guide@v1.md'), 'utf8'), '# Style\nUse teal.\n');
+  assert.deepEqual(readFileSync(join(inputs, 'project-palette@v1.png')), PNG);
+  assert.equal(run.inputsHashes['assets/shared-style-guide@v1.md'], `sha256:${m.assets[0].sha256}`);
+  assert.equal((await store.verifyInputs(dataDir, run)).ok, true);
+  const rows = (await timeline(dataDir, run)).map(r => r.msg);
+  assert.ok(rows.includes('Copied 2 attached assets into inputs/assets: shared:style-guide v1, example:palette v1.'), rows.join('\n'));
+});
+
+test('an archived asset is still used and noted; a run without attached assets gets an empty list', async t => {
+  const { root, dataDir, mgr } = await assetWorld(t);
+  await setArchived(root, 'example:palette', true);
+  const preview = await mgr.preview(EXPLAIN);
+  assert.deepEqual(preview.refusals, []);
+  assert.match(preview.warnings.join(' '), /example:palette is archived; it is used anyway/);
+  const { runId } = await mgr.start(EXPLAIN);
+  await mgr.settled();
+  const run = await store.findRun(dataDir, runId);
+  assert.deepEqual(run.manifest.assets.map(a => [a.ref, !!a.archived]), [['shared:style-guide', false], ['example:palette', true]]);
+  assert.ok((await timeline(dataDir, run)).some(r => r.kind === 'info' && /example:palette is archived; it is used anyway, because archiving only hides/.test(r.msg)));
+
+  const none = await assetWorld(t, { settings: { rules: 'Just rules.' } });
+  const { runId: plainId } = await none.mgr.start(EXPLAIN);
+  await none.mgr.settled();
+  const plain = await store.findRun(none.dataDir, plainId);
+  assert.deepEqual(plain.manifest.assets, []);
+  assert.ok(!existsSync(join(store.runDir(none.dataDir, plain), 'inputs', 'assets')), 'no assets folder without assets');
+});
+
+test('a missing asset or pinned version, or settings that can not be read, refuse the start and create nothing', async t => {
+  const cases = [
+    [{ assets: [{ ref: 'shared:style-guide', pin: 7 }] }, /The assets attached to example can't be used: shared:style-guide has no version 7\. Fix them in the project's settings\./],
+    [{ assets: [{ ref: 'shared:gone', pin: null }] }, /shared:gone is not in the asset library/],
+  ];
+  for (const [settings, re] of cases) {
+    const { dataDir, mgr } = await assetWorld(t, { settings });
+    const p = await mgr.preview(EXPLAIN);
+    assert.match(p.refusals.join(' '), re, 'the launcher shows it before a start');
+    const [code, msg] = await status(mgr.start(EXPLAIN));
+    assert.equal(code, 400);
+    assert.match(msg, re);
+    assert.deepEqual(await store.listRuns(dataDir), []);
+  }
+  const { dataDir, mgr } = await assetWorld(t);
+  writeFileSync(join(settingsDir(dataDir, 'example'), 'v1.json'), '{ damaged');
+  const [code, msg] = await status(mgr.start(EXPLAIN));
+  assert.equal(code, 400);
+  assert.match(msg, /The project settings of example can't be read, so no run can start: The settings v1 of example can't be used/);
+  assert.deepEqual(await store.listRuns(dataDir), []);
+});
+
+test('a version file edited by hand after it was saved refuses the start with 409', async t => {
+  const { root, dataDir, mgr } = await assetWorld(t);
+  writeFileSync(join(root, 'inbox', 'attachments', '_assets', 'style-guide', 'v1.md'), '# Style\nUse pink.\n');
+  const [code, msg] = await status(mgr.start(EXPLAIN));
+  assert.equal(code, 409);
+  assert.match(msg, /the file of shared:style-guide v1 no longer matches the SHA-256 the library recorded for it \(it was changed after it was saved\)/);
+  assert.deepEqual(await store.listRuns(dataDir), []);
+  rmSync(join(root, 'inbox', 'attachments', 'example', '_assets', 'palette', 'v1.png'));
+  const [, gone] = await status(mgr.start(EXPLAIN));
+  assert.match(gone, /the file of example:palette v1 is missing/);
+});
+
+test('a file that changes between the check and its copy is not kept: the run fails and says which', async t => {
+  // The check passes (as if the file changed right after it), so only the copy's own hash can catch it.
+  const late = [];
+  const { root, dataDir, mgr } = await assetWorld(t, { deps: { attached: { ...realAttached, async verifyFiles(items) { late.push(items.length); return []; } } } });
+  writeFileSync(join(root, 'inbox', 'attachments', 'example', '_assets', 'palette', 'v1.png'), Buffer.concat([PNG, Buffer.from('x')]));
+  const [code, msg] = await status(mgr.start(EXPLAIN));
+  assert.deepEqual(late, [2], 'the start checked both files first');
+  assert.equal(code, 500);
+  assert.match(msg, /The attached assets could not be copied into the run, so it stopped: example:palette v1: the copy for inputs\/assets\/project-palette@v1\.png does not have the SHA-256 it was checked with/);
+  const [line] = await store.listRuns(dataDir);
+  const run = await store.findRun(dataDir, line.id);
+  assert.equal(run.status, 'failed');
+  assert.deepEqual(Object.keys(run.inputsHashes), ['assets/shared-style-guide@v1.md'], 'the first copy, unchanged, was kept; the changed one was not');
+  assert.ok(!existsSync(join(store.runDir(dataDir, run), 'inputs', 'assets', 'project-palette@v1.png')));
 });

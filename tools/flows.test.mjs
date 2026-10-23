@@ -1,16 +1,16 @@
 // Tests for tools/lib/flows.mjs and tools/lib/prompt-file.mjs.
 // Run: node tools/run-tests.mjs
 // Each test builds a throwaway workspace root in the temp folder; the real workspace is not touched
-// (the last test only reads the workspace's own Tattoogenda flows).
+// (two tests only read the workspace's own flows in flows/: the Tattoogenda ones, and all of them).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import {
-  archiveFlow, checkFlow, checkRunNotes, flowFile, flowImages, flowImagesDir, getFlow, listArchivedFlows, listFlows, parseFlow,
-  readCaptions, renderFlow, restoreFlow, runPrompt, saveFlow, setCaption, skippedFlowImages, slugify,
+  ANY_PROJECT, archiveFlow, checkFlow, checkRunNotes, flowFile, flowImages, flowImagesDir, formatFlowAssets, getFlow, isAnyProject, listArchivedFlows,
+  listFlows, parseFlow, parseFlowAssets, readCaptions, renderFlow, restoreFlow, runPrompt, saveFlow, setCaption, skippedFlowImages, slugify,
 } from './lib/flows.mjs';
 import { checkLaunch, launchArgs, promptArgs, splitToolRules, takePromptFile, writePromptFile } from './lib/prompt-file.mjs';
 
@@ -42,13 +42,13 @@ test('renderFlow and parseFlow round-trip, also with quotes, colons and #', () =
   const f = {
     title: 'A "title": #1', description: 'd: e', target: 'agent', project: 'Game', agent: 'artist', prompt: 'Line 1\n\n---\nLine "2"',
     permissionMode: 'plan', model: 'opus', effort: 'high', allowedTools: 'Read, Bash(npm test:*)',
-    ask: 'What: "this" #2?', askRequired: true,
+    ask: 'What: "this" #2?', askRequired: true, assets: 'shared:style-guide, Game:palette@2',
   };
   assert.deepEqual(parseFlow(renderFlow(f)), f);
-  assert.match(renderFlow(f), /\nask: "What: \\"this\\" #2\?"\naskRequired: true\n---/);
-  const plain = { ...f, target: 'hub', permissionMode: '', model: '', effort: '', allowedTools: '', ask: '', askRequired: false };
+  assert.match(renderFlow(f), /\nask: "What: \\"this\\" #2\?"\naskRequired: true\nassets: "shared:style-guide, Game:palette@2"\n---/);
+  const plain = { ...f, target: 'hub', permissionMode: '', model: '', effort: '', allowedTools: '', ask: '', askRequired: false, assets: '' };
   assert.deepEqual(parseFlow(renderFlow(plain)), { ...plain, project: '', agent: '' });
-  assert.doesNotMatch(renderFlow(plain), /permissionMode|model|effort|allowedTools|ask/);
+  assert.doesNotMatch(renderFlow(plain), /permissionMode|model|effort|allowedTools|ask|assets/);
   // An optional question: no askRequired line.
   const optional = { ...plain, ask: 'Anything else?' };
   assert.doesNotMatch(renderFlow(optional), /askRequired/);
@@ -113,6 +113,77 @@ test('the four Tattoogenda flows: plan mode, high effort, a required question, n
     assert.doesNotMatch(text, /\b[A-Z]{1,2}-?[A-Z]{0,2}\d{1,3}\b/, `${slug} has a finding id`);
     assert.ok(f.prompt.length < 2000, slug);
   }
+});
+
+test('every flow in flows/ reads back to the same text and checks out where its project exists', t => {
+  const flowsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'flows');
+  const names = readdirSync(flowsDir).filter(n => n.endsWith('.md') && n.toLowerCase() !== 'readme.md');
+  assert.ok(names.length > 0);
+  // A workspace with each flow's project (and agent) as an empty folder, named from the files,
+  // plus one project of its own, so a flow for any project ("*") has one to run in.
+  const root = mkdtempSync(join(tmpdir(), 'ws-flows-tracked-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, 'projects', 'example'), { recursive: true });
+  for (const n of names) {
+    const f = parseFlow(readFileSync(join(flowsDir, n), 'utf8'));
+    if (f.target !== 'hub' && f.project !== ANY_PROJECT) mkdirSync(join(root, 'projects', f.project), { recursive: true });
+    if (f.target === 'agent') put(root, `projects/${f.project}/.claude/agents/${f.agent}.md`, `---\nname: ${f.agent}\ndescription: d\nmemory: project\n---\n`);
+  }
+  for (const n of names) {
+    const text = readFileSync(join(flowsDir, n), 'utf8').replace(/\r\n/g, '\n');
+    assert.equal(renderFlow(parseFlow(text)), text, `${n} would change when saved`);
+    assert.equal(checkFlow(root, parseFlow(text)).error, '', n);
+  }
+});
+
+test('a project flow for any project ("*") round-trips, saves and lists while a project exists', t => {
+  const root = fixture(t);
+  const any = { ...base, target: 'project', project: ANY_PROJECT };
+  const f = { ...any, agent: '', permissionMode: '', model: '', effort: '', allowedTools: '', ask: '', askRequired: false, assets: '' };
+  // Written as a JSON string: an unquoted * would be a YAML alias.
+  assert.match(renderFlow(f), /\ntarget: project\nproject: "\*"\n/);
+  assert.deepEqual(parseFlow(renderFlow(f)), f);
+  // Hand-written forms read the same.
+  for (const v of ['*', '"*"', "'*'", '  "*"  ']) {
+    assert.equal(parseFlow(`---\ntitle: "x"\ntarget: project\nproject: ${v}\n---\np`).project, ANY_PROJECT, v);
+  }
+
+  const ok = checkFlow(root, { ...any, project: ' * ', agent: 'artist' });
+  assert.deepEqual([ok.error, ok.flow.project, ok.flow.agent, isAnyProject(ok.flow)], ['', '*', '', true]);
+  assert.equal(isAnyProject({ target: 'project', project: 'Game' }), false);
+  assert.equal(isAnyProject({ target: 'agent', project: '*' }), false);
+  assert.equal(isAnyProject(null), false);
+  // Hub flows still drop a project they don't use.
+  assert.equal(checkFlow(root, { ...base, project: '*' }).flow.project, '');
+
+  const saved = saveFlow(root, { ...any, title: 'Any project review' });
+  assert.equal(saved.error, '');
+  assert.match(readFileSync(flowFile(root, saved.slug), 'utf8'), /\ntarget: project\nproject: "\*"\n/);
+  assert.equal(getFlow(root, saved.slug).project, ANY_PROJECT);
+  assert.equal(listFlows(root).find(x => x.slug === saved.slug).error, '');
+  // Saving it again keeps "*"; a fixed project can replace it and the other way round.
+  const back = getFlow(root, saved.slug);
+  const fixed = saveFlow(root, { ...any, title: 'Any project review', project: 'game' }, { slug: saved.slug, baseHash: back.hash });
+  assert.equal(fixed.error, '');
+  assert.equal(getFlow(root, saved.slug).project, 'Game');
+  assert.equal(saveFlow(root, { ...any, title: 'Any project review' }, { slug: saved.slug, baseHash: fixed.hash }).error, '');
+  assert.equal(getFlow(root, saved.slug).project, ANY_PROJECT);
+
+  // Only while a project exists: folders starting with "." or "_" don't count.
+  rmSync(join(root, 'projects'), { recursive: true, force: true });
+  mkdirSync(join(root, 'projects', '_template'), { recursive: true });
+  mkdirSync(join(root, 'projects', '.cache'), { recursive: true });
+  assert.match(listFlows(root).find(x => x.slug === saved.slug).error, /no project in projects/);
+  assert.match(saveFlow(root, { ...any, title: 'Another' }).error, /no project in projects/);
+  assert.match(checkFlow(join(root, 'missing'), any).error, /no project in projects/);
+});
+
+test('an agent flow can\'t be for any project: an agent belongs to one project', t => {
+  const root = fixture(t);
+  assert.match(checkFlow(root, { ...base, target: 'agent', project: '*', agent: 'artist' }).error, /agent's project/);
+  assert.match(saveFlow(root, { ...base, title: 'Agent anywhere', target: 'agent', project: '*', agent: 'artist' }).error, /agent's project/);
+  put(root, 'flows/hand-made.md', '---\ntitle: "Hand made"\ntarget: agent\nproject: "*"\nagent: "artist"\n---\n\nDraw.\n');
+  assert.match(listFlows(root).find(x => x.slug === 'hand-made').error, /agent's project/);
 });
 
 test('checkFlow needs a title, a prompt and a target that can run', t => {
@@ -180,6 +251,53 @@ test('runPrompt puts labeled images first, then the prompt, then the notes', () 
     'Compare Image 1 with Image 2.\n\nNotes for this run:\nhero only');
 });
 
+test('runPrompt lists the attached assets after the images and before the prompt', () => {
+  const line = 'Asset 1: shared:style-guide v2 (text) at C:\\ws\\inbox\\attachments\\_assets\\style-guide\\v2.md, titled "Style guide"';
+  assert.equal(runPrompt({ prompt: 'Use Asset 1.' }, ['C:\\imgs\\a.png'], '', {}, [line]),
+    'Reference images for this task. Read each one before you start:\n- Image 1: C:\\imgs\\a.png\n\n' +
+    `Assets for this task, from the workspace app's asset library. Read each one before you start:\n- ${line}\n\nUse Asset 1.`);
+  assert.equal(runPrompt({ prompt: 'p' }, [], '', {}, []), 'p', 'no assets, no section');
+});
+
+test('parseFlowAssets: refs with an optional @version, each once, at most 20', () => {
+  assert.deepEqual(parseFlowAssets(' shared:style-guide, game-dev:palette@2 ,, SHARED:logo@10 '), { error: '', list: [
+    { ref: 'shared:style-guide', pin: null }, { ref: 'game-dev:palette', pin: 2 }, { ref: 'shared:logo', pin: 10 },
+  ] });
+  assert.deepEqual(parseFlowAssets(''), { error: '', list: [] });
+  assert.deepEqual(parseFlowAssets(undefined), { error: '', list: [] });
+  assert.deepEqual(parseFlowAssets('My Game:palette'), { error: '', list: [{ ref: 'My Game:palette', pin: null }] }, 'a folder name with a space');
+  for (const bad of ['style-guide', 'shared:Style', 'shared:a@0', 'shared:a@v2', 'shared:a@2x', ':x', 'shared:x:y', `shared:${'a'.repeat(61)}`]) {
+    assert.match(parseFlowAssets(bad).error, /is not an asset: use shared:<id> or <project>:<id>, with @<version> to pin a version/, bad);
+  }
+  assert.equal(parseFlowAssets('shared:x, SHARED:x@2').error, 'shared:x is attached twice');
+  const many = Array.from({ length: 21 }, (_, i) => `shared:a${i}`).join(', ');
+  assert.equal(parseFlowAssets(many).error, 'a flow can attach at most 20 assets; it has 21');
+  assert.equal(formatFlowAssets([{ ref: 'shared:a', pin: null }, { ref: 'Game:b', pin: 3 }]), 'shared:a, Game:b@3');
+  assert.equal(formatFlowAssets(null), '');
+});
+
+test('checkFlow: a hub flow and a flow for any project attach shared assets only; a project or agent flow its project\'s own too', t => {
+  const root = fixture(t);
+  put(root, 'projects/Other/CLAUDE.md', '# Other');
+  const project = { ...base, target: 'project', project: 'game' };
+  const ok = checkFlow(root, { ...project, assets: 'shared:style-guide, GAME:palette@2' });
+  assert.equal(ok.error, '');
+  assert.equal(ok.flow.assets, 'shared:style-guide, Game:palette@2', 'saved with the project folder\'s spelling');
+  assert.equal(checkFlow(root, { ...base, target: 'agent', project: 'Game', agent: 'artist', assets: 'Game:palette' }).flow.assets, 'Game:palette');
+  assert.equal(checkFlow(root, { ...base, assets: 'shared:style-guide@1' }).flow.assets, 'shared:style-guide@1');
+  assert.match(checkFlow(root, { ...base, assets: 'Game:palette' }).error, /^Game:palette belongs to projects\/Game; a hub flow can attach shared assets only$/);
+  assert.match(checkFlow(root, { ...project, project: ANY_PROJECT, assets: 'Game:palette' }).error, /a flow for any project can attach shared assets only/);
+  assert.match(checkFlow(root, { ...project, assets: 'Other:map' }).error, /^Other:map belongs to projects\/Other; a flow for Game can attach shared assets and Game's own$/);
+  assert.match(checkFlow(root, { ...project, assets: 'nope' }).error, /is not an asset/);
+  // Saved, read back and listed; a hand-edited file with a bad ref lists with its error.
+  const saved = saveFlow(root, { ...project, title: 'With assets', assets: 'shared:style-guide, game:palette@2' });
+  assert.equal(saved.error, '');
+  assert.equal(getFlow(root, saved.slug).assets, 'shared:style-guide, Game:palette@2');
+  assert.match(readFileSync(flowFile(root, saved.slug), 'utf8'), /\nassets: "shared:style-guide, Game:palette@2"\n---/);
+  put(root, 'flows/hand.md', '---\ntitle: "Hand"\ntarget: hub\nassets: "Game:palette"\n---\n\nGo.\n');
+  assert.match(listFlows(root).find(f => f.slug === 'hand').error, /a hub flow can attach shared assets only/);
+});
+
 test('captions are kept per image name and only for images the flow passes', t => {
   const root = fixture(t);
   put(root, 'inbox/attachments/_flows/demo/a.png');
@@ -237,7 +355,7 @@ test('archiveFlow and restoreFlow move the file and keep the name taken', t => {
 
 test('prompt files carry the prompt and readable folders once, then disappear', () => {
   const file = writePromptFile({ prompt: 'Say "hi"\nnow', readDirs: ['C:\\imgs'] });
-  assert.deepEqual(takePromptFile(file), { prompt: 'Say "hi"\nnow', readDirs: ['C:\\imgs'], launch: {} });
+  assert.deepEqual(takePromptFile(file), { prompt: 'Say "hi"\nnow', readDirs: ['C:\\imgs'], readOnlyDirs: [], launch: {} });
   const launched = writePromptFile({ prompt: 'p', launch: { permissionMode: 'plan', allowedTools: ['Read'] } });
   assert.deepEqual(takePromptFile(launched).launch, { permissionMode: 'plan', allowedTools: ['Read'] });
   const unsafe = writePromptFile({ prompt: 'p', launch: { permissionMode: 'bypassPermissions' } });

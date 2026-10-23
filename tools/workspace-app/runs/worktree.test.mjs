@@ -418,7 +418,7 @@ test('prepareRunTree checks out the base and refreshes only when the lockfile or
 
 test('prepareRunTree refuses a dirty tree, a tree on a branch and a bad base, and retries a failed refresh', async t => {
   const fx = fixture(t);
-  await assert.rejects(prepareRunTree({ ...fx, mainDir: fx.main, baseSha: fx.base }), /example-run is not set up yet; run the worktree setup/);
+  await assert.rejects(prepareRunTree({ ...fx, mainDir: fx.main, baseSha: fx.base }), /example-run is not set up yet; run the worktree setup from the project's Overview first\./);
   await setUp(fx);
   writeFiles(fx.run, { 'apps/api/src/a.txt': 'x\n', 'new.txt': 'n\n' });
   await assert.rejects(prepareRunTree({ ...fx, mainDir: fx.main, baseSha: fx.base }), /example-run has 2 changed files; the app never stashes\./);

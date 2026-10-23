@@ -415,7 +415,7 @@ function describeState(st, record, mainDir) {
   return { state: 'ready', text: `${name} is ready${st.head ? ` at ${short(st.head)}` : ''}.` };
 }
 
-// What the cockpit shows about the run tree: { mode, path, name, state, status, text, exists,
+// What the project page shows about the run tree: { mode, path, name, state, status, text, exists,
 // registered, head, branch, detached, clean, changed, record, error }. state (also as status) is
 // one of none, setting-up, failed, blocked, moved, missing, dirty, on-branch or ready. A tree whose
 // git status can't be read is 'failed' (error says why), never 'ready'.
@@ -517,7 +517,7 @@ export async function prepareRunTree({ profile, mainDir, dataDir, baseSha, onLin
   checkSha(baseSha, 'base');
   const record = await loadWorktreeRecord(dataDir, project);
   if (!record || record.status !== 'ready') {
-    throw new Error(`${name} is not set up yet${record?.status === 'failed' ? ' (the last setup failed)' : ''}; run the worktree setup from the cockpit first.`);
+    throw new Error(`${name} is not set up yet${record?.status === 'failed' ? ' (the last setup failed)' : ''}; run the worktree setup from the project's Overview first.`);
   }
   if (record.path && !samePath(record.path, path)) {
     throw new Error(`The profile points at ${path}, but the worktree was set up at ${record.path}; run the worktree setup again.`);

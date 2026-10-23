@@ -13,6 +13,7 @@ import {
   archiveAgent, checkAgentName, checkAgentText, checkProject, duplicateNames, listAgents, listArchivedAgents, readFrontmatter,
   resolveClaude, resolveProject, restoreAgent, saveAgentText, sessionSettings, textHash,
 } from './lib/agents.mjs';
+import { editDenyRule } from './lib/prompt-file.mjs';
 
 const toolsDir = dirname(fileURLToPath(import.meta.url));
 const WIN = process.platform === 'win32';
@@ -268,9 +269,41 @@ test('agent-session --prompt-file starts with the prompt and may read the extra 
   assert.deepEqual(JSON.parse(readFileSync(launched.settingsFile, 'utf8')).permissions.allow, ['Read', 'Bash(npm test:*)']);
   writeFileSync(promptFile, JSON.stringify({ prompt: 'x', launch: { permissionMode: 'bypassPermissions' } }));
   assert.match(run('agent-session.mjs', ['demo', 'art', '--print', '--prompt-file', promptFile], root).err, /launch: permission mode/);
+  // Read-only folders (attached assets): readable, with an Edit deny rule each, in a settings file of their own.
+  const asset = join(root, 'inbox', 'attachments', '_assets', 'logo');
+  writeFileSync(promptFile, JSON.stringify({ prompt: 'Use the logo', readDirs: [extra], readOnlyDirs: [asset] }));
+  const readOnly = JSON.parse(run('agent-session.mjs', ['demo', 'art', '--print', '--prompt-file', promptFile], root).out);
+  const { permissions } = JSON.parse(readFileSync(readOnly.settingsFile, 'utf8'));
+  assert.deepEqual(permissions.additionalDirectories.slice(-2), [extra, asset]);
+  assert.deepEqual(permissions.deny, [editDenyRule(asset)]);
+  assert.notEqual(readOnly.settingsFile, plan.settingsFile);
   // A file outside the prompt folder (named by mistake) is read but never deleted.
   const elsewhere = join(root, 'settings.json');
   writeFileSync(elsewhere, JSON.stringify({ permissions: {} }));
   assert.match(run('agent-session.mjs', ['demo', 'art', '--print', '--prompt-file', elsewhere], root).err, /prompt is empty/);
   assert.ok(existsSync(elsewhere));
+});
+
+test('agent-session --prompt-file passes the project rules as one argument of its own spawn, also without a prompt', t => {
+  const root = fixture(t);
+  assert.equal(run('new-agent.mjs', ['demo', 'art'], root).code, 0);
+  const id = '8c1e0a52-3b6d-4f0e-9a1b-2c3d4e5f6a7b';
+  const promptFile = join(root, 'claude-workspace', 'prompts', 'p.json');
+  mkdirSync(dirname(promptFile), { recursive: true });
+  // What PowerShell 5.1 would mangle: quotes, $( ), backticks and line breaks; and a leading dash.
+  const rules = '- Money is in cents.\n- Say "no" to floats; $(calc) and `x` stay text.';
+  writeFileSync(promptFile, JSON.stringify({ prompt: '', launch: { effort: 'low', appendSystemPrompt: rules } }));
+  const r = run('agent-session.mjs', ['demo', 'art', '--print', '--prompt-file', promptFile, '--session-id', id], root);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(JSON.parse(r.out).args.slice(4), ['--effort', 'low', '--session-id', id, '--append-system-prompt', rules], 'no prompt at the end');
+  assert.ok(!existsSync(promptFile), 'the prompt file is used once');
+  // With a first prompt, the rules come right before it.
+  writeFileSync(promptFile, JSON.stringify({ prompt: 'Draw the hero', launch: { appendSystemPrompt: rules } }));
+  const withPrompt = run('agent-session.mjs', ['demo', 'art', '--print', '--prompt-file', promptFile], root);
+  assert.deepEqual(JSON.parse(withPrompt.out).args.slice(4), ['--append-system-prompt', rules, 'Draw the hero']);
+  // -c has no place in an agent session, and an empty file is still refused.
+  writeFileSync(promptFile, JSON.stringify({ prompt: 'x', launch: { continueLast: true } }));
+  assert.match(run('agent-session.mjs', ['demo', 'art', '--print', '--prompt-file', promptFile], root).err, /can't continue the last session/);
+  writeFileSync(promptFile, JSON.stringify({ prompt: '', launch: {} }));
+  assert.match(run('agent-session.mjs', ['demo', 'art', '--print', '--prompt-file', promptFile], root).err, /prompt is empty/);
 });

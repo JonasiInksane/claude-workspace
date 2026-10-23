@@ -12,6 +12,8 @@ The drop zone. Put anything here that you want Claude to look at later, then run
 | `inbox/attachments/_flows/<flow>/` | Reference images for one flow ([flows/README.md](../flows/README.md)). Not triaged |
 | `inbox/attachments/<project>/<agent>/YYYY-MM-DD/` | Reference images for one project agent. Not triaged (see below) |
 | `inbox/attachments/<project>/_shared/YYYY-MM-DD/` | Reference images for every agent of a project. Not triaged |
+| `inbox/attachments/_assets/<id>/` | The shared asset library of the workspace app: `asset.json` plus the versions `v1.md`, `v2.png`, ... (images, text, PDF). Not triaged; written by the app only |
+| `inbox/attachments/<project>/_assets/<id>/` | That project's own assets in the same library. Not triaged; written by the app only |
 | `inbox/handoffs/` | Session handoff notes written by `/write-handoff` |
 | `inbox/_processed/YYYY-MM-DD/` | Originals that triage has already filed (the archive) |
 
@@ -31,6 +33,16 @@ navigator lists them under the inbox, and `/inbox-triage` skips them.
 folder and `_shared/` only. If the project folder is removed, its images show up as triage
 items again. `node tools/check-workspace.mjs` warns about folders whose agent no longer exists.
 More: [the decision](../knowledge/decisions/2026-10-21-project-agents.md).
+
+## Asset library
+
+`inbox/attachments/_assets/` (shared) and `inbox/attachments/<project>/_assets/` (one project's)
+hold the workspace app's asset library: one folder per asset with its `asset.json` and every
+version as `v1.<ext>`, `v2.<ext>`, ... Change them only through the workspace app
+(`tools/workspace-app/asset-library.mjs`), never by hand: a version file is never overwritten,
+so a run or a flow can name exactly the version (and hash) it used. The status block, the
+navigator and `/inbox-triage` skip these folders. More:
+[the workspace app README](../tools/workspace-app/README.md#asset-library).
 
 ## Lifecycle
 

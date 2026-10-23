@@ -6,7 +6,11 @@
 // Routing: the URL hash names the route, #<route> or #<route>/<sub>. A route is a view id,
 // except for the aliases below (#library shows views/tools.js; the old #home shows Today).
 // go() changes the hash, which adds a history entry (so Back works); main.js listens for
-// hashchange and shows the view.
+// hashchange and shows the view. A project's page is #project/<name>/<tab>[/<rest>]
+// (views/project.js): projectRoute() and projectSub() take its sub-route apart and put it
+// together, and canonicalProjectSub() completes it from the state (the type's first tab when
+// the tab is missing or unknown). The old #cockpit/<name> and #health/<name> still work: they
+// open the Overview and the Architecture tab (upgradeRoute).
 //
 // Routes that don't exist yet (404 while the server side is still being built) fall back to
 // defaults quietly: the page keeps working with what /api/state gives.
@@ -70,23 +74,86 @@ export async function refresh() {
 // Route -> view id, and back. Views keep their file names; only these routes differ.
 export const ROUTE_VIEWS = { library: 'tools', home: 'today' };
 export const VIEW_ROUTES = { tools: 'library' };
-export const viewOf = route => (Object.prototype.hasOwnProperty.call(ROUTE_VIEWS, route) ? ROUTE_VIEWS[route] : route);
-export const routeOf = id => (Object.prototype.hasOwnProperty.call(VIEW_ROUTES, id) ? VIEW_ROUTES[id] : id);
+const own = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+export const viewOf = route => (own(ROUTE_VIEWS, route) ? ROUTE_VIEWS[route] : route);
+export const routeOf = id => (own(VIEW_ROUTES, id) ? VIEW_ROUTES[id] : id);
+
+// Routes of screens that became tabs of the project page: route -> the tab that took over.
+export const LEGACY_TABS = { cockpit: 'overview', health: 'architecture' };
+
+// An old route as the route that replaced it ({ id, sub }); any other route as it is. One without
+// a name keeps its tab for the current project: a bare #health is '/architecture' (projectRoute).
+export function upgradeRoute(id, subPath = '') {
+  if (!own(LEGACY_TABS, id)) return { id, sub: subPath };
+  const name = String(subPath || '').split('/')[0];
+  return { id: 'project', sub: projectSub(name, LEGACY_TABS[id]) };
+}
 
 // '#flows/hero-sprite' <-> { id: 'flows', sub: 'hero-sprite' }. `sub` may hold more slashes;
-// each part is URL-encoded in the hash. hashFor takes a view id or a route.
-export const hashFor = (id, subPath = '') =>
-  `#${routeOf(id)}${subPath ? `/${String(subPath).split('/').map(encodeURIComponent).join('/')}` : ''}`;
+// each part is URL-encoded in the hash. hashFor takes a view id or a route; both upgrade an old
+// route, so '#cockpit/example' reads as { id: 'project', sub: 'example/overview' }.
+export function hashFor(id, subPath = '') {
+  const r = upgradeRoute(id, subPath);
+  return `#${routeOf(r.id)}${r.sub ? `/${String(r.sub).split('/').map(encodeURIComponent).join('/')}` : ''}`;
+}
 export function parseHash(hash = location.hash) {
   const [id = '', ...rest] = String(hash).replace(/^#/, '').split('/');
   let subPath = rest.join('/');
   try { subPath = decodeURIComponent(subPath); } catch { subPath = ''; }
-  return { id, sub: subPath };
+  return upgradeRoute(id, subPath);
 }
 
-// Shows a view, as a new history entry. Going to the view already shown shows it again.
+// The project page's sub-route, '<name>/<tab>/<rest>', as { name, tab, rest } and back. A rest
+// needs a name and a tab; empty parts are left out. '/<tab>' (no name) is that tab of the current
+// project, which canonicalProjectSub fills in once the state is there; every other reader goes by
+// the name and sees no project.
+export function projectRoute(subPath = '') {
+  const [name = '', tab = '', ...rest] = String(subPath || '').split('/');
+  return { name, tab, rest: name && tab ? rest.join('/') : '' };
+}
+export function projectSub(name, tab = '', rest = '') {
+  if (!name) return tab ? `/${tab}` : '';
+  if (!tab) return String(name);
+  return rest ? `${name}/${tab}/${rest}` : `${name}/${tab}`;
+}
+export const projectHash = (name, tab = '', rest = '') => hashFor('project', projectSub(name, tab, rest));
+export const goProject = (name, tab = '', rest = '') => go('project', projectSub(name, tab, rest));
+
+// The /api/state entry of a project by name (exact first, then without case), or null.
+export function projectEntry(name, projects = state && state.projects) {
+  if (!name || !Array.isArray(projects)) return null;
+  const n = String(name);
+  return projects.find(p => p && p.name === n) || projects.find(p => p && String(p.name).toLowerCase() === n.toLowerCase()) || null;
+}
+
+// The tabs of a project's page, from its type (state.projects[i].tabs); Overview when the
+// server sent none.
+export const tabsOf = p => (p && Array.isArray(p.tabs) && p.tabs.length ? p.tabs.map(String) : ['overview']);
+
+// The project page's sub-route made whole from the state: the project's own spelling, a tab it
+// has (its first tab when the tab is missing or unknown; the rest goes with an unknown tab), and
+// the current project when the route names none (at the tab the route names, if that project has
+// it: '/architecture' from a bare #health). Before the state is loaded, and for a project
+// the state doesn't list (the page then asks the server about it), the route stays as it is (the
+// current project may still change when the state arrives, so it isn't filled in before).
+export function canonicalProjectSub(subPath, projects = state && state.projects, fallback = currentProject) {
+  const r = projectRoute(subPath);
+  const list = Array.isArray(projects) ? projects : null;
+  if (!list) return projectSub(r.name, r.tab, r.rest);
+  const p = projectEntry(r.name || fallback, list);
+  if (!p) return r.name ? projectSub(r.name, r.tab, r.rest) : '';
+  const tabs = tabsOf(p);
+  const tab = tabs.includes(r.tab) ? r.tab : tabs[0];
+  return projectSub(p.name, tab, tab === r.tab ? r.rest : '');
+}
+
+// Shows a view, as a new history entry. Going to the view already shown shows it again. A
+// project route is completed first, as main.js will show it: the nav's #project/<name> would
+// otherwise be a new entry next to the #project/<name>/overview on screen, which show() then
+// replaces with that same address, so the first Back would seem to do nothing.
 export function go(id, subPath = '') {
-  const hash = hashFor(id, subPath);
+  const r = upgradeRoute(id, subPath);
+  const hash = hashFor(r.id, r.id === 'project' ? canonicalProjectSub(r.sub) : r.sub);
   if (location.hash === hash) window.dispatchEvent(new HashChangeEvent('hashchange'));
   else location.hash = hash;
 }
@@ -96,7 +163,8 @@ export function go(id, subPath = '') {
 // A count that the server may send as a number or as a list.
 export const countOf = v => (Array.isArray(v) ? v.length : Number(v) || 0);
 
-// Projects with a private profile: they get a cockpit in the nav (state.projects[i].hasProfile).
+// Projects with a private profile (state.projects[i].hasProfile; their type is `code`): runs,
+// checks and findings work for them, and their page shows the code tabs.
 export const profiledProjects = () => (state && Array.isArray(state.projects) ? state.projects.filter(p => p.hasProfile) : []);
 
 export function setCurrentProject(name) {

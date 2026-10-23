@@ -1,0 +1,68 @@
+/* The project page (views/project.js and its tabs in views/project/): the header with the type
+   badge, the tab bar, the tab panel, and what the tabs added with it need (Tasks, the Overview of
+   asset and plain projects, Checks' counts and history, Settings). The cards the cockpit had keep
+   their own file (css/project-cards.css), and so does the Architecture tab (css/architecture.css).
+   Linked after app.css in index.html; narrow-screen rules for the page go here too. */
+
+/* ---------- Header */
+.pj-head { margin-bottom: var(--s3); }
+.pj-title { min-width: 0; }
+.pj-name { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pj-title .mono { overflow-wrap: anywhere; }
+
+/* ---------- Tab bar (role="tablist"; the open tab has aria-selected="true") */
+.pj-tabs { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: var(--s4); }
+.pj-tab {
+  background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; border-radius: 6px 6px 0 0;
+  padding: 7px 12px; cursor: pointer; font-weight: 500; color: var(--muted); white-space: nowrap;
+}
+.pj-tab:hover { color: var(--text); background: var(--hover); }
+.pj-tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.pj-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* ---------- Panel: its gap spaces the cards, so the cockpit's own margins go */
+.pj-panel { display: grid; gap: var(--s4); min-width: 0; }
+.pj-panel:focus { outline: none; }
+.pj-panel:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 8px; }
+.pj-panel > .factsbar, .pj-panel > .ck-notes { margin-bottom: 0; }
+.pj-panel > .cgrid { margin-top: 0; }
+.pj-panel > .sec { margin: var(--s2) 0 0; }
+.pj-panel > .tiles + .note { margin-top: 0; }
+.pj-panel > .mt-4 { margin-top: 0; }
+.pj-panel .run-link { color: var(--text); font-weight: 600; text-align: left; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pj-panel .run-link:hover { color: var(--accent); }
+.tab-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s4); flex-wrap: wrap; }
+.tab-head h3 { margin: 0 0 2px; font-size: var(--t-lg); }
+
+/* ---------- Overview of asset and plain projects */
+.ov-grid { align-items: start; }
+.ov-facts { grid-template-columns: minmax(110px, auto) 1fr; }
+
+/* ---------- Tasks: a root run, the runs below it indented under a rule */
+.tasks { list-style: none; margin: var(--s2) 0 0; padding: 0; display: grid; gap: var(--s2); }
+.task { border: 1px solid var(--border); border-radius: 10px; padding: 4px 12px; min-width: 0; }
+.task-row { display: flex; align-items: center; gap: var(--s3); padding: 6px 0; min-width: 0; }
+.task-row .main { flex: 1; min-width: 0; }
+.task-row .sub { color: var(--muted); font-size: var(--t-md); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-runs { list-style: none; margin: 0 0 6px 4px; padding: 0 0 0 16px; border-left: 2px solid var(--border); }
+.task-runs .task-row { padding: 4px 0; }
+.task-note { margin: 0 0 6px 21px; }
+
+/* ---------- Checks: every count is its own badge; the history list wraps */
+.ck-counts { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+table.ck-levels td { vertical-align: middle; }
+.ck-history .title { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; white-space: normal; font-weight: 600; }
+
+/* ---------- Settings: the profile's status and the --check command */
+.st-path { overflow-wrap: anywhere; color: var(--muted); }
+.st-items { margin: 0; padding-left: 18px; font-size: var(--t-md); }
+.st-items.errors { color: var(--red); }
+.st-check .row-actions { margin-top: 4px; }
+.st-command { overflow-wrap: anywhere; }
+
+/* ---------- Narrow screens (app.css breakpoints: 1180, 1080, 760) */
+@media (max-width: 760px) {
+  .pj-tab { padding: 6px 9px; }
+  .ov-facts { grid-template-columns: 1fr; }
+  .ov-facts dd { margin-bottom: 4px; }
+}

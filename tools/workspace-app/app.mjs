@@ -1,7 +1,7 @@
 // HTTP handler for the workspace app. server.mjs owns the listening socket and the window;
-// this file owns the access checks, the static page, the two sandboxed file routes (/img and
-// /asset-file) and the dispatch to the JSON API in routes/*.mjs, so tests can drive it with a
-// fake `actions` object (see app.test.mjs).
+// this file owns the access checks, the static page, the three sandboxed file routes (/img,
+// /asset-file and /library-file) and the dispatch to the JSON API in routes/*.mjs, so tests can
+// drive it with a fake `actions` object (see app.test.mjs).
 //
 // Access: the app only answers on 127.0.0.1/localhost with the right port (Host check). The
 // launch URL carries a sign-in token (/?t=...) that is new for every run of the server; it
@@ -27,6 +27,7 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { contentTypeFor, isInside } from './uploads.mjs';
 import { assetFile } from './assets.mjs';
+import { assetFile as libraryFile } from './asset-library.mjs';
 import { cookies, HttpError, json, listUiFiles, sameToken, send, sendStatic } from './http.mjs';
 import { assetProjectOrThrow } from './lookup.mjs';
 import { invalidateState } from './state.mjs';
@@ -47,11 +48,14 @@ import * as findingRoutes from './routes/findings.mjs';
 import * as metricRoutes from './routes/metrics.mjs';
 import * as settingRoutes from './routes/settings.mjs';
 import * as todayRoutes from './routes/today.mjs';
+import * as projectSettingRoutes from './routes/project-settings.mjs';
+import * as libraryRoutes from './routes/library.mjs';
 
 const appDir = dirname(fileURLToPath(import.meta.url));
 // A new routes/<area>.mjs goes in this list.
 export const ROUTE_MODULES = [stateRoutes, imageRoutes, agentRoutes, assetRoutes, launchRoutes, flowRoutes, toolRoutes, projectRoutes,
-  runRoutes, eventRoutes, cockpitRoutes, checkRoutes, findingRoutes, metricRoutes, settingRoutes, todayRoutes];
+  runRoutes, eventRoutes, cockpitRoutes, checkRoutes, findingRoutes, metricRoutes, settingRoutes, todayRoutes,
+  projectSettingRoutes, libraryRoutes];
 const ROUTE_KEY = /^(GET|POST) \/api\/[a-z0-9/-]+$/;
 
 // Where the app keeps data that must not go into the (public) workspace repo:
@@ -186,6 +190,19 @@ export function createApp({
           'Content-Security-Policy': "default-src 'none'; sandbox",
           'Cache-Control': 'private, no-cache',
         });
+      }
+
+      // One version of an asset library file (asset-library.mjs): only a version its asset.json
+      // lists, text always as text/plain. ?download=1 asks the browser to save it.
+      if (req.method === 'GET' && url.pathname === '/library-file') {
+        const f = await libraryFile(root, url.searchParams.get('ref'), url.searchParams.get('v'));
+        const headers = {
+          'Content-Type': f.type,
+          'Content-Security-Policy': "default-src 'none'; sandbox",
+          'Cache-Control': 'private, max-age=300',
+        };
+        if (url.searchParams.get('download') === '1') headers['Content-Disposition'] = `attachment; filename="${f.downloadName}"`;
+        return send(res, 200, readFileSync(f.path), headers);
       }
 
       if (url.pathname.startsWith('/api/')) return await callApi(req, res, url);

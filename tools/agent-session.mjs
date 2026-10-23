@@ -15,10 +15,14 @@
 //   workspace app runs this tool itself in a terminal tab.
 // - --root <dir> uses another workspace root (the workspace app passes it; also for tests).
 // - --prompt-file <file> starts with a first prompt (tools/lib/prompt-file.mjs; the workspace
-//   app's flows use it). Its readDirs are added to the folders the session may read, its launch
+//   app's flows use it). Its readDirs are added to the folders the session may read, and so are
+//   its readOnlyDirs (attached assets), each with an Edit deny rule (editDenyRule), its launch
 //   settings become --permission-mode / --model / --effort, and its pre-approved tools go into
 //   the settings' permissions.allow. A settings file named in its launch is merged into the
-//   agent's settings file (its values win, its lists add up).
+//   agent's settings file (its values win, its lists add up). Its appendSystemPrompt (the
+//   project's rules from the workspace app) becomes --append-system-prompt <rules>, an argument
+//   of this tool's own spawn, never of a PowerShell command. A file without a prompt (only launch
+//   settings or rules) starts the session without a first prompt.
 // - --session-id <uuid> gives the new session that id (the workspace app records it).
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -30,7 +34,7 @@ import {
   checkAgentName, duplicateNames, imagesDir, listAgents, resolveClaude, resolveProject,
   sessionSettings, sharedImagesDir,
 } from './lib/agents.mjs';
-import { launchArgs, mergeSettings, promptArgs, takePromptFile, UUID_RE } from './lib/prompt-file.mjs';
+import { editDenyRule, launchArgs, mergeSettings, promptArgs, takePromptFile, UUID_RE } from './lib/prompt-file.mjs';
 import { realProjectDir } from './lib/projects.mjs';
 
 const toolsRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -112,12 +116,15 @@ const rootTag = createHash('sha1').update(root.toLowerCase()).digest('hex').slic
 let handed = null;
 if (opts.promptFile) {
   try { handed = takePromptFile(opts.promptFile); } catch (e) { fail(e.message); }
+  if (handed.launch.continueLast) fail("an agent session starts new or resumes one by id; it can't continue the last session (-c)");
 }
 let settings = sessionSettings(root, project, opts.agent, agent.memory);
-// Extra readable folders, pre-approved tools and a launch settings file get their own settings
-// file, so the plain one stays the same.
+// Extra readable folders, read-only ones, pre-approved tools and a launch settings file get their
+// own settings file, so the plain one stays the same.
 const extra = handed ? handed.readDirs.map(d => resolve(d)) : [];
-settings.permissions.additionalDirectories.push(...extra);
+const readOnly = handed ? handed.readOnlyDirs.map(d => resolve(d)) : [];
+settings.permissions.additionalDirectories.push(...extra, ...readOnly);
+if (readOnly.length) settings.permissions.deny = readOnly.map(d => editDenyRule(d));
 const allow = handed && handed.launch.allowedTools ? handed.launch.allowedTools : [];
 if (allow.length) settings.permissions.allow = allow;
 const launchSettings = handed && handed.launch.settingsFile ? handed.launch.settingsFile : '';
@@ -126,7 +133,7 @@ if (launchSettings) {
     fail(`the settings file ${launchSettings} could not be read: ${e.message}`);
   }
 }
-const extraKey = [...extra, ...allow.map(r => `allow:${r}`), ...(launchSettings ? [`settings:${launchSettings}`] : [])].join('\n');
+const extraKey = [...extra, ...readOnly.map(d => `read-only:${d}`), ...allow.map(r => `allow:${r}`), ...(launchSettings ? [`settings:${launchSettings}`] : [])].join('\n');
 const extraTag = extraKey ? `--${createHash('sha1').update(extraKey).digest('hex').slice(0, 8)}` : '';
 const settingsFile = join(settingsDir, `${project}--${opts.agent}--${rootTag}${extraTag}.json`);
 writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + '\n', 'utf8');
@@ -137,11 +144,13 @@ try { cwd = realProjectDir(root, project); } catch (e) { fail(e.message); }
 const args = ['--agent', opts.agent, '--settings', settingsFile];
 const sessionId = opts.sessionId || (handed && handed.launch.sessionId) || '';
 if (handed) {
+  // launchArgs leaves appendSystemPrompt out; it is added below, as an argument of this spawn.
   const { settingsFile: _merged, sessionId: _id, ...flags } = handed.launch;
   args.push(...launchArgs(flags));
 }
 if (sessionId && !(handed && handed.launch.resume)) args.push('--session-id', sessionId);
-if (handed) args.push(...promptArgs(handed.prompt));
+if (handed && handed.launch.appendSystemPrompt) args.push('--append-system-prompt', handed.launch.appendSystemPrompt);
+if (handed && handed.prompt) args.push(...promptArgs(handed.prompt));
 
 if (opts.print) {
   console.log(JSON.stringify({ cwd, command: claude.path, args, settingsFile }, null, 2));

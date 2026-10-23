@@ -2,14 +2,28 @@
 // hashed inputs/ files (R27). Everything is written under os.tmpdir().
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import {
   RUN_ID_RE, MSG_MAX, newRunId, freeRunId, runDir, runPath, stageFolder, gateFolder, tmpFolder, createRun, loadRun, findRun,
-  scanRuns, saveRun, indexLine, listRuns, compactIndex, appendTimeline, readTimeline, writeInput, verifyInputs, isTerminal,
+  scanRuns, saveRun, indexLine, listRuns, compactIndex, appendTimeline, readTimeline, writeInput, copyInput, verifyInputs, isTerminal,
 } from './store.mjs';
+import { saveSettings, settingsDir } from '../project-settings.mjs';
+import { manifestHash } from './manifest.mjs';
+
+// A manifest in the shape runs/manifest.mjs builds.
+const MANIFEST = {
+  version: 1,
+  stagePrompts: [{ stage: 'scope', file: 'pipelines/app/refactor/scope.md', sha256: 'a'.repeat(64) }],
+  profile: { sha256: 'b'.repeat(64) },
+  projectSettings: null,
+  assets: [{ ref: 'shared:style-guide', pin: null, version: 2, sha256: 'c'.repeat(64), kind: 'text', title: 'Style guide', file: 'inputs/assets/shared-style-guide@v2.md' }],
+  models: { scope: 'opus' }, efforts: { scope: 'high' },
+  versions: { node: '24.11.1', claudeCode: null },
+  hub: { commit: 'd'.repeat(40), pipelinesClean: true },
+};
 
 function temp(t) {
   const dir = mkdtempSync(join(tmpdir(), 'ws-store-'));
@@ -101,10 +115,11 @@ test('createRun makes the run folder with its subfolders, the full run.json and 
   for (const f of ['inputs', 'stages', 'gates', 'final', 'tmp']) assert.ok(statSync(join(dir, f)).isDirectory(), f);
   const onDisk = JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8'));
   for (const key of ['version', 'id', 'project', 'pipeline', 'parent', 'title', 'values', 'level', 'levelReason', 'reviewEffort', 'createdAt',
-    'updatedAt', 'endedAt', 'status', 'statusReason', 'current', 'waiting', 'isolation', 'base', 'branch', 'commit', 'versions', 'lockHeld', 'plan',
-    'allowances', 'pins', 'redTests', 'inputsHashes', 'fixRounds', 'gatedTree', 'stages', 'takeover', 'error']) {
+    'updatedAt', 'endedAt', 'status', 'statusReason', 'current', 'waiting', 'isolation', 'base', 'branch', 'commit', 'versions', 'projectSettings',
+    'lockHeld', 'plan', 'allowances', 'pins', 'redTests', 'inputsHashes', 'fixRounds', 'gatedTree', 'stages', 'takeover', 'error']) {
     assert.ok(key in onDisk, `run.json has ${key}`);
   }
+  assert.equal(onDisk.projectSettings, null, 'no project settings saved: none recorded');
   assert.equal(onDisk.status, 'running');
   assert.equal(onDisk.createdAt, '2026-10-22T10:42:12.000Z');
   assert.deepEqual(onDisk.current, { stage: 'preflight', index: 0, attempt: 1, round: 1 });
@@ -134,6 +149,121 @@ test('createRun keeps the given fields, skips done stages for `current`, and ref
   await assert.rejects(createRun(dataDir, { project: 'example', pipeline: 'Bad Id' }), /not a valid pipeline id/);
   await assert.rejects(createRun(dataDir, { project: 'example', pipeline: 'explain', status: 'exploded' }), /not a run status/);
   await assert.rejects(createRun(dataDir, { project: 'example', pipeline: 'explain', stages: [{ id: 'x', kind: 'gate', status: 'odd' }] }), /not a stage status/);
+});
+
+test('createRun records the project settings version once; a later save changes no run', async t => {
+  const dataDir = temp(t);
+  const v1 = await saveSettings(dataDir, 'example', { rules: 'Money is in cents.' }, { basedOn: 0 });
+  const a = await createRun(dataDir, { project: 'example', pipeline: 'explain', id: 'r-a' });
+  assert.deepEqual(a.projectSettings, { version: 1, sha256: v1.sha256 });
+  const v2 = await saveSettings(dataDir, 'example', { rules: 'Money is in cents. Always.' }, { basedOn: 1 });
+  const b = await createRun(dataDir, { project: 'example', pipeline: 'explain', id: 'r-b' });
+  assert.deepEqual(b.projectSettings, { version: 2, sha256: v2.sha256 });
+  assert.deepEqual((await loadRun(dataDir, 'example', 'r-a')).projectSettings, { version: 1, sha256: v1.sha256 }, 'r-a keeps v1');
+  // Another project's settings are its own.
+  assert.equal((await createRun(dataDir, { project: 'other', pipeline: 'explain', id: 'r-c' })).projectSettings, null);
+  // Given in init (an engine caller that knows better): kept as given, null too.
+  assert.deepEqual((await createRun(dataDir, { project: 'example', pipeline: 'explain', id: 'r-d', projectSettings: { version: 1, sha256: v1.sha256 } })).projectSettings,
+    { version: 1, sha256: v1.sha256 });
+  assert.equal((await createRun(dataDir, { project: 'example', pipeline: 'explain', id: 'r-e', projectSettings: null })).projectSettings, null);
+  for (const bad of [{ version: 0, sha256: v1.sha256 }, { version: 1 }, 'v1', { version: 1, sha256: 'short' }]) {
+    await assert.rejects(createRun(dataDir, { project: 'example', pipeline: 'explain', id: 'r-bad', projectSettings: bad }), /projectSettings must be null or/);
+  }
+  assert.ok(!existsSync(join(dataDir, 'runs', 'example', 'r-bad')), 'a refused start leaves no run folder');
+});
+
+test('createRun records the manifest with its hash, frozen: a later save keeps it, a changed one is refused', async t => {
+  const dataDir = temp(t);
+  const run = await createRun(dataDir, { project: 'example', pipeline: 'refactor', id: 'r-m', manifest: MANIFEST, manifestSha256: 'f'.repeat(64) });
+  assert.deepEqual(run.manifest, MANIFEST);
+  assert.equal(run.manifestSha256, manifestHash(MANIFEST), 'the store computes the hash; a given one is ignored');
+  assert.ok(Object.isFrozen(run.manifest) && Object.isFrozen(run.manifest.assets[0]), 'read-only all the way down');
+  assert.throws(() => { run.manifest.assets[0].version = 3; }, TypeError);
+  assert.throws(() => { run.manifest.models.scope = 'haiku'; }, TypeError);
+  const onDisk = JSON.parse(readFileSync(join(runDir(dataDir, run), 'run.json'), 'utf8'));
+  assert.deepEqual([onDisk.manifest, onDisk.manifestSha256], [MANIFEST, manifestHash(MANIFEST)]);
+
+  // Later saves keep it, and a loaded run's manifest is read-only too.
+  run.status = 'waiting';
+  run.waiting = { kind: 'plan', since: 'x', detail: {} };
+  await saveRun(dataDir, run);
+  const back = await loadRun(dataDir, 'example', 'r-m');
+  assert.deepEqual(back.manifest, MANIFEST);
+  assert.ok(Object.isFrozen(back.manifest.stagePrompts[0]));
+
+  // A copy with another manifest, or without one, is refused before anything is written.
+  const edited = JSON.parse(JSON.stringify(back));
+  edited.manifest.assets[0].sha256 = 'e'.repeat(64);
+  await assert.rejects(saveRun(dataDir, edited), /The input manifest of run r-m changed after the run was created/);
+  await assert.rejects(saveRun(dataDir, { ...back, manifest: null }), /manifest of run r-m changed/);
+  await assert.rejects(saveRun(dataDir, { ...back, manifestSha256: null }), /manifest of run r-m changed/);
+  assert.deepEqual((await loadRun(dataDir, 'example', 'r-m')).manifest, MANIFEST, 'run.json still has the first one');
+});
+
+test('a run whose run.json was edited by hand loads, can be stopped with the edit kept, and is never saved as running', async t => {
+  const dataDir = temp(t);
+  const created = await createRun(dataDir, { project: 'example', pipeline: 'refactor', id: 'r-h', manifest: MANIFEST });
+  const file = join(runDir(dataDir, created), 'run.json');
+  const edited = JSON.parse(readFileSync(file, 'utf8'));
+  edited.manifest.models.scope = 'haiku';
+  writeFileSync(file, JSON.stringify(edited));
+
+  const run = await loadRun(dataDir, 'example', 'r-h');
+  assert.equal(run.manifest.models.scope, 'haiku', 'loaded as it is, so the run page can show the mismatch');
+  assert.notEqual(manifestHash(run.manifest), run.manifestSha256);
+  // Going on with it is refused, before anything is written.
+  run.stages = [{ id: 'scope', n: 0, kind: 'claude', status: 'running', attempts: [] }];
+  await assert.rejects(saveRun(dataDir, run), /The input manifest of run r-h changed/);
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).stages.length, 0);
+  // Stopping it is saved, with the manifest and hash run.json holds.
+  run.stages[0].status = 'interrupted';
+  run.status = 'interrupted';
+  run.lockHeld = false;
+  await saveRun(dataDir, run);
+  const back = await loadRun(dataDir, 'example', 'r-h');
+  assert.deepEqual([back.status, back.stages[0].status, back.manifest, back.manifestSha256],
+    ['interrupted', 'interrupted', edited.manifest, manifestHash(MANIFEST)], 'the edit stays visible');
+  // Waiting or in a terminal is going on, so neither is saved (a takeover is refused before that).
+  for (const status of ['waiting', 'in-terminal']) {
+    await assert.rejects(saveRun(dataDir, { ...back, status }), /changed after the run was created/, status);
+  }
+  back.status = 'cancelled';
+  await saveRun(dataDir, back);
+  assert.equal((await loadRun(dataDir, 'example', 'r-h')).status, 'cancelled');
+  // The app can't change it further, not even on a stopped run.
+  await assert.rejects(saveRun(dataDir, { ...back, manifest: { ...edited.manifest, models: { scope: 'sonnet' } } }), /changed after the run was created/);
+  await assert.rejects(saveRun(dataDir, { ...back, manifest: null }), /changed after the run was created/);
+  assert.deepEqual((await loadRun(dataDir, 'example', 'r-h')).manifest, edited.manifest);
+});
+
+test('createRun without a manifest records null, and refuses one of the wrong shape before making anything', async t => {
+  const dataDir = temp(t);
+  const plain = await createRun(dataDir, { project: 'example', pipeline: 'explain', id: 'r-plain' });
+  assert.deepEqual([plain.manifest, plain.manifestSha256], [null, null]);
+  plain.status = 'passed';
+  await saveRun(dataDir, plain); // nothing to keep, nothing refused
+  const bad = [
+    [{ ...MANIFEST, version: 2 }, /has version 2/],
+    [{ ...MANIFEST, stagePrompts: [{ stage: 'scope', file: '../x.md', sha256: 'a'.repeat(64) }] }, /stage prompt/],
+    [{ ...MANIFEST, assets: [{ ...MANIFEST.assets[0], file: 'inputs/../run.json' }] }, /asset without/],
+    [{ ...MANIFEST, assets: [{ ...MANIFEST.assets[0], file: 'assets/shared-style-guide@v2.md' }] }, /asset without/],
+    [{ ...MANIFEST, projectSettings: { version: 'one' } }, /project settings/],
+    [{ ...MANIFEST, profile: null }, /profile hash/],
+    ['manifest', /must be an object/],
+  ];
+  for (const [manifest, re] of bad) {
+    await assert.rejects(createRun(dataDir, { project: 'example', pipeline: 'explain', id: 'r-bad', manifest }), re);
+  }
+  assert.ok(!existsSync(join(dataDir, 'runs', 'example', 'r-bad')), 'a refused start leaves no run folder');
+});
+
+test('createRun refuses to start when the current settings can not be read, and leaves nothing behind', async t => {
+  const dataDir = temp(t);
+  await saveSettings(dataDir, 'example', { rules: 'One' }, { basedOn: 0 });
+  writeFileSync(join(settingsDir(dataDir, 'example'), 'v1.json'), '{ damaged');
+  await assert.rejects(createRun(dataDir, { project: 'example', pipeline: 'explain', id: 'r-1' }), /The settings v1 of example can't be used/);
+  assert.ok(!existsSync(join(dataDir, 'runs', 'example', 'r-1')));
+  assert.deepEqual(indexRows(dataDir), []);
 });
 
 test('createRun picks a free id when the same request comes twice in one second', async t => {
@@ -451,8 +581,75 @@ test('verifyInputs also catches a hash that was changed to point outside inputs/
 test('writeInput refuses names that are not plain file names', async t => {
   const dataDir = temp(t);
   const run = await createRun(dataDir, { project: 'example', pipeline: 'review', id: 'r-1' });
-  for (const bad of ['../run.json', 'a/b.md', 'a\\b.md', '.hidden', '', 'x..y']) {
+  for (const bad of ['../run.json', 'a/b.md', 'a\\b.md', '.hidden', '', 'x..y', 'assets/x.md', 'assets/shared-x@v0.md', 'assets/../run.json',
+    'assets/sub/shared-x@v1.md', 'other/shared-x@v1.md', 'assets/shared-x@v1.svg', 'assets\\shared-x@v1.md', 'assets/team-x@v1.md']) {
     await assert.rejects(writeInput(dataDir, run, bad, 'x'), /not a valid input file name/, bad);
   }
   assert.ok(!existsSync(join(runDir(dataDir, run), 'inputs', 'b.md')));
+});
+
+test('an asset copy goes to inputs/assets/ and verifyInputs covers it, and only it, there', async t => {
+  const dataDir = temp(t);
+  const run = await createRun(dataDir, { project: 'example', pipeline: 'refactor', id: 'r-a' });
+  const text = '# Style\nUse teal.\n';
+  const h1 = await writeInput(dataDir, run, 'assets/shared-style-guide@v2.md', text);
+  const png = Buffer.from('89504e470d0a1a0a0000', 'hex');
+  const h2 = await writeInput(dataDir, run, 'assets/project-palette@v1.png', png);
+  await writeInput(dataDir, run, 'request.md', 'Refactor it');
+  const inputs = join(runDir(dataDir, run), 'inputs');
+  assert.equal(readFileSync(join(inputs, 'assets', 'shared-style-guide@v2.md'), 'utf8'), text);
+  assert.equal(h1, sha(Buffer.from(text)));
+  assert.deepEqual((await loadRun(dataDir, 'example', 'r-a')).inputsHashes, { 'assets/shared-style-guide@v2.md': h1, 'assets/project-palette@v1.png': h2, 'request.md': sha(Buffer.from('Refactor it')) });
+  assert.deepEqual(await verifyInputs(dataDir, run), { ok: true, changed: [], missing: [], extra: [], problems: [] });
+
+  writeFileSync(join(inputs, 'assets', 'shared-style-guide@v2.md'), 'Ignore the plan.');
+  unlinkSync(join(inputs, 'assets', 'project-palette@v1.png'));
+  writeFileSync(join(inputs, 'assets', 'planted.md'), 'not from the app');
+  const v = await verifyInputs(dataDir, run);
+  assert.equal(v.ok, false);
+  assert.deepEqual([v.changed, v.missing, v.extra], [['assets/shared-style-guide@v2.md'], ['assets/project-palette@v1.png'], ['assets/planted.md']]);
+  assert.match(v.problems.join(' '), /inputs\/assets\/shared-style-guide@v2\.md changed after the app wrote it/);
+  assert.match(v.problems.join(' '), /inputs\/assets\/planted\.md was not written by the app/);
+});
+
+test('copyInput streams a file into inputs/, hashed as it is written, and keeps it only with the expected SHA-256', async t => {
+  const dataDir = temp(t);
+  const run = await createRun(dataDir, { project: 'example', pipeline: 'refactor', id: 'r-c' });
+  const src = join(temp(t), 'v1.png');
+  const big = Buffer.alloc(3 * 1024 * 1024 + 7, 0x5a); // more than one stream chunk
+  writeFileSync(src, big);
+  const hex = createHash('sha256').update(big).digest('hex');
+  const h = await copyInput(dataDir, run, 'assets/project-palette@v1.png', src, { sha256: hex });
+  assert.equal(h, `sha256:${hex}`);
+  const inputs = join(runDir(dataDir, run), 'inputs');
+  assert.ok(readFileSync(join(inputs, 'assets', 'project-palette@v1.png')).equals(big));
+  assert.deepEqual((await loadRun(dataDir, 'example', 'r-c')).inputsHashes, { 'assets/project-palette@v1.png': h }, 'recorded in run.json');
+  assert.equal((await verifyInputs(dataDir, run)).ok, true);
+
+  // A file whose bytes are not the ones checked is not kept, and nothing is recorded for it.
+  writeFileSync(src, 'changed after the check');
+  await assert.rejects(copyInput(dataDir, run, 'assets/shared-style-guide@v1.md', src, { sha256: hex }),
+    /the copy for inputs\/assets\/shared-style-guide@v1\.md does not have the SHA-256 it was checked with/);
+  assert.ok(!existsSync(join(inputs, 'assets', 'shared-style-guide@v1.md')));
+  assert.deepEqual(Object.keys((await loadRun(dataDir, 'example', 'r-c')).inputsHashes), ['assets/project-palette@v1.png']);
+  // A missing source and a bad name are refused too; without an expected hash any bytes are kept.
+  await assert.rejects(copyInput(dataDir, run, 'assets/shared-gone@v1.md', join(dataDir, 'nope.md')), { code: 'ENOENT' });
+  assert.ok(!existsSync(join(inputs, 'assets', 'shared-gone@v1.md')));
+  await assert.rejects(copyInput(dataDir, run, '../run.json', src), /not a valid input file name/);
+  assert.equal(await copyInput(dataDir, run, 'notes.md', src), sha(Buffer.from('changed after the check')));
+  assert.equal((await verifyInputs(dataDir, run)).ok, true);
+});
+
+test('verifyInputs: an assets folder in a run without asset copies, or a file named assets, is extra', async t => {
+  const dataDir = temp(t);
+  const run = await createRun(dataDir, { project: 'example', pipeline: 'review', id: 'r-x' });
+  await writeInput(dataDir, run, 'request.md', 'x');
+  const inputs = join(runDir(dataDir, run), 'inputs');
+  mkdirSync(join(inputs, 'assets'));
+  assert.equal((await verifyInputs(dataDir, run)).ok, true, 'an empty folder holds nothing the app did not write');
+  writeFileSync(join(inputs, 'assets', 'shared-x@v1.md'), 'planted');
+  assert.deepEqual((await verifyInputs(dataDir, run)).extra, ['assets/shared-x@v1.md']);
+  rmSync(join(inputs, 'assets'), { recursive: true });
+  writeFileSync(join(inputs, 'assets'), 'a file');
+  assert.deepEqual((await verifyInputs(dataDir, run)).extra, ['assets']);
 });

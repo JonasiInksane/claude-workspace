@@ -14,9 +14,11 @@
 //   contextText(dataDir, run)  the context as Markdown, built when the Explain stage starts, so it
 //       shows the subject as it is then. For a run: its title, status, request, plan summary, gate
 //       summary, review, answer, changed files and diff. For a finding: its record from the
-//       findings store. Then the thread's earlier questions and answers. The diff goes last, so
-//       the cap on the whole text (CAPS.total) cuts it first. Run files are read with the readers
-//       the review routes use (runs/run-files.mjs), and the whole text is redacted.
+//       findings store. Then the thread's earlier questions and answers. The diff goes last and
+//       gets only the room the rest leaves of CAPS.total; the subject has a cap of its own
+//       (CAPS.main), and the thread's room is kept first, so its newest questions and answers are
+//       never what is cut. Run files are read with the readers the review routes use
+//       (runs/run-files.mjs), and the whole text is redacted.
 //   contextBlock(dataDir, run, { write })  what the executor's one call puts into the Explain
 //       prompt ({{context}}): the text written to inputs/context.md through `write` (the store's
 //       writeInput, so it is hashed like every input) and returned as a <data name="context">
@@ -34,10 +36,14 @@ import { findRun, RUN_ID_RE } from './store.mjs';
 export const CONTEXT_FILE = 'context.md';
 // Earlier questions a follow-up carries.
 export const THREAD_MAX = 6;
-// UTF-8 bytes per part, and for the whole text.
+// UTF-8 bytes per part, and for the whole text. `main` is the subject (the run or finding without
+// its diff); main and thread together stay within total with room for a note about the diff,
+// and the diff gets what they leave.
 export const CAPS = Object.freeze({
-  total: 24 * 1024, diff: 12 * 1024, thread: 8 * 1024, request: 2000, answer: 1500, question: 600, field: 600, evidence: 2000,
+  total: 24 * 1024, main: 15 * 1024, diff: 12 * 1024, thread: 8 * 1024, request: 2000, answer: 1500, question: 600, field: 600, evidence: 2000,
 });
+// Less room than this for the diff's text leaves the diff out (with a note) rather than show a scrap.
+const DIFF_MIN = 1024;
 // Lines a list shows (files of the plan, findings, problems, sources) and files the diff lists.
 export const LIST_MAX = 12;
 export const FILES_MAX = 60;
@@ -231,25 +237,50 @@ function answerLines(answer) {
     ...(asList(answer.sources).length ? ['Sources:', ...listLines(answer.sources, s => `- ${s.path}${Number(s.line) > 0 ? `:${s.line}` : ''}${s.note ? ` (${capText(oneLine(s.note), 120)})` : ''}`)] : [])];
 }
 
-// The run's changed files and its diff (final/diff.patch, else inputs/diff.patch), redacted.
+// The run's changed files (a section) and its diff (final/diff.patch, else inputs/diff.patch):
+// { text, partial, kb, truncated, count }. The text is cut a little past CAPS.diff here
+// (partial) and to its room later (diffSection), after it is redacted, so a secret is never split
+// by the cut that decides what Claude sees.
 async function diffParts(dataDir, run) {
   const r = await firstText(dataDir, run, RUN_FILES.diff);
-  if (!r || !r.text.trim()) return { files: '', diff: '' };
+  if (!r || !r.text.trim()) return { files: '', diff: null };
   const files = splitDiff(r.text);
   const list = files.slice(0, FILES_MAX).map(f => `- ${f.path} (+${f.add} −${f.del})`);
   if (files.length > FILES_MAX) list.push(`- (${files.length - FILES_MAX} more files)`);
-  const c = capBytes(r.text, CAPS.diff);
-  const note = c.cut || r.truncated ? `\n(The diff is cut here; in all it is ${Math.round(bytes(r.text) / 1024)} KB${r.truncated ? ' or more' : ''} over ${files.length} files.)` : '';
-  return { files: section(`Changed files (${files.length})`, list), diff: `## Diff\n\n${c.text}${note}` };
+  const c = capBytes(r.text, CAPS.diff + 1024);
+  const diff = { text: c.text, partial: c.cut || !!r.truncated, kb: Math.round(bytes(r.text) / 1024), truncated: !!r.truncated, count: files.length };
+  return { files: section(`Changed files (${files.length})`, list), diff };
 }
 
-// The run part: { main, tail } with the diff in the tail.
+// The diff as a section of at most `room` bytes (its text already redacted): all of it, or the
+// part that fits with a note, or only a note when less than DIFF_MIN of it would fit.
+export function diffSection(diff, room) {
+  if (!diff) return '';
+  const head = '## Diff\n\n';
+  const all = `in all it is ${diff.kb} KB${diff.truncated ? ' or more' : ''} over ${diff.count} files`;
+  if (!diff.partial && bytes(diff.text) <= Math.min(room - bytes(head), CAPS.diff)) return head + diff.text;
+  const note = `\n(The diff is cut here; ${all}.)`;
+  const left = Math.min(room - bytes(head + note), CAPS.diff);
+  if (left >= DIFF_MIN) return `${head}${capBytes(diff.text, left).text}${note}`;
+  const out = `${head}(The diff is left out, so the context stays within ${CAPS.total / 1024} KB; ${all}.)`;
+  return bytes(out) <= room ? out : '';
+}
+
+// `text` in at most `max` bytes: as it is, or cut with a note that says so.
+function fit(text, max) {
+  if (bytes(text) <= max) return text;
+  const note = `\n\n(Cut here at ${Math.floor(max / 1024)} KB, to leave room for the rest of the context.)`;
+  return `${capBytes(text, Math.max(0, max - bytes(note))).text}${note}`;
+}
+
+// The run part: { main, diff } with the diff kept apart (diffParts), so it gets only the room the
+// rest leaves.
 async function runPart(dataDir, id) {
   let run;
   try { run = await findRun(dataDir, id); } catch (err) {
-    return { main: `# The run the question is about\n\nRun ${id} could not be read: ${err.message}`, tail: '' };
+    return { main: `# The run the question is about\n\nRun ${id} could not be read: ${err.message}`, diff: null };
   }
-  if (!run) return { main: `# The run the question is about\n\nRun ${id} is gone: its folder is no longer in the data folder.`, tail: '' };
+  if (!run) return { main: `# The run the question is about\n\nRun ${id} is gone: its folder is no longer in the data folder.`, diff: null };
   const def = pipelineById(run.pipeline);
   const base = run.base && run.base.sha ? ` · base ${run.base.branch ? `${run.base.branch} ` : ''}${sha7(run.base.sha)}` : '';
   const commit = run.commit && run.commit.sha ? ` · committed ${sha7(run.commit.sha)}${run.commit.branch ? ` on ${run.commit.branch}` : ''}` : '';
@@ -271,7 +302,7 @@ async function runPart(dataDir, id) {
     section('Answer', answerLines(outputs.answer)),
     files,
   ].filter(Boolean).join('\n\n');
-  return { main, tail: diff };
+  return { main, diff };
 }
 
 // The finding part: its record from the findings store, or why it can't be shown.
@@ -324,19 +355,27 @@ async function threadPart(dataDir, ids) {
 }
 
 // The context text of an Explain run that has run.context ('' without one). `redact` is applied
-// after the secret patterns (the executor passes its own).
+// after the secret patterns (the executor passes its own), to each part before it is cut.
+// The room is shared out in order: the thread first (within CAPS.thread, its oldest questions
+// dropped first), so the newest questions and answers always survive; then the subject, within
+// CAPS.main and what the thread leaves; then the diff, within CAPS.diff and what is left of
+// CAPS.total. The cut of the whole is only a safety net.
 export async function contextText(dataDir, run, { redact } = {}) {
   const c = run && isPlain(run.context) ? run.context : null;
   if (!c) return '';
+  const clean = text => (typeof redact === 'function' ? String(redact(redactSecrets(text))) : redactSecrets(text));
   let main = '';
-  let tail = '';
-  if (c.kind === 'run') ({ main, tail } = await runPart(dataDir, c.run));
+  let diff = null;
+  if (c.kind === 'run') ({ main, diff } = await runPart(dataDir, c.run));
   else if (c.kind === 'finding') main = await findingPart(dataDir, c.finding);
   else main = `(The app does not know a context of kind "${oneLine(c.kind).slice(0, 40)}".)`;
-  const thread = await threadPart(dataDir, c.thread);
-  const text = [main, thread, tail].filter(Boolean).join('\n\n');
-  const clean = typeof redact === 'function' ? String(redact(redactSecrets(text))) : redactSecrets(text);
-  const cut = capBytes(clean, CAPS.total);
+  const thread = clean(await threadPart(dataDir, c.thread));
+  const sep = '\n\n';
+  const subject = fit(clean(main), Math.min(CAPS.main, CAPS.total - (thread ? bytes(thread + sep) : 0)));
+  const used = bytes(subject) + (thread ? bytes(sep + thread) : 0);
+  const tail = diffSection(diff && { ...diff, text: clean(diff.text) }, CAPS.total - used - bytes(sep));
+  const text = [subject, thread, tail].filter(Boolean).join(sep);
+  const cut = capBytes(text, CAPS.total);
   return cut.cut ? `${cut.text}\n\n(The context is cut here at ${CAPS.total / 1024} KB.)` : cut.text;
 }
 

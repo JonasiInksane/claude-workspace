@@ -37,8 +37,9 @@
 // they attach (attached-assets.mjs). Settings that can't be read, or an asset, version or file
 // that is gone, refuse the start; so does a file whose bytes no longer match the SHA-256 the
 // library recorded. An archived asset is used anyway, with a timeline note. The run is created
-// with that settings version and its input manifest (runs/manifest.mjs), and each asset's bytes,
-// as checked, are copied into inputs/assets/ through the store, so verifyInputs covers them.
+// with that settings version and its input manifest (runs/manifest.mjs), and each asset is copied
+// into inputs/assets/ through the store, one file at a time as a stream, kept only when its bytes
+// still have the recorded SHA-256, so verifyInputs covers exactly the checked bytes.
 import { basename, join, resolve } from 'node:path';
 import { HttpError } from '../http.mjs';
 import { PROJECT_RE, readJson } from '../core/datadir.mjs';
@@ -578,12 +579,18 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
     }
   }
 
-  // Copies the checked asset files into the new run's inputs/assets/ through the store (hashed
-  // there, so verifyInputs covers them). A copy that fails ends the run as failed, with the lock
-  // given back, and the start reports it.
-  async function copyAssets(run, draft, files) {
+  // Copies the checked asset files into the new run's inputs/assets/ through the store, one at a
+  // time and as a stream (copyInput), so at most part of one file is in memory. The store hashes
+  // each copy as it writes it and keeps it only with the SHA-256 the library recorded, the one the
+  // manifest lists, and verifyInputs covers it from then on. A copy that fails, or a file that
+  // changed since the check, ends the run as failed, with the lock given back, and the start
+  // reports it.
+  async function copyAssets(run, draft, items) {
     try {
-      for (const { item, bytes } of files) await store.writeInput(dataDir, run, attached.assetInputName(item), bytes, { now });
+      for (const item of items) {
+        await store.copyInput(dataDir, run, attached.assetInputName(item), item.path, { sha256: item.sha256, now })
+          .catch(err => { throw new Error(`${item.ref} v${item.version}: ${err.message}`); });
+      }
     } catch (err) {
       const message = `The attached assets could not be copied into the run, so it stopped: ${err.message}`;
       Object.assign(run, { status: 'failed', statusReason: message, error: { message, at: iso(now()) }, lockHeld: false });
@@ -592,8 +599,8 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
       await note(run, 'error', message);
       throw new HttpError(500, message);
     }
-    if (files.length) {
-      await note(run, 'info', `Copied ${files.length} attached asset${files.length === 1 ? '' : 's'} into inputs/assets: ${files.map(f => `${f.item.ref} v${f.item.version}`).join(', ')}.`);
+    if (items.length) {
+      await note(run, 'info', `Copied ${items.length} attached asset${items.length === 1 ? '' : 's'} into inputs/assets: ${items.map(i => `${i.ref} v${i.version}`).join(', ')}.`);
     }
     for (const text of draft.assetNotes || []) await note(run, 'info', text);
   }
@@ -616,10 +623,12 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
       const busy = draft.lock ? await lockBusy(draft) : '';
       if (busy) throw new HttpError(409, busy);
       if (draft.refusals.length) throw new HttpError(400, draft.refusals.join(' '));
-      const { files, problems } = await attached.readVerified(draft.assets);
+      // Every file is hashed here, as a stream and keeping no bytes, so a changed one refuses the
+      // start before anything exists; copyAssets checks the bytes again as it copies them.
+      const problems = await attached.verifyFiles(draft.assets);
       if (problems.length) throw new HttpError(409, `The assets attached to ${draft.project} can't be used: ${problems.join('; ')}. Upload the file again as a new version, or attach another version.`);
       const versions = { node: process.versions.node, claudeCode: deps.claudeVersion || null };
-      const manifest = await manifestFor(draft, files.map(f => f.item), versions);
+      const manifest = await manifestFor(draft, draft.assets, versions);
       const slugText = draft.values.what || draft.findingId || draft.title.replace(/^[^:]*:\s*/, '');
       const id = await store.freeRunId(dataDir, draft.project, draft.pipeline, slugText, new Date(now()));
       if (draft.lock) await takeLock(draft, id);
@@ -639,7 +648,7 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
         throw err;
       }
       await note(run, 'status', `Started: ${run.title}`);
-      await copyAssets(run, draft, files);
+      await copyAssets(run, draft, draft.assets);
       if (draft.findingId) await markFinding(run, draft.findingId);
       schedule(run.id);
       return { runId: run.id, run };
@@ -895,13 +904,20 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
       }
     }
 
+    // One run that can't be saved (a run.json edited by hand) must not stop the recovery of the
+    // others: its error is reported, and it still counts as interrupted below, so its lock is kept
+    // and its orphans are looked for.
     for (const run of wasRunning) {
       const name = runningStageName(run);
       const msg = `The app restarted while ${name} ran.`;
       markInterrupted(run, msg, at);
-      await store.saveRun(dataDir, run, { now });
-      await store.appendTimeline(dataDir, run, [{ kind: 'status', stage: name === 'a stage' ? null : name, msg }], { now, redact: deps.redact });
-      report.interrupted.push(run.id);
+      try {
+        await store.saveRun(dataDir, run, { now });
+        report.interrupted.push(run.id);
+        await store.appendTimeline(dataDir, run, [{ kind: 'status', stage: name === 'a stage' ? null : name, msg }], { now, redact: deps.redact });
+      } catch (err) {
+        report.errors.push(`Run ${run.id} could not be marked interrupted: ${err.message}`);
+      }
     }
 
     const byId = new Map(runs.map(r => [r.id, r]));
@@ -936,7 +952,12 @@ export function createManager({ root, dataDir, deps = {}, clock = realClock, lim
         report.errors.push(r.reason);
       }
       const holds = report.adopted.some(a => a.runId === run.id);
-      if (run.lockHeld && !holds) { run.lockHeld = false; await store.saveRun(dataDir, run, { now }); }
+      if (run.lockHeld && !holds) {
+        run.lockHeld = false;
+        try { await store.saveRun(dataDir, run, { now }); } catch (err) {
+          report.errors.push(`Run ${run.id} still says it holds the lock of ${run.project}: ${err.message}`);
+        }
+      }
     }
 
     const busyTrees = runs.filter(r => r.status === 'in-terminal' && r.isolation && r.isolation.tree).map(r => r.isolation.tree);

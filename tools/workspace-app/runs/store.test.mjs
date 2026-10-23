@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import {
   RUN_ID_RE, MSG_MAX, newRunId, freeRunId, runDir, runPath, stageFolder, gateFolder, tmpFolder, createRun, loadRun, findRun,
-  scanRuns, saveRun, indexLine, listRuns, compactIndex, appendTimeline, readTimeline, writeInput, verifyInputs, isTerminal,
+  scanRuns, saveRun, indexLine, listRuns, compactIndex, appendTimeline, readTimeline, writeInput, copyInput, verifyInputs, isTerminal,
 } from './store.mjs';
 import { saveSettings, settingsDir } from '../project-settings.mjs';
 import { manifestHash } from './manifest.mjs';
@@ -198,6 +198,38 @@ test('createRun records the manifest with its hash, frozen: a later save keeps i
   await assert.rejects(saveRun(dataDir, { ...back, manifest: null }), /manifest of run r-m changed/);
   await assert.rejects(saveRun(dataDir, { ...back, manifestSha256: null }), /manifest of run r-m changed/);
   assert.deepEqual((await loadRun(dataDir, 'example', 'r-m')).manifest, MANIFEST, 'run.json still has the first one');
+});
+
+test('a run whose run.json was edited by hand loads, can be stopped with the edit kept, and is never saved as running', async t => {
+  const dataDir = temp(t);
+  const created = await createRun(dataDir, { project: 'example', pipeline: 'refactor', id: 'r-h', manifest: MANIFEST });
+  const file = join(runDir(dataDir, created), 'run.json');
+  const edited = JSON.parse(readFileSync(file, 'utf8'));
+  edited.manifest.models.scope = 'haiku';
+  writeFileSync(file, JSON.stringify(edited));
+
+  const run = await loadRun(dataDir, 'example', 'r-h');
+  assert.equal(run.manifest.models.scope, 'haiku', 'loaded as it is, so the run page can show the mismatch');
+  assert.notEqual(manifestHash(run.manifest), run.manifestSha256);
+  // Going on with it is refused, before anything is written.
+  run.stages = [{ id: 'scope', n: 0, kind: 'claude', status: 'running', attempts: [] }];
+  await assert.rejects(saveRun(dataDir, run), /The input manifest of run r-h changed/);
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).stages.length, 0);
+  // Stopping it is saved, with the manifest and hash run.json holds.
+  run.stages[0].status = 'interrupted';
+  run.status = 'interrupted';
+  run.lockHeld = false;
+  await saveRun(dataDir, run);
+  const back = await loadRun(dataDir, 'example', 'r-h');
+  assert.deepEqual([back.status, back.stages[0].status, back.manifest, back.manifestSha256],
+    ['interrupted', 'interrupted', edited.manifest, manifestHash(MANIFEST)], 'the edit stays visible');
+  back.status = 'cancelled';
+  await saveRun(dataDir, back);
+  assert.equal((await loadRun(dataDir, 'example', 'r-h')).status, 'cancelled');
+  // The app can't change it further, not even on a stopped run.
+  await assert.rejects(saveRun(dataDir, { ...back, manifest: { ...edited.manifest, models: { scope: 'sonnet' } } }), /changed after the run was created/);
+  await assert.rejects(saveRun(dataDir, { ...back, manifest: null }), /changed after the run was created/);
+  assert.deepEqual((await loadRun(dataDir, 'example', 'r-h')).manifest, edited.manifest);
 });
 
 test('createRun without a manifest records null, and refuses one of the wrong shape before making anything', async t => {
@@ -574,6 +606,34 @@ test('an asset copy goes to inputs/assets/ and verifyInputs covers it, and only 
   assert.deepEqual([v.changed, v.missing, v.extra], [['assets/shared-style-guide@v2.md'], ['assets/project-palette@v1.png'], ['assets/planted.md']]);
   assert.match(v.problems.join(' '), /inputs\/assets\/shared-style-guide@v2\.md changed after the app wrote it/);
   assert.match(v.problems.join(' '), /inputs\/assets\/planted\.md was not written by the app/);
+});
+
+test('copyInput streams a file into inputs/, hashed as it is written, and keeps it only with the expected SHA-256', async t => {
+  const dataDir = temp(t);
+  const run = await createRun(dataDir, { project: 'example', pipeline: 'refactor', id: 'r-c' });
+  const src = join(temp(t), 'v1.png');
+  const big = Buffer.alloc(3 * 1024 * 1024 + 7, 0x5a); // more than one stream chunk
+  writeFileSync(src, big);
+  const hex = createHash('sha256').update(big).digest('hex');
+  const h = await copyInput(dataDir, run, 'assets/project-palette@v1.png', src, { sha256: hex });
+  assert.equal(h, `sha256:${hex}`);
+  const inputs = join(runDir(dataDir, run), 'inputs');
+  assert.ok(readFileSync(join(inputs, 'assets', 'project-palette@v1.png')).equals(big));
+  assert.deepEqual((await loadRun(dataDir, 'example', 'r-c')).inputsHashes, { 'assets/project-palette@v1.png': h }, 'recorded in run.json');
+  assert.equal((await verifyInputs(dataDir, run)).ok, true);
+
+  // A file whose bytes are not the ones checked is not kept, and nothing is recorded for it.
+  writeFileSync(src, 'changed after the check');
+  await assert.rejects(copyInput(dataDir, run, 'assets/shared-style-guide@v1.md', src, { sha256: hex }),
+    /the copy for inputs\/assets\/shared-style-guide@v1\.md does not have the SHA-256 it was checked with/);
+  assert.ok(!existsSync(join(inputs, 'assets', 'shared-style-guide@v1.md')));
+  assert.deepEqual(Object.keys((await loadRun(dataDir, 'example', 'r-c')).inputsHashes), ['assets/project-palette@v1.png']);
+  // A missing source and a bad name are refused too; without an expected hash any bytes are kept.
+  await assert.rejects(copyInput(dataDir, run, 'assets/shared-gone@v1.md', join(dataDir, 'nope.md')), { code: 'ENOENT' });
+  assert.ok(!existsSync(join(inputs, 'assets', 'shared-gone@v1.md')));
+  await assert.rejects(copyInput(dataDir, run, '../run.json', src), /not a valid input file name/);
+  assert.equal(await copyInput(dataDir, run, 'notes.md', src), sha(Buffer.from('changed after the check')));
+  assert.equal((await verifyInputs(dataDir, run)).ok, true);
 });
 
 test('verifyInputs: an assets folder in a run without asset copies, or a file named assets, is extra', async t => {

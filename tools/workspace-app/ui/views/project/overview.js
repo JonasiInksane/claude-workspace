@@ -3,8 +3,8 @@
 // Code projects (moved from the cockpit, SPEC 5.3): the facts bar (branch, changes, upstream,
 // stashes, trust, lock, Node, warning chips and the "Setup N/4" checklist), notes for a missing or
 // broken profile and a lock held for days, the intent box with the quick row of the eight
-// pipelines, the five most recent runs, a short Health card (the Architecture tab has the rest) and
-// Run <project> (the profile's dev commands, in a terminal tab).
+// pipelines, the five most recent runs (and any older one still running), a short Health card (the
+// Architecture tab has the rest) and Run <project> (the profile's dev commands, in a terminal tab).
 //
 // Other projects: what the project is (its type, CLAUDE.md, listed in projects/repos.json or not,
 // linked or not, branch and changes when it is a git repo, its agents and assets) and how to start
@@ -207,13 +207,16 @@ export function mergeRuns(recent, live = []) {
   return out;
 }
 
-// The RECENT newest of `runs` (run ids sort by time), the waiting ones first, then the running
-// ones, then the rest by recency. So a run you just started always shows, however many older runs
-// wait; the card counts those under its list (Today and Tasks show them).
+// The RECENT newest of `runs` (run ids sort by time) plus every older run still running, the
+// waiting ones first, then the running ones, then the rest by recency. So a run you just started
+// always shows, however many older runs wait (the card counts those under its list; Today and
+// Tasks show them), and a long check stays in sight while newer runs start (Ask questions make
+// Explain runs quickly), as on the old cockpit.
 export function recentRuns(runs) {
   if (!Array.isArray(runs)) return null;
-  const newest = [...runs].sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)).slice(0, RECENT);
-  return newest.map((r, i) => [r, i]).sort((a, b) => (RUN_ORDER[a[0].status] ?? 2) - (RUN_ORDER[b[0].status] ?? 2) || a[1] - b[1]).map(([r]) => r);
+  const byAge = [...runs].sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+  const shown = [...byAge.slice(0, RECENT), ...byAge.slice(RECENT).filter(r => r.status === 'running')];
+  return shown.map((r, i) => [r, i]).sort((a, b) => (RUN_ORDER[a[0].status] ?? 2) - (RUN_ORDER[b[0].status] ?? 2) || a[1] - b[1]).map(([r]) => r);
 }
 
 function runsCard(name, s) {

@@ -70,6 +70,19 @@ test('the tab: one row per level with its counts apart, the baseline, and the hi
   assert.equal(dom.location.hash, '#run/261022-100007-check-passed', 'a result opens its check run');
 });
 
+test('the tab: a first load that fails says so in both cards at once, not Loading…', () => {
+  const other = { ...example, name: 'other' };
+  const el = dom.document.createElement('div');
+  const paint = () => checks.render(el, { state: store.state, project: other, rest: '', go: store.go, refresh: () => {} });
+  paint();
+  assert.equal(el.querySelectorAll('.card').length, 2);
+  assert.match(textOf(el.querySelectorAll('.card')[1]), /^History .*Loading…$/);
+  slot('other').checks = { data: undefined, error: 'The checks could not be read.', status: 500 };
+  paint();
+  assert.match(textOf(el.querySelectorAll('.card')[0]), /The checks could not be read\. Try again/);
+  assert.match(textOf(el.querySelectorAll('.card')[1]), /Not loaded\./, 'the history says so too, without waiting for the next minute');
+});
+
 test('the tab: Check my work is off until the checkout is here; no history yet', () => {
   slot('example').checks = { data: { last: { quick: null, standard: null, paranoid: null }, history: [] } };
   slot('example').project = { data: { project: { present: false }, baseline: { key: null } } };

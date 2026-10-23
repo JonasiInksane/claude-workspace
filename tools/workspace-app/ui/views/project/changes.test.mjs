@@ -55,6 +55,23 @@ test('the tab: a run at the gate links to its review; the branches card lists th
   assert.equal(dom.location.hash, '#review/261022-100010-refactor-review-gate');
 });
 
+test('the tab: a failed refresh shows next to the branches it read last, and goes with the next answer', () => {
+  const data = { project: { folder: 'example', present: true }, git: { branch: 'main', sha: 'abcdef1234', changed: 0, appBranches: [], worktrees: [] }, checklist: [] };
+  slot('example').waiting = { data: { runs: [] } };
+  slot('example').project = { data };
+  const el = dom.document.createElement('div');
+  const paint = () => changes.render(el, { state: store.state, project: example, rest: '', go: store.go, refresh: () => {} });
+  paint();
+  assert.doesNotMatch(textOf(el), /Could not refresh/);
+  slot('example').project = { data, error: 'git took too long', status: 500 };
+  paint();
+  assert.match(textOf(el), /Main checkout · main/, 'the last answer stays');
+  assert.match(textOf(el), /Could not refresh: git took too long/, 'and the error shows next to it at once');
+  slot('example').project = { data };
+  paint();
+  assert.doesNotMatch(textOf(el), /Could not refresh/);
+});
+
 test('the tab: nothing waits; a checkout git can not read says so', () => {
   slot('example').waiting = { data: { runs: [] } };
   slot('example').project = { data: { project: { folder: 'example', present: true }, git: { error: 'not a git repository' }, checklist: [] } };

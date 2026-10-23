@@ -250,7 +250,7 @@ function checksCard(name, s) {
 function historyCard(name, s) {
   const C = s.checks;
   const list = (dataOf(C) || {}).history;
-  return memo(`history:${name}`, [list, minute()], () => {
+  return memo(`history:${name}`, [list, C && C.error, minute()], () => {
     const head = cardHead('History', h('span', { class: 'muted small' }, `the last ${HISTORY_SHOWN} checks`));
     if (!Array.isArray(list)) return h('div', { class: 'card' }, head, C && C.error ? h('div', { class: 'card-body' }, h('p', { class: 'muted' }, 'Not loaded.')) : loadingBody());
     if (!list.length) return h('div', { class: 'card' }, head, h('div', { class: 'card-body' }, h('p', { class: 'muted' }, 'No checks yet. Check my work runs the first one.')));

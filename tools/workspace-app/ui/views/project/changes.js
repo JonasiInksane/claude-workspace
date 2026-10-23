@@ -80,7 +80,7 @@ function branchesCard(name, s) {
   const { git, isolation, lock, checklist } = d;
   const unmerged = (d.warnings || []).find(w => w && w.id === 'branches.unmerged');
   const wtItem = (checklist || []).find(x => x.id === 'worktree');
-  return memo(`branches:${name}`, [git, isolation, lock, unmerged ? unmerged.text : '', wtItem, d.project.folder, minute()], () => {
+  return memo(`branches:${name}`, [git, isolation, lock, unmerged ? unmerged.text : '', wtItem, d.project.folder, P.error || '', minute()], () => {
     const head = cardHead('Branches and worktrees');
     if (!git) return h('div', { class: 'card' }, head, h('div', { class: 'card-body' }, h('p', { class: 'muted' }, 'Link the checkout first.')));
     if (git.error) return h('div', { class: 'card' }, head, h('div', { class: 'card-body' }, errorNote(`Git could not read the checkout: ${git.error}`, 'git')));

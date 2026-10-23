@@ -1,0 +1,121 @@
+/* The asset library (parts/library-ui.js, parts/library-dialogs.js): the Assets view's filter bar,
+   the cards with their previews (a cover-cropped thumbnail, a text's first lines as plain
+   monospace text, a PDF's icon), the project Assets tab around them, and the library's dialogs
+   (details, New asset, the picker). Linked after app.css in index.html. */
+
+/* ---------- Sections of the Assets view */
+h3.sec { font-weight: 600; }
+.lib-results { margin-bottom: var(--s2); }
+
+/* ---------- Filter bar (views/assets.js) */
+.lib-filters { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s3); align-items: flex-end; margin-bottom: var(--s3); }
+.lib-filters label { display: grid; gap: 2px; font-size: var(--t-sm); font-weight: 600; color: var(--muted); }
+.lib-filters label.grow { flex: 1; min-width: 200px; }
+.lib-filters select, .lib-filters input[type="search"] {
+  padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--text);
+  font-weight: 400; font-size: var(--t-md); min-width: 0;
+}
+.lib-filters select { max-width: 220px; }
+.lib-filters label.check { display: inline-flex; align-self: center; padding-top: 16px; color: var(--text); font-weight: 400; }
+.lib-count { margin-left: auto; align-self: center; padding-top: 16px; }
+
+/* ---------- Cards */
+.lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--s3); }
+.lib-card {
+  display: flex; flex-direction: column; min-width: 0; overflow: hidden;
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+}
+.lib-card:hover { border-color: var(--accent); }
+.lib-card.archived { border-style: dashed; }
+.lib-card.broken { border-color: var(--red); }
+.lib-open {
+  display: flex; flex-direction: column; text-align: left; min-width: 0; padding: 0;
+  border: 0; background: none; color: inherit; cursor: pointer; font: inherit;
+}
+.lib-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 10px 10px 0 0; }
+.lib-missing { cursor: default; }
+.lib-thumb {
+  display: grid; place-items: center; aspect-ratio: 16 / 10; overflow: hidden;
+  background: var(--code-bg); color: var(--muted); border-bottom: 1px solid var(--border);
+}
+.lib-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lib-thumb svg { width: 30px; height: 30px; }
+.lib-thumb.pdf, .lib-thumb.broken { gap: 4px; align-content: center; font-size: var(--t-sm); font-weight: 600; }
+.lib-thumb.broken { color: var(--red); }
+.lib-thumb.text { place-items: stretch; background: var(--bg); }
+.lib-text {
+  display: block; margin: 0; padding: 8px 10px; overflow: hidden; text-align: left;
+  font-family: var(--mono); font-size: 11px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text);
+}
+.lib-text.empty-text { color: var(--muted); }
+.lib-info { display: flex; flex-direction: column; gap: 1px; padding: 8px 12px 6px; min-width: 0; }
+.lib-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-ref { color: var(--muted); font-size: var(--t-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-meta { color: var(--muted); font-size: var(--t-sm); overflow-wrap: anywhere; }
+.lib-card-foot { display: flex; flex-direction: column; gap: 6px; padding: 0 12px 10px; margin-top: auto; }
+.lib-badges { gap: 4px; }
+.lib-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.lib-tag { font-size: var(--t-xs); color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0 7px; }
+.lib-actions { justify-content: flex-end; }
+
+/* ---------- Drop zones (one-line height; the dialogs and the project tab) */
+.drop.lib-drop { padding: 12px 16px; margin: 0; }
+.drop.lib-drop svg { width: 22px; height: 22px; }
+.drop.lib-drop b { font-size: var(--t-base); margin-top: 2px; }
+.drop.lib-drop span { display: block; }
+
+/* ---------- Details dialog */
+dialog.lib-dialog .card-body { gap: var(--s4); }
+.lib-detail { display: grid; gap: var(--s4); min-width: 0; }
+.lib-detail-top { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(260px, 1fr); gap: var(--s5); align-items: start; }
+.lib-detail-side { display: grid; gap: var(--s4); min-width: 0; }
+.lib-thumb.large { aspect-ratio: auto; min-height: 140px; max-height: 52vh; border: 1px solid var(--border); border-radius: 10px; }
+.lib-thumb.large img { object-fit: contain; max-height: 52vh; }
+.lib-thumb.large .lib-text { font-size: 12px; max-height: 52vh; overflow: auto; }
+.lib-meta-form { gap: 10px; }
+.lib-detail-versions { display: grid; gap: var(--s2); }
+.lib-versions li { align-items: flex-start; }
+.lib-versions .title { white-space: normal; }
+.lib-note { color: var(--text); }
+.lib-add-version { gap: 8px; }
+/* Open and Download are links that look like the other buttons */
+.lib-detail a.btn { color: var(--text); }
+.lib-detail a.btn:hover { color: var(--accent); }
+
+/* ---------- New asset: the files to upload */
+.lib-files { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.lib-files li { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); min-width: 0; }
+.lib-files li.bad { border-color: var(--red); }
+.lib-files li > svg { width: 18px; height: 18px; color: var(--muted); flex: none; }
+.lib-files .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.lib-files .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-files .sub { font-size: var(--t-sm); color: var(--muted); overflow-wrap: anywhere; }
+.lib-files .sub.text-red { color: var(--red); }
+
+/* ---------- The picker */
+.lib-pick-filters { display: flex; gap: var(--s2); flex-wrap: wrap; }
+.lib-pick-filters input { flex: 1; min-width: 200px; }
+.lib-pick-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; max-height: 50vh; overflow: auto; }
+.lib-pick-list li.empty { padding: 20px 12px; }
+/* .form label (app.css) is a grid; a picker row is one line */
+.form label.lib-pick {
+  display: flex; align-items: center; gap: 10px; padding: 6px 10px; font-weight: 400; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
+}
+.form label.lib-pick:hover { border-color: var(--accent); }
+.form label.lib-pick:has(input:disabled) { cursor: default; }
+.form label.lib-pick:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+.lib-pick input[type="checkbox"] { width: 16px; height: 16px; flex: none; margin: 0; }
+.lib-pick .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.lib-pick .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-pick .sub { font-size: var(--t-sm); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-pick-thumb { width: 40px; height: 40px; flex: none; display: grid; place-items: center; overflow: hidden; border-radius: 6px; background: var(--code-bg); color: var(--muted); }
+.lib-pick-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lib-pick-thumb svg { width: 20px; height: 20px; }
+
+/* ---------- Narrow screens (app.css breakpoints: 1180, 1080, 760) */
+@media (max-width: 760px) {
+  .lib-detail-top { grid-template-columns: 1fr; }
+  .lib-count { margin-left: 0; padding-top: 0; }
+  .lib-filters label.check { padding-top: 0; }
+}

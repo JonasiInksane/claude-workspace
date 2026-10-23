@@ -42,7 +42,9 @@ test('use: loads each known part once, for a name; unknown parts and empty names
   await settle(5);
   assert.equal(calls.length, before, 'nothing loaded');
   off();
-  assert.deepEqual(Object.keys(PARTS).sort(), ['checks', 'findings', 'metrics', 'project', 'runs', 'tasks', 'waiting']);
+  assert.deepEqual(Object.keys(PARTS).sort(), ['checks', 'findings', 'library', 'metrics', 'project', 'runs', 'settings', 'tasks', 'waiting']);
+  assert.equal(PARTS.settings('example'), '/api/project-settings?project=example');
+  assert.equal(PARTS.library('example'), '/api/library?project=example&archived=1', 'archived too: an attached asset may be archived');
 });
 
 test('a failed refresh keeps the last answer next to its error and status', async () => {

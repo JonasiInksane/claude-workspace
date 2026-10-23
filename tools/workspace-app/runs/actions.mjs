@@ -123,7 +123,10 @@ function reasons(run, def, ctx) {
   set('cancel', !cancelWhy, cancelWhy);
 
   const open = !ended && status !== 'in-terminal' && status !== 'parked';
-  set('retry', ['interrupted', 'failed', 'capped'].includes(st.status) && !busy && open,
+  // A run that failed before its current stage started (the executor stopped while building the
+  // prompt) leaves that stage pending; Retry is its only way on.
+  const stageFailed = ['interrupted', 'failed', 'capped'].includes(st.status) || (status === 'failed' && st.status === 'pending');
+  set('retry', stageFailed && !busy && open,
     'Retry works when the current stage failed, was capped or was interrupted.');
   set('resume', ['interrupted', 'capped', 'paused-limit'].includes(st.status) && sdef.kind === 'claude' && !!sessionOf(st) && !busy && open && status !== 'failed',
     'Resume needs an interrupted, capped or paused Claude stage with a session.');

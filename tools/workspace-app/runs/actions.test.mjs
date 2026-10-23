@@ -87,6 +87,12 @@ test('a failed run allows only retry and report; ended runs allow report only', 
   assert.deepEqual(enabled(passed, explain), ['report']);
 });
 
+test('a run that failed before its current stage started still offers retry', () => {
+  const r = run(at('scope'), 'failed', { stageStatus: 'pending', treeReady: false, lockHeld: false });
+  assert.deepEqual(enabled(r), ['report', 'retry']);
+  assert.equal(actionAllowed(run(at('scope'), 'waiting', { stageStatus: 'pending' }), refactor, 'retry').ok, false);
+});
+
 test('in a terminal only back works; parked runs unpark or cancel', () => {
   const term = session(run(at('review-gate'), 'in-terminal', { stageStatus: 'waiting' }), 'implement');
   assert.deepEqual(enabled(term), ['back']);

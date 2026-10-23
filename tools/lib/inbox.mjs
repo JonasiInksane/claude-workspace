@@ -7,10 +7,12 @@
 //   inbox/attachments/<project>/<agent>/...   agent image library, NOT a triage item
 //   inbox/attachments/<project>/_shared/...   project image library, NOT a triage item
 //   inbox/attachments/_flows/<flow>/...       a flow's reference images (tools/lib/flows.mjs), NOT a triage item
+//   inbox/attachments/_assets/<id>/...        the shared asset library (workspace-app/asset-library.mjs), NOT a triage item
+//   inbox/attachments/<project>/_assets/...   that project's part of the asset library, NOT a triage item
 //   inbox/_processed/...                      archive, only counted
 //
 // <project> must be an existing folder in projects/. When a project folder goes away, its
-// images become triage items again, so they are never silently forgotten.
+// images and assets become triage items again, so they are never silently forgotten.
 // Not items: README.md files, dotfiles and dot-folders (.gitkeep), OS clutter (Thumbs.db,
 // desktop.ini, .DS_Store), node_modules/, dist/ and build/ folders, and _processed/ folders at
 // any depth (only the top-level one is counted).
@@ -19,6 +21,8 @@ import { join } from 'node:path';
 import { listAgents, SHARED_DIR } from './agents.mjs';
 
 export const CLUTTER = new Set(['thumbs.db', 'desktop.ini', '.ds_store']);
+// The asset library's folder name, in attachments/ (shared) and in attachments/<project>/.
+export const ASSET_LIBRARY_DIR = '_assets';
 // Same build-output names the navigator tree skips, so every listed item has a page there.
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'build']);
 export const LIMITS = { maxDepth: 8, maxItems: 5000, maxLibraryFiles: 100000 };
@@ -43,13 +47,15 @@ export function projectNameMap(root) {
 }
 
 // What a file at inbox/<parts...> is. `parts` are the path segments below inbox/.
-// Returns { kind: 'item' }, { kind: 'flow' } or { kind: 'library', project, folder, agent }:
-// `project` is the project's real name, `folder` the attachments folder as spelled on disk,
-// `agent` '' for a file directly in attachments/<project>/.
+// Returns { kind: 'item' }, { kind: 'flow' }, { kind: 'asset' } (the asset library) or
+// { kind: 'library', project, folder, agent }: `project` is the project's real name, `folder`
+// the attachments folder as spelled on disk, `agent` '' for a file directly in attachments/<project>/.
 export function classify(parts, projects) {
   if (parts.length >= 3 && parts[0].toLowerCase() === 'attachments' && parts[1].toLowerCase() === '_flows') return { kind: 'flow' };
+  if (parts.length >= 3 && parts[0].toLowerCase() === 'attachments' && parts[1].toLowerCase() === ASSET_LIBRARY_DIR) return { kind: 'asset' };
   if (parts.length >= 3 && parts[0].toLowerCase() === 'attachments') {
     const project = projects.get(parts[1].toLowerCase());
+    if (project && parts.length >= 4 && parts[2].toLowerCase() === ASSET_LIBRARY_DIR) return { kind: 'asset' };
     if (project) return { kind: 'library', project, folder: parts[1], agent: parts.length >= 4 ? parts[2] : '' };
   }
   return { kind: 'item' };
@@ -62,6 +68,7 @@ export function classify(parts, projects) {
 //              known = the agent is defined in the project (always true for _shared);
 //              path uses the folder names as spelled on disk
 //   flowImages number of files under inbox/attachments/_flows/
+//   assetFiles number of files in the asset library (attachments/_assets/, attachments/<project>/_assets/)
 //   processed  number of files in inbox/_processed/
 //   truncated  part of the inbox was not scanned (too deep, or over a limit)
 // Library files have their own, larger limit, so a big image library can't hide triage items.
@@ -69,7 +76,7 @@ export function classify(parts, projects) {
 export function scanInbox(root, limits = {}) {
   const { maxDepth, maxItems, maxLibraryFiles } = { ...LIMITS, ...limits };
   const base = join(root, 'inbox');
-  const out = { exists: false, items: [], libraries: [], flowImages: 0, processed: 0, truncated: false };
+  const out = { exists: false, items: [], libraries: [], flowImages: 0, assetFiles: 0, processed: 0, truncated: false };
   const top = listDir(base);
   if (top === null) {
     try { statSync(base); } catch { return out; } // no inbox/ folder
@@ -103,9 +110,10 @@ export function scanInbox(root, limits = {}) {
       }
       if (!e.isFile() || lower === 'readme.md') continue;
       const c = classify(next, projects);
-      if (c.kind === 'flow') {
+      if (c.kind === 'flow' || c.kind === 'asset') {
         if (++libraryFiles > maxLibraryFiles) out.truncated = true;
-        else out.flowImages++;
+        else if (c.kind === 'flow') out.flowImages++;
+        else out.assetFiles++;
         continue;
       }
       if (c.kind === 'library') {

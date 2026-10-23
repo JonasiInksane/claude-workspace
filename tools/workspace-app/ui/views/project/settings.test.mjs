@@ -5,7 +5,9 @@
 // basedOn; the mirrored checks and a refused save's problems next to their fields; a 409 that
 // keeps what was typed and offers Reload, and a newer version noticed while typing; attaching
 // through the picker and removing; the versions list with View and Compare; the unsaved-changes
-// guard; and the projects that can't have settings. Run: node tools/run-tests.mjs workspace-app
+// guard; the projects that can't have settings; and refreshes that land late: one that left
+// before a save, Reload while one is out, and a conflict that clears when the version is back.
+// Run: node tools/run-tests.mjs workspace-app
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeEvent, fakeFetch, installDom, reply, settle, textOf } from '../../../test/dom.mjs';
@@ -19,6 +21,9 @@ const SHA = n => String(n).repeat(64).slice(0, 64);
 const versions = {}; // project -> saved settings, oldest first
 let postReply = null; // the next POST's answer, when a test sets one
 let resolveFails = false;
+// While set, GET /api/project-settings answers what was current when it was asked, once this
+// promise resolves (a refresh that left before a save and lands after it).
+let settingsGate = null;
 const library = [
   { ref: 'shared:style-guide', id: 'style-guide', scope: 'shared', project: null, title: 'Style guide', kind: 'text', tags: ['docs'], description: '', archived: false, latest: { n: 3, sha256: SHA(3), bytes: 1200, type: 'text/markdown' }, versionCount: 3 },
   { ref: 'shared:brand', id: 'brand', scope: 'shared', project: null, title: 'Brand colours', kind: 'image', tags: ['brand'], description: '', archived: false, latest: { n: 1, sha256: SHA(1), bytes: 900, type: 'image/png' }, versionCount: 1 },
@@ -59,7 +64,10 @@ function resolveAnswer(attachments) {
 
 const calls = fakeFetch((path, { method, body }) => {
   const url = new URL(path, 'http://x');
-  if (method === 'GET' && url.pathname === '/api/project-settings') return settingsAnswer(url.searchParams.get('project'));
+  if (method === 'GET' && url.pathname === '/api/project-settings') {
+    const answer = settingsAnswer(url.searchParams.get('project'));
+    return settingsGate ? settingsGate.then(() => answer) : answer;
+  }
   if (method === 'GET' && url.pathname === '/api/project-settings/version') {
     const s = (versions[url.searchParams.get('project')] || []).find(x => x.version === Number(url.searchParams.get('v')));
     return s ? { ok: true, project: s.project, settings: s } : reply(404, { ok: false, error: 'no such version' });
@@ -86,7 +94,7 @@ const calls = fakeFetch((path, { method, body }) => {
 });
 
 const store = await import('../../store.js');
-const { slot } = await import('../../parts/project-data.js');
+const { onData, reload, slot } = await import('../../parts/project-data.js');
 const { mayLeave, guardedHash } = await import('../../parts/leave-guard.js');
 const { checkCommand, profileStatus, default: settings } = await import('./settings.js');
 
@@ -380,5 +388,85 @@ test('a plain project: Create from the example; an uppercase name has no setting
   assert.equal(q(el2, 'textarea'), null);
   assert.ok(!calls.slice(n).some(c => c.path.includes('BigApp')), 'nothing is asked for that name');
   assert.equal(guardedHash(), '', 'nothing to guard');
+  settings.onHide();
+});
+
+test('a refresh that left before your save lands after it: no flip back, no false conflict', async () => {
+  const el = await open(example);
+  const seen = []; // [rules, conflict shown] at every repaint, as project.js repaints on every answer
+  const off = onData(() => { paint(el); seen.push([q(el, '#st-rules-example').value, !q(el, '.st-conflict').hidden]); });
+  const have = versions.example.length;
+  // Saved, then typed on: the late answer (the version before the save) is no save elsewhere.
+  type(q(el, '#st-rules-example'), '- Saved here.');
+  let release;
+  settingsGate = new Promise(r => { release = r; });
+  reload('example');
+  await settle();
+  dom.click(byKey(el, 'st:save:example'));
+  await settle(5);
+  type(q(el, '#st-rules-example'), '- Saved here, and more.');
+  settingsGate = null;
+  release();
+  await settle(10);
+  assert.ok(seen.length && seen.every(([, conflict]) => !conflict), JSON.stringify(seen));
+  assert.equal(byKey(el, 'st:save:example').disabled, false, 'Save is not blocked');
+  // Saved and clean: the late answer does not put the version before back for a moment.
+  seen.length = 0;
+  settingsGate = new Promise(r => { release = r; });
+  reload('example');
+  await settle();
+  dom.click(byKey(el, 'st:save:example'));
+  await settle(5);
+  settingsGate = null;
+  release();
+  await settle(10);
+  assert.ok(seen.length && seen.every(([rules, conflict]) => rules === '- Saved here, and more.' && !conflict), JSON.stringify(seen));
+  assert.match(textOf(el), new RegExp(`Saved as v${have + 2}`));
+  off();
+  settings.onHide();
+});
+
+test('Reload in the conflict note shows a save that landed while a refresh was out', async () => {
+  const el = await open(example);
+  type(q(el, '#st-rules-example'), '- Mine again.');
+  save('example', { rules: '- Theirs again.' }, versions.example.length);
+  dom.click(byKey(el, 'st:save:example'));
+  await settle(5);
+  paint(el);
+  assert.equal(q(el, '.st-conflict').hidden, false);
+  let release;
+  settingsGate = new Promise(r => { release = r; });
+  reload('example'); // out with "Theirs again"
+  await settle();
+  const newest = save('example', { rules: '- Newest.' }, versions.example.length);
+  dom.click(byKey(el, 'st:reload:example'));
+  await settle(5);
+  settingsGate = null;
+  release();
+  await settle(10);
+  paint(el);
+  assert.equal(dom.document.querySelector('#toasts').lastChild.textContent, `Loaded v${newest.version}`);
+  assert.equal(q(el, '#st-rules-example').value, '- Newest.');
+  assert.equal(q(el, '.st-conflict').hidden, true);
+  settings.onHide();
+});
+
+test('a conflict a refresh raised goes again once the current version is the editor\'s own again', async () => {
+  const el = await open(example);
+  type(q(el, '#st-rules-example'), '- Typed while they were gone.');
+  const kept = versions.example;
+  versions.example = [];
+  await reload('example');
+  paint(el);
+  assert.match(textOf(q(el, '.st-conflict')), /are gone from the data folder, so a save now would be refused/);
+  assert.equal(byKey(el, 'st:save:example').disabled, true);
+  versions.example = kept;
+  await reload('example');
+  paint(el);
+  assert.equal(q(el, '.st-conflict').hidden, true, 'back as they were: nothing to reload');
+  assert.equal(byKey(el, 'st:save:example').disabled, false);
+  assert.equal(q(el, '#st-rules-example').value, '- Typed while they were gone.');
+  globalThis.confirm = () => true;
+  dom.click(byKey(el, 'st:discard:example'));
   settings.onHide();
 });

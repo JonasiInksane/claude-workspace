@@ -1,7 +1,8 @@
 // The data behind the project page's tabs (views/project.js and views/project/*.js): per project,
-// the answers of the API routes the tabs show, each { data } once answered, or { data, error,
-// status } when the last load failed (the previous answer stays next to the error), and undefined
-// while the first load runs.
+// the answers of the API routes the tabs show, each { data, asked } once answered, or { data,
+// asked, error, status } when the last load failed (the previous answer stays next to the error),
+// and undefined while the first load runs. `asked` numbers the request that brought `data`
+// (requests are numbered in the order they leave; see requestMark).
 //
 //   project   GET /api/project?name         facts bar, setup checklist, git, lock, baseline, profile
 //   findings  GET /api/findings?project     the audit board
@@ -18,7 +19,8 @@
 // while the window is visible and a run is running, a moment after a live signal for the project
 // (at most every 5 s), on window focus when the last load is over 5 s old, and after an action
 // (reload()). Every answer runs the onData() listeners, so the open tab repaints as soon as its
-// own part is in. A part asked for while it loads loads once more afterwards.
+// own part is in. A part asked for while it loads loads once more afterwards, and reload()
+// resolves only when that load is in.
 import { api, checkServer, qs } from '../lib.js';
 import { onSignal, runningCount, runs as liveRuns } from '../store.js';
 
@@ -39,9 +41,9 @@ export const PARTS = {
 };
 const isPart = p => Object.prototype.hasOwnProperty.call(PARTS, p);
 
-const slots = new Map(); // project -> { [part]: { data, error, status } }
-const loading = new Set(); // "<project>\0<part>" while its request is out
-const again = new Set(); // ... asked for again meanwhile
+const slots = new Map(); // project -> { [part]: { data, asked, error, status } }
+const loading = new Map(); // "<project>\0<part>" -> the promise of its request that is out
+const again = new Map(); // ... asked for again meanwhile: the promise of the load after it
 const uses = new Set(); // { name, parts } of the screens on show
 const listeners = new Set();
 
@@ -66,20 +68,37 @@ function tell(name, part) {
   }
 }
 
-async function loadPart(name, part) {
-  const key = `${name}\0${part}`;
-  if (loading.has(key)) { again.add(key); return; }
-  loading.add(key);
+let asks = 0; // the requests made so far
+
+// The number of the last request made so far: an answer whose `asked` is higher comes from a
+// request that left after this call (for example after a save, so it shows that save).
+export const requestMark = () => asks;
+
+async function fetchPart(name, part, key) {
   const s = slot(name);
+  const asked = ++asks;
   try {
-    s[part] = { data: await api(PARTS[part](name)) };
+    s[part] = { data: await api(PARTS[part](name)), asked };
   } catch (e) {
     if (e.network) checkServer();
-    s[part] = { data: s[part] && s[part].data, error: e.message, status: e.status };
+    s[part] = { data: s[part] && s[part].data, asked: s[part] && s[part].asked, error: e.message, status: e.status };
   }
   loading.delete(key);
   tell(name, part);
-  if (again.delete(key)) await loadPart(name, part);
+}
+
+// Loads one part. Resolves when an answer to a request made after this call is in: asked for
+// while a request is out (which may have left before a change the caller just made), it loads
+// once more afterwards and resolves with that load, so `await reload(name)` sees fresh data.
+function loadPart(name, part) {
+  const key = `${name}\0${part}`;
+  if (loading.has(key)) {
+    if (!again.has(key)) again.set(key, loading.get(key).then(() => { again.delete(key); return loadPart(name, part); }));
+    return again.get(key);
+  }
+  const p = fetchPart(name, part, key);
+  loading.set(key, p);
+  return p;
 }
 
 // Every part in use, per project: Map name -> Set of parts.
@@ -99,7 +118,8 @@ let soon = null;
 let offSignal = null;
 let last = 0;
 
-// Loads every part in use now (or only those of `name`). Resolves when they are in.
+// Loads every part in use now (or only those of `name`). Resolves when they are in, from requests
+// made after this call.
 export function reload(name = '') {
   clearTimeout(soon);
   soon = null;

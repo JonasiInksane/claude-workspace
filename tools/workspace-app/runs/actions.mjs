@@ -4,8 +4,8 @@
 //
 // allowedActions(run, pipelineDef, ctx) returns [{action, label, enabled, reason}] for every
 // action in ACTIONS, in that order. ctx = { running: a stage process or the run's driver is
-// active, trusted: true | false | undefined (unknown counts as trusted; the cockpit shows the
-// exact command to trust the folder) }.
+// active, trusted: true | false | undefined (unknown counts as trusted; the project's Overview
+// shows the exact command to trust the folder) }.
 //
 // Status rules (SPEC 2.7, runs/store.mjs): passed, cancelled and committed are over for good.
 // failed is terminal too: the executor has saved the patch, reset the tree and released the

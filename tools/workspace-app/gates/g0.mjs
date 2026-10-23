@@ -628,7 +628,7 @@ async function rowContract(ctx) {
 function allowlistNote(ctx) {
   if (ctx.allowlist.error) return ` (${ctx.allowlist.error})`;
   if (!ctx.allowlist.known) return ' (G0 was not given the allowlist)';
-  if (!ctx.allowlist.list) return ' (no allowlist is set up yet: Health and wins, Rebuild allowlist)';
+  if (!ctx.allowlist.list) return " (no allowlist is set up yet: the project's Architecture tab, Rebuild allowlist)";
   return ' (not on the allowlist)';
 }
 
@@ -673,7 +673,7 @@ async function rowAllowlist(ctx) {
   if (!ctx.touched.some(t => inProbeScope(def, t.path))) return result('skip', 'Not run: no router file changed.');
   if (ctx.allowlist.error) throw new Error(ctx.allowlist.error);
   if (!ctx.allowlist.known) return result('skip', 'Not run: G0 was not given the allowlist.');
-  if (!ctx.allowlist.list) return result('skip', 'Not run: the procedure allowlist is not set up yet (Health and wins, Rebuild allowlist).');
+  if (!ctx.allowlist.list) return result('skip', "Not run: the procedure allowlist is not set up yet (the project's Architecture tab, Rebuild allowlist).");
   const only = (await ctx.headFiles()).filter(p => inProbeScope(def, p));
   const scan = await scanWith(ctx, { reader: ctx.readHead, only, ids: [def.id] });
   if (scan.errors[def.id]) throw new Error(`The ${def.id} probe failed: ${scan.errors[def.id]}`);
@@ -685,7 +685,7 @@ async function rowAllowlist(ctx) {
   const addedOld = r.added.filter(k => !fresh.has(k));
   const parts = [];
   if (addedNew.length) parts.push(`${plural(addedNew.length, 'new procedure is', 'new procedures are')} not on the allowlist: ${firstFew(addedNew)}`);
-  if (addedOld.length) parts.push(`${plural(addedOld.length, 'procedure was', 'procedures were')} already off the allowlist at base; rebuild it in Health and wins`);
+  if (addedOld.length) parts.push(`${plural(addedOld.length, 'procedure was', 'procedures were')} already off the allowlist at base; rebuild it on the project's Architecture tab`);
   if (r.removed.length) parts.push(`the allowlist can shrink by ${r.removed.length}`);
   const status = addedNew.length ? 'fail' : addedOld.length ? 'warn' : 'pass';
   return result(status, parts.length ? `${parts.join('; ')}.` : '', {

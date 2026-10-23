@@ -7,7 +7,8 @@
 // which cap stopped it and why Resume is off, Ask is off while a
 // question runs, Esc closes it and stops listening (no more pulls), opening again brings back the
 // thread and the draft, a finding is asked about by reference, a question that could not be sent
-// can be sent again, and a route change closes the panel. Run: node tools/run-tests.mjs workspace-app
+// can be sent again, a pull rebuilds only the question that changed, and a route change closes
+// the panel. Run: node tools/run-tests.mjs workspace-app
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeEvent, fakeFetch, installDom, reply, settle, textOf } from '../../test/dom.mjs';
@@ -256,6 +257,38 @@ test('the panel: a capped question says which cap stopped it, and why Resume is 
   assert.equal(sendButton().getAttribute('aria-disabled'), null, 'a capped question does not block the next one');
   dom.click(panel().querySelector('.ask-close'));
   assert.equal(dom.document.activeElement, opener);
+});
+
+test('the panel: a pull rebuilds only the question that changed; an earlier answer stays the same node', async () => {
+  const opener = ask.askButton(ask.runSubject({ id: 'r-keep', project: 'example', title: 'Explain: keep it' }));
+  dom.document.body.append(opener);
+  dom.click(opener);
+  let id = `q${n + 1}`;
+  scripts.set(id, [states.passed(id, 'First answer.')]);
+  type('First?');
+  dom.click(sendButton());
+  await settle(5);
+  id = `q${n + 1}`;
+  const running = states.running(id);
+  scripts.set(id, [running, running, states.passed(id, 'Second answer.')]);
+  type('Second?');
+  dom.click(sendButton());
+  await settle(5);
+  const [first, second] = panel().querySelectorAll('.ask-item');
+  const firstAnswer = first.querySelector('.ask-a');
+  const chip = panel().querySelector('.ask-chip');
+  assert.match(textOf(firstAnswer), /First answer\./);
+  assert.match(textOf(second), /Second\? Claude is reading the code/);
+  await signal(id); // the same state again: nothing to rebuild
+  assert.equal(panel().querySelectorAll('.ask-item')[1], second, 'the running question is the same node');
+  await signal(id); // answered
+  const [first2, second2] = panel().querySelectorAll('.ask-item');
+  assert.equal(first2, first, 'the earlier answer was not rebuilt');
+  assert.equal(first.querySelector('.ask-a'), firstAnswer);
+  assert.notEqual(second2, second, 'the answered one was');
+  assert.match(textOf(second2), /Second answer\./);
+  assert.equal(panel().querySelector('.ask-chip'), chip, 'the chip stays too');
+  dom.click(panel().querySelector('.ask-close'));
 });
 
 test('the panel: a route change closes it without moving the focus; a button that is not ready does nothing', async () => {

@@ -1,7 +1,7 @@
 // Tests for tools/lib/flows.mjs and tools/lib/prompt-file.mjs.
 // Run: node tools/run-tests.mjs
 // Each test builds a throwaway workspace root in the temp folder; the real workspace is not touched
-// (the last test only reads the workspace's own Tattoogenda flows).
+// (two tests only read the workspace's own flows in flows/: the Tattoogenda ones, and all of them).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
@@ -119,9 +119,11 @@ test('every flow in flows/ reads back to the same text and checks out where its 
   const flowsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'flows');
   const names = readdirSync(flowsDir).filter(n => n.endsWith('.md') && n.toLowerCase() !== 'readme.md');
   assert.ok(names.length > 0);
-  // A workspace with each flow's project (and agent) as an empty folder, named from the files.
+  // A workspace with each flow's project (and agent) as an empty folder, named from the files,
+  // plus one project of its own, so a flow for any project ("*") has one to run in.
   const root = mkdtempSync(join(tmpdir(), 'ws-flows-tracked-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, 'projects', 'example'), { recursive: true });
   for (const n of names) {
     const f = parseFlow(readFileSync(join(flowsDir, n), 'utf8'));
     if (f.target !== 'hub' && f.project !== ANY_PROJECT) mkdirSync(join(root, 'projects', f.project), { recursive: true });

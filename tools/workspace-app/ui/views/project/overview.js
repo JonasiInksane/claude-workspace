@@ -335,7 +335,8 @@ function startCard(p) {
   const agents = (p.agents || []).filter(a => a.valid && a.isolated && !a.duplicate);
   const deps = [p.name, problem, p.hasClaudeMd, agents.map(a => a.name), (p.agents || []).length, (p.tabs || []).includes('agents')];
   return memo(`start:${p.name}`, deps, () => {
-    const why = problem ? `ov-start-why-${p.name}` : null;
+    // An id may not hold spaces, and a folder name may.
+    const why = problem ? `ov-start-why-${p.name.replace(/[^A-Za-z0-9_-]/g, '_')}` : null;
     const actions = [
       btn('ov:start', 'Start Claude here', () => launch({ kind: 'project', project: p.name }), { cls: 'btn primary', disabled: !!problem, describedBy: why }),
       btn('ov:continue', 'Continue last session', () => launch({ kind: 'project', project: p.name, continueLast: true }), { cls: 'btn', disabled: !!problem, describedBy: why }),
